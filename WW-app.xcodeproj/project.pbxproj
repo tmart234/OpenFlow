@@ -13,6 +13,17 @@
 		99CFC17529D52DDD0069F04E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC17429D52DDD0069F04E /* ContentView.swift */; };
 		99CFC17729D52DDD0069F04E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 99CFC17629D52DDD0069F04E /* Assets.xcassets */; };
 		99CFC17B29D52DDD0069F04E /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 99CFC17A29D52DDD0069F04E /* Preview Assets.xcassets */; };
+		99CFC18229D52EE80069F04E /* River.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC18129D52EE80069F04E /* River.swift */; };
+		99CFC18829D531780069F04E /* RiverListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC18729D531780069F04E /* RiverListView.swift */; };
+		99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC18929D531950069F04E /* RiverDetailView.swift */; };
+		99CFC18C29D539EA0069F04E /* SnowpackData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC18B29D539EA0069F04E /* SnowpackData.swift */; };
+		99CFC18E29D53A360069F04E /* APIManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC18D29D53A360069F04E /* APIManager.swift */; };
+		99CFC19129D53ADB0069F04E /* Alamofire in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19029D53ADB0069F04E /* Alamofire */; };
+		99CFC19329D53DF80069F04E /* NRCSResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19229D53DF80069F04E /* NRCSResponse.swift */; };
+		99CFC19529D55FCF0069F04E /* WeatherResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19429D55FCF0069F04E /* WeatherResponse.swift */; };
+		99CFC19829D56F800069F04E /* SwiftyJSON in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19729D56F800069F04E /* SwiftyJSON */; };
+		99CFC19A29D570030069F04E /* ReservoirData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19929D570030069F04E /* ReservoirData.swift */; };
+		99CFC19D29D76AD30069F04E /* AnyCodable in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19C29D76AD30069F04E /* AnyCodable */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +35,14 @@
 		99CFC17629D52DDD0069F04E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		99CFC17829D52DDD0069F04E /* WW_app.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WW_app.entitlements; sourceTree = "<group>"; };
 		99CFC17A29D52DDD0069F04E /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		99CFC18129D52EE80069F04E /* River.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = River.swift; sourceTree = "<group>"; };
+		99CFC18729D531780069F04E /* RiverListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiverListView.swift; sourceTree = "<group>"; };
+		99CFC18929D531950069F04E /* RiverDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiverDetailView.swift; sourceTree = "<group>"; };
+		99CFC18B29D539EA0069F04E /* SnowpackData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnowpackData.swift; sourceTree = "<group>"; };
+		99CFC18D29D53A360069F04E /* APIManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIManager.swift; sourceTree = "<group>"; };
+		99CFC19229D53DF80069F04E /* NRCSResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NRCSResponse.swift; sourceTree = "<group>"; };
+		99CFC19429D55FCF0069F04E /* WeatherResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherResponse.swift; sourceTree = "<group>"; };
+		99CFC19929D570030069F04E /* ReservoirData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservoirData.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -31,6 +50,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				99CFC19829D56F800069F04E /* SwiftyJSON in Frameworks */,
+				99CFC19D29D76AD30069F04E /* AnyCodable in Frameworks */,
+				99CFC19129D53ADB0069F04E /* Alamofire in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -56,6 +78,7 @@
 		99CFC16C29D52DDD0069F04E /* WW-app */ = {
 			isa = PBXGroup;
 			children = (
+				99CFC18B29D539EA0069F04E /* SnowpackData.swift */,
 				99CFC16D29D52DDD0069F04E /* WW_appApp.swift */,
 				99CFC16F29D52DDD0069F04E /* Persistence.swift */,
 				99CFC17429D52DDD0069F04E /* ContentView.swift */,
@@ -63,6 +86,13 @@
 				99CFC17829D52DDD0069F04E /* WW_app.entitlements */,
 				99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */,
 				99CFC17929D52DDD0069F04E /* Preview Content */,
+				99CFC18129D52EE80069F04E /* River.swift */,
+				99CFC18729D531780069F04E /* RiverListView.swift */,
+				99CFC18929D531950069F04E /* RiverDetailView.swift */,
+				99CFC18D29D53A360069F04E /* APIManager.swift */,
+				99CFC19229D53DF80069F04E /* NRCSResponse.swift */,
+				99CFC19429D55FCF0069F04E /* WeatherResponse.swift */,
+				99CFC19929D570030069F04E /* ReservoirData.swift */,
 			);
 			path = "WW-app";
 			sourceTree = "<group>";
@@ -91,6 +121,11 @@
 			dependencies = (
 			);
 			name = "WW-app";
+			packageProductDependencies = (
+				99CFC19029D53ADB0069F04E /* Alamofire */,
+				99CFC19729D56F800069F04E /* SwiftyJSON */,
+				99CFC19C29D76AD30069F04E /* AnyCodable */,
+			);
 			productName = "WW-app";
 			productReference = 99CFC16A29D52DDD0069F04E /* WW-app.app */;
 			productType = "com.apple.product-type.application";
@@ -119,6 +154,11 @@
 				Base,
 			);
 			mainGroup = 99CFC16129D52DDD0069F04E;
+			packageReferences = (
+				99CFC18F29D53ADB0069F04E /* XCRemoteSwiftPackageReference "Alamofire" */,
+				99CFC19629D56F800069F04E /* XCRemoteSwiftPackageReference "SwiftyJSON" */,
+				99CFC19B29D76AD30069F04E /* XCRemoteSwiftPackageReference "AnyCodable" */,
+			);
 			productRefGroup = 99CFC16B29D52DDD0069F04E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -146,8 +186,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */,
+				99CFC18829D531780069F04E /* RiverListView.swift in Sources */,
+				99CFC19329D53DF80069F04E /* NRCSResponse.swift in Sources */,
+				99CFC19529D55FCF0069F04E /* WeatherResponse.swift in Sources */,
 				99CFC17029D52DDD0069F04E /* Persistence.swift in Sources */,
+				99CFC19A29D570030069F04E /* ReservoirData.swift in Sources */,
+				99CFC18E29D53A360069F04E /* APIManager.swift in Sources */,
 				99CFC17529D52DDD0069F04E /* ContentView.swift in Sources */,
+				99CFC18229D52EE80069F04E /* River.swift in Sources */,
+				99CFC18C29D539EA0069F04E /* SnowpackData.swift in Sources */,
+				99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */,
 				99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -295,10 +343,12 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "tmart234.WW-app";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -333,10 +383,12 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "tmart234.WW-app";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -362,6 +414,51 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		99CFC18F29D53ADB0069F04E /* XCRemoteSwiftPackageReference "Alamofire" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Alamofire/Alamofire.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.0.0;
+			};
+		};
+		99CFC19629D56F800069F04E /* XCRemoteSwiftPackageReference "SwiftyJSON" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SwiftyJSON/SwiftyJSON.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.0.0;
+			};
+		};
+		99CFC19B29D76AD30069F04E /* XCRemoteSwiftPackageReference "AnyCodable" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Flight-School/AnyCodable.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.6.7;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		99CFC19029D53ADB0069F04E /* Alamofire */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 99CFC18F29D53ADB0069F04E /* XCRemoteSwiftPackageReference "Alamofire" */;
+			productName = Alamofire;
+		};
+		99CFC19729D56F800069F04E /* SwiftyJSON */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 99CFC19629D56F800069F04E /* XCRemoteSwiftPackageReference "SwiftyJSON" */;
+			productName = SwiftyJSON;
+		};
+		99CFC19C29D76AD30069F04E /* AnyCodable */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 99CFC19B29D76AD30069F04E /* XCRemoteSwiftPackageReference "AnyCodable" */;
+			productName = AnyCodable;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCVersionGroup section */
 		99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */ = {
