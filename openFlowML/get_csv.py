@@ -59,14 +59,21 @@ ncei_params = {
 }
 
 response = requests.get(ncei_base_url, params=ncei_params)
-content = response.text.splitlines()
 
+if response.status_code != 200:
+    print(f"Error: Received a {response.status_code} status code from the NCEI server.")
+    exit()
+
+content = response.text.splitlines()
+for row in content[:10]:
+    print(row)
 reader = csv.DictReader(content)
 for row in reader:
     date_str = row["DATE"]
     min_temp = float(row["TMIN"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
     max_temp = float(row["TMAX"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
     temperature_data[date_str] = (min_temp, max_temp)
+
 
 # Step 4: Combine the data from steps 2 and 3
 combined_data = []
