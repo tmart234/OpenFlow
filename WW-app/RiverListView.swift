@@ -28,9 +28,10 @@ struct RiverListView: View {
 struct RiverListView_Previews: PreviewProvider {
     static var previews: some View {
         RiverListView(rivers: [
-            River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", siteIDs: [1999, 2000, 2005]),
-            River(id: 2, name: "Arkansas River by the Numbers", location: "Colorado", snotelStationID: "369", siteIDs: [100163, 100275])
+            River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", usgsSiteID: 09058000, reservoirSiteIDs: [1999, 2000, 2005]),
+            River(id: 2, name: "Arkansas River by the Numbers", location: "Colorado", snotelStationID: "369", usgsSiteID: 07087050, reservoirSiteIDs: [100163, 100275])
         ])
     }
 }
+
 

@@ -12,5 +12,7 @@ struct River: Identifiable {
     let name: String
     let location: String
     let snotelStationID: String
-    let siteIDs: [Int]
+    let usgsSiteID: Int
+    let reservoirSiteIDs: [Int]
 }
+

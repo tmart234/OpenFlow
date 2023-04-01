@@ -20,12 +20,13 @@ struct RiverDetailView: View {
     @State private var _showAlert = false
     @State private var alertTitle: String = ""
     @State private var alertMessage: String = ""
+    @State private var flowData: String = ""
 
     private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
         return reservoirData.data.sorted { $0.date > $1.date }.first
     }
     private func fetchReservoirData(siteIDs: [Int]) {
-        for siteID in river.siteIDs {
+        for siteID in river.reservoirSiteIDs {
             APIManager.shared.getReservoirDetails(for: siteID) { result in
                 switch result {
                 case .success(let info):
@@ -38,7 +39,18 @@ struct RiverDetailView: View {
             }
         }
     }
-
+    private func fetchFlowData() {
+        APIManager.shared.getFlowData(usgsSiteID: river.usgsSiteID) { result in
+            switch result {
+            case .success(let flowData):
+                DispatchQueue.main.async {
+                    self.flowData = flowData
+                }
+            case .failure(let error):
+                print("Error fetching flow data:", error)
+            }
+        }
+    }
 
     var body: some View {
         VStack {
@@ -91,8 +103,10 @@ struct RiverDetailView: View {
                     .foregroundColor(.red)
                     .padding(.vertical)
             }
+            Text("Flow: \(flowData)")
+                .font(.title2)
+                .padding(.top)
             
-            Spacer()
         }
         .padding(.horizontal)
         .navigationTitle(river.name)
@@ -100,7 +114,8 @@ struct RiverDetailView: View {
         .onAppear {
             fetchWeatherData()
             fetchSnowpackData()
-            fetchReservoirData(siteIDs: river.siteIDs)
+            fetchReservoirData(siteIDs: river.reservoirSiteIDs)
+            fetchFlowData()
         }
     }
     func fetchSnowpackData() {
@@ -144,11 +159,4 @@ struct RiverDetailView: View {
                 }
             }
         }
-}
-
-
-struct RiverDetailView_Previews: PreviewProvider {
-    static var previews: some View {
-        RiverDetailView(river: River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", siteIDs: [1999, 2000, 2005]))
-    }
 }

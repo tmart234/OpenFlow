@@ -48,11 +48,11 @@ class APIManager {
         }
     }
     let reservoirDetails: [Int: (name: String, capacity: Double)] = [
-        100163: ("Turquoise Lake Reservoir", 129_440),
-        100275: ("Twin Lakes Reservoir", 141_000),
-        2000: ("Green Mountain Reservoir", 154_600),
-        2005: ("Williams Fork Reservoir", 97_000),
-        1999: ("Granby Lake", 539_758)
+        100163: ("Turquoise Lake Reservoir", 129440),
+        100275: ("Twin Lakes Reservoir", 141000),
+        2000: ("Green Mountain Reservoir", 154600),
+        2005: ("Williams Fork Reservoir", 97000),
+        1999: ("Granby Lake", 539758)
     ]
 
     func getReservoirDetails(for siteID: Int, completion: @escaping (Result<ReservoirInfo, APIError>) -> Void) {
@@ -77,6 +77,45 @@ class APIManager {
                 completion(.success(reservoirInfo))
             case .failure(let error):
                 completion(.failure(error))
+            }
+        }
+    }
+    func getFlowData(usgsSiteID: Int, completionHandler: @escaping (Result<String, Error>) -> Void) {
+        let siteIDString = String(format: "%08d", usgsSiteID)
+        let url = "https://waterservices.usgs.gov/nwis/iv/?sites=\(siteIDString)&parameterCd=00060&startDT=2023-03-24T23:34:28.131-06:00&endDT=2023-03-31T23:34:28.131-06:00&siteStatus=all&format=rdb"
+        print("USGS URL: ", url)
+        AF.request(url).validate().responseString { response in
+            switch response.result {
+            case .success(let value):
+                let lines = value.split(separator: "\n")
+                var latestDateTime: Date?
+                var latestFlowData: Double?
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd HH:mm"
+                dateFormatter.timeZone = TimeZone(abbreviation: "MDT")
+
+                for line in lines {
+                    if line.starts(with: "USGS") {
+                        let columns = line.split(separator: "\t")
+                        if columns.count > 2, let dateTime = dateFormatter.date(from: String(columns[2])) {
+                            if latestDateTime == nil || dateTime > latestDateTime! {
+                                latestDateTime = dateTime
+                                if let flowData = Double(columns[4].trimmingCharacters(in: .whitespaces)) {
+                                    latestFlowData = flowData
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let flowData = latestFlowData {
+                    let formattedFlowData = String(format: "%.1f cfs", flowData)
+                    completionHandler(.success(formattedFlowData))
+                } else {
+                    completionHandler(.failure(APIError.noData))
+                }
+            case .failure(let error):
+                completionHandler(.failure(error))
             }
         }
     }
