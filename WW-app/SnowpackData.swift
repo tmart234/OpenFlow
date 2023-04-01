@@ -12,5 +12,5 @@ struct SnowpackData {
     let reportDate: Date
     let snowWaterEquivalent: Double
     let snowDepth: Double
+    let percentOfAverage: Double
 }
-

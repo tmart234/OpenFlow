@@ -169,7 +169,7 @@ class APIManager {
 
     func getSnowpackDataFromCSV(stationID: String, completion: @escaping (Result<SnowpackData, Error>) -> Void) {
         print("Fetching snowpack data for station ID: \(stationID)")
-        let url = "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/\(stationID):CO:SNTL%7Cid=%22%22%7Cname/0,0/WTEQ::value"
+        let url = "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/\(stationID):CO:SNTL%7Cid=%22%22%7Cname/0,0/WTEQ::value,WTEQ::pctOfAverage_1991"
 
         AF.request(url).responseData { response in
             switch response.result {
@@ -201,10 +201,15 @@ class APIManager {
                         completion(.failure(APIError.noData))
                         return
                     }
+
+                    guard let swePctOfAverage = Double(dataRow[2]) else {
+                        completion(.failure(APIError.noData))
+                        return
+                    }
                     
                     let stationName = "Station \(stationID)"
                     let snowDepth = 0.0 // No snow depth provided in CSV data
-                    let snowpackData = SnowpackData(stationName: stationName, reportDate: date, snowWaterEquivalent: sweValue, snowDepth: snowDepth)
+                    let snowpackData = SnowpackData(stationName: stationName, reportDate: date, snowWaterEquivalent: sweValue, snowDepth: snowDepth, percentOfAverage: swePctOfAverage)
                     completion(.success(snowpackData))
                 } catch {
                     completion(.failure(error))

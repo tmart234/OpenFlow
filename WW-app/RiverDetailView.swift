@@ -54,14 +54,15 @@ struct RiverDetailView: View {
 
     var body: some View {
         VStack {
-            Text(river.name)
-                .font(.largeTitle)
+            Text("Flow: \(flowData)")
+                .font(.title2)
                 .padding(.top)
             
-            Text(river.location)
-                .font(.title2)
-                .padding(.bottom)
-            
+            if let snowpackData = snowpackData {
+                Text("Nearest SWE: \(snowpackData.snowWaterEquivalent, specifier: "%.1f")in (or \(snowpackData.percentOfAverage, specifier: "%.1f")% of avg)")
+            } else {
+                Text("Fetching SWE data...")
+            }
             Text("High Temperature: \(highTemperature)")
                 .font(.title2)
                 .padding(.top)
@@ -92,22 +93,14 @@ struct RiverDetailView: View {
             Button("Get Flow Prediction") {
             }
             .padding(.vertical)
-            
-            if let snowpackData = snowpackData {
-                Text("SWE: \(snowpackData.snowWaterEquivalent, specifier: "%.1f") in")
-            } else {
-                Text("Fetching SWE data...")
-            }
+
             if let errorMessage = errorMessage {
                 Text(errorMessage)
                     .foregroundColor(.red)
                     .padding(.vertical)
             }
-            Text("Flow: \(flowData)")
-                .font(.title2)
-                .padding(.top)
-            
-        }
+
+        } // This is the corrected closing brace for the VStack
         .padding(.horizontal)
         .navigationTitle(river.name)
         .navigationBarTitleDisplayMode(.inline)
