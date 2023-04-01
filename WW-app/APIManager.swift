@@ -8,6 +8,8 @@
 import Foundation
 import Alamofire
 import SwiftyJSON
+import SwiftCSV
+import CSV
 
 struct StorageData: Codable {
     let date: Date
@@ -126,35 +128,67 @@ class APIManager {
         }.resume()
     }
 
-        func getSnowpackData(stationID: String, completion: @escaping (Result<SnowpackData, Error>) -> Void) {
-            let url = "\(nrcsBaseURL)\(stationID)&dateTime=latest"
-            
-            AF.request(url).responseData { response in
-                switch response.result {
-                case .success(let data):
-                    print("Raw JSON Response: \(String(data: data, encoding: .utf8) ?? "")")
-                    do {
-                        print("Raw JSON Response: \(String(data: data, encoding: .utf8) ?? "")")
-                        let nrcsResponse = try JSONDecoder().decode(NRCSResponse.self, from: data)
-                        
-                        guard let elementData = nrcsResponse.report.data.first,
-                              let snowWaterEquivalentString = elementData.data["SNWD"],
-                              let snowDepthString = elementData.data["SNOW"],
-                              let snowWaterEquivalent = Double(snowWaterEquivalentString),
-                              let snowDepth = Double(snowDepthString) else {
-                            completion(.failure(NSError(domain: "", code: -1, userInfo: nil)))
-                            return
+    func getSnowpackDataFromCSV(stationID: String, completion: @escaping (Result<SnowpackData, Error>) -> Void) {
+        print("Fetching snowpack data for station ID: \(stationID)")
+        let url = "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/\(stationID):CO:SNTL%7Cid=%22%22%7Cname/0,0/WTEQ::value"
+
+        AF.request(url).responseData { response in
+            switch response.result {
+            case .success(let data):
+                do {
+                    let stream = InputStream(data: data)
+                    let reader = try CSVReader(stream: stream, hasHeaderRow: true)
+                    let dateFormatter = DateFormatter()
+                    dateFormatter.dateFormat = "yyyy-MM-dd"
+                    
+                    var latestDataRow: [String]?
+                    while let row = reader.next() {
+                        if row[0].starts(with: "2") {
+                            latestDataRow = row
                         }
-                        
-                        let stationName = elementData.metadata.station.name
-                        let snowpackData = SnowpackData(stationName: stationName, snowWaterEquivalent: snowWaterEquivalent, snowDepth: snowDepth)
-                        completion(.success(snowpackData))
-                    } catch {
-                        completion(.failure(error))
                     }
-                case .failure(let error):
+                    
+                    guard let dataRow = latestDataRow else {
+                        completion(.failure(APIError.noData))
+                        return
+                    }
+                    
+                    guard let date = dateFormatter.date(from: dataRow[0]) else {
+                        completion(.failure(APIError.invalidSiteID))
+                        return
+                    }
+
+                    guard let sweValue = Double(dataRow[1]) else {
+                        completion(.failure(APIError.noData))
+                        return
+                    }
+                    
+                    let stationName = "Station \(stationID)"
+                    let snowDepth = 0.0 // No snow depth provided in CSV data
+                    let snowpackData = SnowpackData(stationName: stationName, reportDate: date, snowWaterEquivalent: sweValue, snowDepth: snowDepth)
+                    completion(.success(snowpackData))
+                } catch {
                     completion(.failure(error))
                 }
+            case .failure(let error):
+                completion(.failure(error))
             }
         }
     }
+    
+    func extractSWEValue(from row: [String: String], stationID: String) -> (String, Double)? {
+        let pattern = "(\(stationID)) Snow Water Equivalent \\(in\\) Start of Day Values"
+        
+        for (key, value) in row {
+            if key.range(of: pattern, options: .regularExpression) != nil {
+                if let doubleValue = Double(value) {
+                    return (key, doubleValue)
+                } else {
+                    return nil
+                }
+            }
+        }
+        
+        return nil
+    }
+}

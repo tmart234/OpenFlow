@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BA829D79C3D00A37181 /* SwiftCSV */; };
+		99C62BAC29D7B21500A37181 /* CSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BAB29D7B21500A37181 /* CSV */; };
 		99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16D29D52DDD0069F04E /* WW_appApp.swift */; };
 		99CFC17029D52DDD0069F04E /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16F29D52DDD0069F04E /* Persistence.swift */; };
 		99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */; };
@@ -51,6 +53,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				99CFC19829D56F800069F04E /* SwiftyJSON in Frameworks */,
+				99C62BAC29D7B21500A37181 /* CSV in Frameworks */,
+				99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */,
 				99CFC19D29D76AD30069F04E /* AnyCodable in Frameworks */,
 				99CFC19129D53ADB0069F04E /* Alamofire in Frameworks */,
 			);
@@ -125,6 +129,8 @@
 				99CFC19029D53ADB0069F04E /* Alamofire */,
 				99CFC19729D56F800069F04E /* SwiftyJSON */,
 				99CFC19C29D76AD30069F04E /* AnyCodable */,
+				99C62BA829D79C3D00A37181 /* SwiftCSV */,
+				99C62BAB29D7B21500A37181 /* CSV */,
 			);
 			productName = "WW-app";
 			productReference = 99CFC16A29D52DDD0069F04E /* WW-app.app */;
@@ -158,6 +164,8 @@
 				99CFC18F29D53ADB0069F04E /* XCRemoteSwiftPackageReference "Alamofire" */,
 				99CFC19629D56F800069F04E /* XCRemoteSwiftPackageReference "SwiftyJSON" */,
 				99CFC19B29D76AD30069F04E /* XCRemoteSwiftPackageReference "AnyCodable" */,
+				99C62BA729D79C3D00A37181 /* XCRemoteSwiftPackageReference "SwiftCSV" */,
+				99C62BAA29D7B21500A37181 /* XCRemoteSwiftPackageReference "CSV.swift" */,
 			);
 			productRefGroup = 99CFC16B29D52DDD0069F04E /* Products */;
 			projectDirPath = "";
@@ -416,6 +424,22 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		99C62BA729D79C3D00A37181 /* XCRemoteSwiftPackageReference "SwiftCSV" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftcsv/SwiftCSV.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.8.1;
+			};
+		};
+		99C62BAA29D7B21500A37181 /* XCRemoteSwiftPackageReference "CSV.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/yaslab/CSV.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
 		99CFC18F29D53ADB0069F04E /* XCRemoteSwiftPackageReference "Alamofire" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Alamofire/Alamofire.git";
@@ -443,6 +467,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		99C62BA829D79C3D00A37181 /* SwiftCSV */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 99C62BA729D79C3D00A37181 /* XCRemoteSwiftPackageReference "SwiftCSV" */;
+			productName = SwiftCSV;
+		};
+		99C62BAB29D7B21500A37181 /* CSV */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 99C62BAA29D7B21500A37181 /* XCRemoteSwiftPackageReference "CSV.swift" */;
+			productName = CSV;
+		};
 		99CFC19029D53ADB0069F04E /* Alamofire */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 99CFC18F29D53ADB0069F04E /* XCRemoteSwiftPackageReference "Alamofire" */;

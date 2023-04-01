@@ -11,8 +11,8 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             RiverListView(rivers: [
-                River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "303", siteIDs: [1999, 2000, 2005]),
-                River(id: 2, name: "Arkansas River by the Numbers", location: "Colorado", snotelStationID: "381", siteIDs: [100163, 100275])
+                River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", siteIDs: [1999, 2000, 2005]),
+                River(id: 2, name: "Arkansas River by the Numbers", location: "Colorado", snotelStationID: "369", siteIDs: [100163, 100275])
             ])
         }
     }

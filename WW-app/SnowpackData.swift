@@ -7,8 +7,10 @@
 
 import Foundation
 
-struct SnowpackData: Codable {
+struct SnowpackData {
     let stationName: String
+    let reportDate: Date
     let snowWaterEquivalent: Double
     let snowDepth: Double
 }
+

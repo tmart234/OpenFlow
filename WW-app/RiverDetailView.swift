@@ -17,6 +17,9 @@ struct RiverDetailView: View {
     @State private var highTemperature: String = ""
     @State private var lowTemperature: String = ""
     @State private var reservoirData: [ReservoirInfo] = []
+    @State private var _showAlert = false
+    @State private var alertTitle: String = ""
+    @State private var alertMessage: String = ""
 
     private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
         return reservoirData.data.sorted { $0.date > $1.date }.first
@@ -75,18 +78,13 @@ struct RiverDetailView: View {
                 .padding(.horizontal)
             
             Button("Get Flow Prediction") {
-                fetchSnowpackData()
             }
             .padding(.vertical)
             
             if let snowpackData = snowpackData {
-                VStack {
-                    Text("Snow Water Equivalent: \(snowpackData.snowWaterEquivalent) inches")
-                    Text("Snow Depth: \(snowpackData.snowDepth) inches")
-                }
-                .padding(.vertical)
+                Text("SWE: \(snowpackData.snowWaterEquivalent, specifier: "%.1f")")
             } else {
-                ProgressView()
+                Text("Fetching SWE data...")
             }
             if let errorMessage = errorMessage {
                 Text(errorMessage)
@@ -101,19 +99,21 @@ struct RiverDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             fetchWeatherData()
+            fetchSnowpackData()
             fetchReservoirData(siteIDs: river.siteIDs)
         }
     }
     func fetchSnowpackData() {
-        APIManager.shared.getSnowpackData(stationID: river.snotelStationID) { result in
+        print("Calling fetchSnowpackData() for station ID: \(river.snotelStationID)")
+        APIManager.shared.getSnowpackDataFromCSV(stationID: river.snotelStationID) { result in
             DispatchQueue.main.async {
                 switch result {
-                case .success(let data):
-                    self.snowpackData = data
-                    self.errorMessage = nil
+                case .success(let snowpackData):
+                    self.snowpackData = snowpackData
                 case .failure(let error):
-                    print("Error fetching snowpack data: \(error.localizedDescription)")
-                    self.errorMessage = "Failed to fetch snowpack data. Error: \(error.localizedDescription)"
+                    _showAlert = true
+                    alertTitle = "Error fetching snowpack data"
+                    alertMessage = error.localizedDescription
                 }
             }
         }
@@ -149,6 +149,6 @@ struct RiverDetailView: View {
 
 struct RiverDetailView_Previews: PreviewProvider {
     static var previews: some View {
-        RiverDetailView(river: River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "303", siteIDs: [1999, 2000, 2005]))
+        RiverDetailView(river: River(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", siteIDs: [1999, 2000, 2005]))
     }
 }
