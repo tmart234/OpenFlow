@@ -82,7 +82,7 @@ struct RiverDetailView: View {
             .padding(.vertical)
             
             if let snowpackData = snowpackData {
-                Text("SWE: \(snowpackData.snowWaterEquivalent, specifier: "%.1f")")
+                Text("SWE: \(snowpackData.snowWaterEquivalent, specifier: "%.1f") in")
             } else {
                 Text("Fetching SWE data...")
             }
