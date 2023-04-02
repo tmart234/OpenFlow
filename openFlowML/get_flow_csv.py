@@ -2,7 +2,7 @@ import requests
 from datetime import datetime, timedelta
 import csv
 
-
+# Script to get Historical Flows
 # Adds flow to data. Given a csv of temps & dates, find the date range and add a column for flow in cfs
 # USER PARAMS
 flow_site_id = "09058000"

@@ -1,6 +1,8 @@
 import requests
 from datetime import datetime
 
+# script to get historical SWE for a location and date range
+
 # Set your variables here
 start_date = "2020-01-01"
 end_date = "2021-01-01"
