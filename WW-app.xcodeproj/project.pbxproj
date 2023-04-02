@@ -18,6 +18,9 @@
 		9907233D29D936F400C18065 /* AWSPluginsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233C29D936F400C18065 /* AWSPluginsCore */; };
 		9907233F29D936F400C18065 /* AWSS3StoragePlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233E29D936F400C18065 /* AWSS3StoragePlugin */; };
 		9907234129D936F400C18065 /* Amplify in Frameworks */ = {isa = PBXBuildFile; productRef = 9907234029D936F400C18065 /* Amplify */; };
+		9907234529D9567C00C18065 /* train_ml.py in Resources */ = {isa = PBXBuildFile; fileRef = 9907234329D9567B00C18065 /* train_ml.py */; };
+		9907234629D9567C00C18065 /* get_csv.py in Resources */ = {isa = PBXBuildFile; fileRef = 9907234429D9567B00C18065 /* get_csv.py */; };
+		9907234A29D9572A00C18065 /* csv_flow.py in Resources */ = {isa = PBXBuildFile; fileRef = 9907234929D9572A00C18065 /* csv_flow.py */; };
 		99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BA829D79C3D00A37181 /* SwiftCSV */; };
 		99C62BAC29D7B21500A37181 /* CSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BAB29D7B21500A37181 /* CSV */; };
 		99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16D29D52DDD0069F04E /* WW_appApp.swift */; };
@@ -45,6 +48,9 @@
 		990722BB29D8BAEA00C18065 /* Backend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backend.swift; sourceTree = "<group>"; };
 		9907231129D9316000C18065 /* amplifyconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = amplifyconfiguration.json; sourceTree = SOURCE_ROOT; };
 		9907231229D9316000C18065 /* awsconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = awsconfiguration.json; sourceTree = SOURCE_ROOT; };
+		9907234329D9567B00C18065 /* train_ml.py */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.python; path = train_ml.py; sourceTree = "<group>"; };
+		9907234429D9567B00C18065 /* get_csv.py */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.python; path = get_csv.py; sourceTree = "<group>"; };
+		9907234929D9572A00C18065 /* csv_flow.py */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.python; path = csv_flow.py; sourceTree = "<group>"; };
 		99CFC16A29D52DDD0069F04E /* WW-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WW-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		99CFC16D29D52DDD0069F04E /* WW_appApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WW_appApp.swift; sourceTree = "<group>"; };
 		99CFC16F29D52DDD0069F04E /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
@@ -94,6 +100,16 @@
 			name = AmplifyConfig;
 			sourceTree = "<group>";
 		};
+		9907234229D9567B00C18065 /* openFlowML */ = {
+			isa = PBXGroup;
+			children = (
+				9907234929D9572A00C18065 /* csv_flow.py */,
+				9907234329D9567B00C18065 /* train_ml.py */,
+				9907234429D9567B00C18065 /* get_csv.py */,
+			);
+			path = openFlowML;
+			sourceTree = SOURCE_ROOT;
+		};
 		99CFC16129D52DDD0069F04E = {
 			isa = PBXGroup;
 			children = (
@@ -132,6 +148,7 @@
 				990722BB29D8BAEA00C18065 /* Backend.swift */,
 				9907231129D9316000C18065 /* amplifyconfiguration.json */,
 				9907231229D9316000C18065 /* awsconfiguration.json */,
+				9907234229D9567B00C18065 /* openFlowML */,
 			);
 			path = "WW-app";
 			sourceTree = "<group>";
@@ -227,7 +244,10 @@
 				99CFC17729D52DDD0069F04E /* Assets.xcassets in Resources */,
 				9907231429D9316000C18065 /* awsconfiguration.json in Resources */,
 				9907231329D9316000C18065 /* amplifyconfiguration.json in Resources */,
+				9907234629D9567C00C18065 /* get_csv.py in Resources */,
 				32AEC02E2B907E67187F092D /* awsconfiguration.json in Resources */,
+				9907234A29D9572A00C18065 /* csv_flow.py in Resources */,
+				9907234529D9567C00C18065 /* train_ml.py in Resources */,
 				47112FE52C84FB4D9C2DB320 /* amplifyconfiguration.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
