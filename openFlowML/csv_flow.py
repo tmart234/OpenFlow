@@ -1,55 +1,50 @@
 import requests
-import csv
 from datetime import datetime, timedelta
-from collections import defaultdict
-import time
-import json
 
 # USER PARAMS
-# Parameters to control
 flow_site_id = "09058000"
-# Replace with your own NOAA API key
-noaa_api_key = "your_noaa_api_key_here"
-# Replace with desired station ID
-noaa_station_id = "USW00012839"
-# GPS cords
-latitude = "39.987749"
-longitude = "-106.510539"
 
-# Calculate today and one year before today
 today = datetime.today()
 one_year_ago = today - timedelta(days=365)
 today_str = today.strftime("%Y-%m-%d")
 one_year_ago_str = one_year_ago.strftime("%Y-%m-%d")
 
-# Step 1: Fetch CSV data from the USGS endpoint
-url = f"https://nwis.waterservices.usgs.gov/nwis/iv/?sites={flow_site_id}&parameterCd=00060&startDT={one_year_ago_str}T14:32:51.443-06:00&endDT={today_str}T14:32:51.443-06:00&siteStatus=all&format=rdb"
+url = f"https://nwis.waterservices.usgs.gov/nwis/iv/?sites={flow_site_id}&parameterCd=00060&startDT={one_year_ago_str}&endDT={today_str}&siteStatus=all&format=rdb"
 response = requests.get(url)
 content = response.text.splitlines()
 
-data = []
+# purpose is to store the daily average
+# ex: {"2022-04-02":234,"2022-04-03":456,"2022-04-0":567}
+avg_dict = {}
 
-for row in csv.reader(content, delimiter='\t'):
-    if row[0].startswith("USGS"):
-        data.append(row)
+# Initialize avg_dict with keys for dates from a year ago to today
+date_range = [one_year_ago + timedelta(days=i) for i in range(366)]
+for date in date_range:
+    date_str = date.strftime("%Y-%m-%d")
+    avg_dict[date_str] = {
+        "values": [],
+        "count": 0,
+        "sum": 0
+    }
 
-# Step 2: Calculate the daily average of the values in the CSV data
-daily_values = defaultdict(list)
+# loop through all dates
+for line in content:
+    if line.startswith("USGS"):
+        data = line.split("\t")
+        date_time_str = data[2]
+        target_date = date_time_str.split("T")[0].split()[0]  # Get date without the time component
+        discharge_value = data[4]
 
-for row in data:
-    date_str = row[2].split(" ")[0]
-    value = row[4]
-    if value.replace(".", "", 1).isdigit():  # Check if the value is a float
-        daily_values[date_str].append(float(value))
+        try:
+            discharge_value = float(discharge_value)
+            avg_dict[target_date]["values"].append(discharge_value)
+            avg_dict[target_date]["count"] += 1
+            avg_dict[target_date]["sum"] += discharge_value
+        except ValueError:
+            pass
 
-daily_averages = {date: sum(values) / len(values) for date, values in daily_values.items()}
+# Calculate daily average
+for date, data in avg_dict.items():
+    avg_dict[date] = data["sum"] / data["count"] if data["count"] > 0 else None
 
-# Step 3: Save the daily averages to a CSV file
-with open("daily_averages.csv", mode="w", newline="") as csv_file:
-    fieldnames = ["Date", "Average"]
-    writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-
-    writer.writeheader()
-    for date, average in daily_averages.items():
-        writer.writerow({"Date": date, "Average": average})
-
+print(avg_dict)
