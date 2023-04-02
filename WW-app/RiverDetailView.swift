@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Foundation
+import Amplify
 
 struct RiverDetailView: View {
     let river: River
@@ -21,6 +22,7 @@ struct RiverDetailView: View {
     @State private var alertTitle: String = ""
     @State private var alertMessage: String = ""
     @State private var flowData: String = ""
+    @EnvironmentObject private var backend: Backend
 
     private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
         return reservoirData.data.sorted { $0.date > $1.date }.first
@@ -80,19 +82,23 @@ struct RiverDetailView: View {
                             Text(info.reservoirName)
                                 .font(.headline)
                             
-                            if let latestStorageData = info.reservoirData.data.sorted(by: { $0.date > $1.date }).first {
+                            if info.reservoirData.data.sorted(by: { $0.date > $1.date }).first != nil {
                                 Text("Percentage filled: \(info.percentageFilled, specifier: "%.1f")%")
                             }
                         }
                     }
                 }
             }
-            DatePicker("Select Date", selection: $selectedDate, displayedComponents: .date)
-                .padding(.horizontal)
-            
-            Button("Get Flow Prediction") {
+            if backend.isSignedIn {
+                DatePicker("Select Date", selection: $selectedDate, displayedComponents: .date)
+                    .padding(.horizontal)
+
+                Button("Get Flow Prediction") {
+                }
+                .padding(.vertical)
+            } else {
+                Text("Please log in to access advanced features")
             }
-            .padding(.vertical)
 
             if let errorMessage = errorMessage {
                 Text(errorMessage)

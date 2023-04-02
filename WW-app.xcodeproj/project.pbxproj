@@ -7,6 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		32AEC02E2B907E67187F092D /* awsconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 72EEBD568338F5CA2198E378 /* awsconfiguration.json */; };
+		47112FE52C84FB4D9C2DB320 /* amplifyconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 35AA14D37B0875146C0E1791 /* amplifyconfiguration.json */; };
+		990722BC29D8BAEA00C18065 /* Backend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 990722BB29D8BAEA00C18065 /* Backend.swift */; };
+		9907231329D9316000C18065 /* amplifyconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 9907231129D9316000C18065 /* amplifyconfiguration.json */; };
+		9907231429D9316000C18065 /* awsconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 9907231229D9316000C18065 /* awsconfiguration.json */; };
+		9907233729D936F400C18065 /* AWSAPIPlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233629D936F400C18065 /* AWSAPIPlugin */; };
+		9907233929D936F400C18065 /* AWSCognitoAuthPlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233829D936F400C18065 /* AWSCognitoAuthPlugin */; };
+		9907233B29D936F400C18065 /* AWSDataStorePlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233A29D936F400C18065 /* AWSDataStorePlugin */; };
+		9907233D29D936F400C18065 /* AWSPluginsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233C29D936F400C18065 /* AWSPluginsCore */; };
+		9907233F29D936F400C18065 /* AWSS3StoragePlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233E29D936F400C18065 /* AWSS3StoragePlugin */; };
+		9907234129D936F400C18065 /* Amplify in Frameworks */ = {isa = PBXBuildFile; productRef = 9907234029D936F400C18065 /* Amplify */; };
 		99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BA829D79C3D00A37181 /* SwiftCSV */; };
 		99C62BAC29D7B21500A37181 /* CSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BAB29D7B21500A37181 /* CSV */; };
 		99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16D29D52DDD0069F04E /* WW_appApp.swift */; };
@@ -29,6 +40,11 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		35AA14D37B0875146C0E1791 /* amplifyconfiguration.json */ = {isa = PBXFileReference; explicitFileType = text.json; path = amplifyconfiguration.json; sourceTree = "<group>"; };
+		72EEBD568338F5CA2198E378 /* awsconfiguration.json */ = {isa = PBXFileReference; explicitFileType = text.json; path = awsconfiguration.json; sourceTree = "<group>"; };
+		990722BB29D8BAEA00C18065 /* Backend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backend.swift; sourceTree = "<group>"; };
+		9907231129D9316000C18065 /* amplifyconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = amplifyconfiguration.json; sourceTree = SOURCE_ROOT; };
+		9907231229D9316000C18065 /* awsconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = awsconfiguration.json; sourceTree = SOURCE_ROOT; };
 		99CFC16A29D52DDD0069F04E /* WW-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WW-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		99CFC16D29D52DDD0069F04E /* WW_appApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WW_appApp.swift; sourceTree = "<group>"; };
 		99CFC16F29D52DDD0069F04E /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
@@ -52,7 +68,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9907233729D936F400C18065 /* AWSAPIPlugin in Frameworks */,
 				99CFC19829D56F800069F04E /* SwiftyJSON in Frameworks */,
+				9907233D29D936F400C18065 /* AWSPluginsCore in Frameworks */,
+				9907233929D936F400C18065 /* AWSCognitoAuthPlugin in Frameworks */,
+				9907234129D936F400C18065 /* Amplify in Frameworks */,
+				9907233B29D936F400C18065 /* AWSDataStorePlugin in Frameworks */,
+				9907233F29D936F400C18065 /* AWSS3StoragePlugin in Frameworks */,
 				99C62BAC29D7B21500A37181 /* CSV in Frameworks */,
 				99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */,
 				99CFC19D29D76AD30069F04E /* AnyCodable in Frameworks */,
@@ -63,11 +85,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		46BB18E53DC1E951AEA7DCBA /* AmplifyConfig */ = {
+			isa = PBXGroup;
+			children = (
+				72EEBD568338F5CA2198E378 /* awsconfiguration.json */,
+				35AA14D37B0875146C0E1791 /* amplifyconfiguration.json */,
+			);
+			name = AmplifyConfig;
+			sourceTree = "<group>";
+		};
 		99CFC16129D52DDD0069F04E = {
 			isa = PBXGroup;
 			children = (
 				99CFC16C29D52DDD0069F04E /* WW-app */,
 				99CFC16B29D52DDD0069F04E /* Products */,
+				46BB18E53DC1E951AEA7DCBA /* AmplifyConfig */,
 			);
 			sourceTree = "<group>";
 		};
@@ -97,6 +129,9 @@
 				99CFC19229D53DF80069F04E /* NRCSResponse.swift */,
 				99CFC19429D55FCF0069F04E /* WeatherResponse.swift */,
 				99CFC19929D570030069F04E /* ReservoirData.swift */,
+				990722BB29D8BAEA00C18065 /* Backend.swift */,
+				9907231129D9316000C18065 /* amplifyconfiguration.json */,
+				9907231229D9316000C18065 /* awsconfiguration.json */,
 			);
 			path = "WW-app";
 			sourceTree = "<group>";
@@ -131,6 +166,12 @@
 				99CFC19C29D76AD30069F04E /* AnyCodable */,
 				99C62BA829D79C3D00A37181 /* SwiftCSV */,
 				99C62BAB29D7B21500A37181 /* CSV */,
+				9907233629D936F400C18065 /* AWSAPIPlugin */,
+				9907233829D936F400C18065 /* AWSCognitoAuthPlugin */,
+				9907233A29D936F400C18065 /* AWSDataStorePlugin */,
+				9907233C29D936F400C18065 /* AWSPluginsCore */,
+				9907233E29D936F400C18065 /* AWSS3StoragePlugin */,
+				9907234029D936F400C18065 /* Amplify */,
 			);
 			productName = "WW-app";
 			productReference = 99CFC16A29D52DDD0069F04E /* WW-app.app */;
@@ -166,6 +207,7 @@
 				99CFC19B29D76AD30069F04E /* XCRemoteSwiftPackageReference "AnyCodable" */,
 				99C62BA729D79C3D00A37181 /* XCRemoteSwiftPackageReference "SwiftCSV" */,
 				99C62BAA29D7B21500A37181 /* XCRemoteSwiftPackageReference "CSV.swift" */,
+				9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */,
 			);
 			productRefGroup = 99CFC16B29D52DDD0069F04E /* Products */;
 			projectDirPath = "";
@@ -183,6 +225,10 @@
 			files = (
 				99CFC17B29D52DDD0069F04E /* Preview Assets.xcassets in Resources */,
 				99CFC17729D52DDD0069F04E /* Assets.xcassets in Resources */,
+				9907231429D9316000C18065 /* awsconfiguration.json in Resources */,
+				9907231329D9316000C18065 /* amplifyconfiguration.json in Resources */,
+				32AEC02E2B907E67187F092D /* awsconfiguration.json in Resources */,
+				47112FE52C84FB4D9C2DB320 /* amplifyconfiguration.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +250,7 @@
 				99CFC18229D52EE80069F04E /* River.swift in Sources */,
 				99CFC18C29D539EA0069F04E /* SnowpackData.swift in Sources */,
 				99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */,
+				990722BC29D8BAEA00C18065 /* Backend.swift in Sources */,
 				99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -369,7 +416,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"WW-app/Preview Content\"";
-				DEVELOPMENT_TEAM = KW68H824S9;
+				DEVELOPMENT_TEAM = KVKVM7VNTW;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -424,6 +471,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/aws-amplify/amplify-swift.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		99C62BA729D79C3D00A37181 /* XCRemoteSwiftPackageReference "SwiftCSV" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftcsv/SwiftCSV.git";
@@ -467,6 +522,36 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		9907233629D936F400C18065 /* AWSAPIPlugin */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */;
+			productName = AWSAPIPlugin;
+		};
+		9907233829D936F400C18065 /* AWSCognitoAuthPlugin */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */;
+			productName = AWSCognitoAuthPlugin;
+		};
+		9907233A29D936F400C18065 /* AWSDataStorePlugin */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */;
+			productName = AWSDataStorePlugin;
+		};
+		9907233C29D936F400C18065 /* AWSPluginsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */;
+			productName = AWSPluginsCore;
+		};
+		9907233E29D936F400C18065 /* AWSS3StoragePlugin */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */;
+			productName = AWSS3StoragePlugin;
+		};
+		9907234029D936F400C18065 /* Amplify */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9907233529D936F400C18065 /* XCRemoteSwiftPackageReference "amplify-swift" */;
+			productName = Amplify;
+		};
 		99C62BA829D79C3D00A37181 /* SwiftCSV */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 99C62BA729D79C3D00A37181 /* XCRemoteSwiftPackageReference "SwiftCSV" */;

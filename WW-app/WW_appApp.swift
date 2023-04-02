@@ -6,15 +6,22 @@
 //
 
 import SwiftUI
+import Amplify
+import AWSPluginsCore
+import AWSCognitoAuthPlugin
+import AWSAPIPlugin
 
 @main
 struct WW_appApp: App {
-    let persistenceController = PersistenceController.shared
+    init() {
+        // initialize Amplify
+        _ = Backend.initialize()
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .environmentObject(Backend.shared)
         }
     }
 }

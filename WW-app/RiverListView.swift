@@ -6,24 +6,71 @@
 //
 
 import SwiftUI
+import Amplify
 
 struct RiverListView: View {
     let rivers: [River]
-    
+    @EnvironmentObject private var backend: Backend
     var body: some View {
-        List(rivers) { river in
-            NavigationLink(destination: RiverDetailView(river: river)) {
-                VStack(alignment: .leading) {
-                    Text(river.name)
-                        .font(.headline)
-                    Text(river.location)
-                        .font(.subheadline)
+        VStack {
+            List(rivers) { river in
+                NavigationLink(destination: RiverDetailView(river: river).environmentObject(backend)) {
+                    VStack(alignment: .leading) {
+                        Text(river.name)
+                            .font(.headline)
+                        Text(river.location)
+                            .font(.subheadline)
+                    }
+                }
+            }
+            .navigationTitle("Rivers")
+            SignInButton()
+        }
+        .onAppear {
+            Task {
+                do {
+                    let session = try await Amplify.Auth.fetchAuthSession()
+                    backend.isSignedIn = session.isSignedIn
+                } catch {
+                    print("Fetch auth session failed with error - \(error)")
                 }
             }
         }
-        .navigationTitle("Rivers")
     }
 }
+struct SignInButton: View {
+    var body: some View {
+        Button(
+            action: {
+                Task { await Backend.shared.signIn() }
+            },
+            label: {
+                HStack {
+                    Image(systemName: "person.fill")
+                        .scaleEffect(1.5)
+                        .padding()
+                    Text("Sign In")
+                        .font(.largeTitle)
+                }
+                .padding()
+                .foregroundColor(.white)
+                .background(Color.green)
+                .cornerRadius(30)
+            }
+        )
+    }
+}
+struct SignOutButton : View {
+    var body: some View {
+        Button(
+            action: {
+                Task { await Backend.shared.signOut() }
+            },
+            label: { Text("Sign Out") }
+        )
+    }
+}
+
 
 struct RiverListView_Previews: PreviewProvider {
     static var previews: some View {
@@ -33,5 +80,6 @@ struct RiverListView_Previews: PreviewProvider {
         ])
     }
 }
+
 
 
