@@ -1,8 +1,6 @@
 import requests
 from datetime import datetime
 
-# script to get historical SWE for a location and date range
-
 # Set your variables here
 start_date = "2020-01-01"
 end_date = "2021-01-01"
@@ -24,12 +22,15 @@ content = response.text.splitlines()
 data_dict = {}
 
 for line in content:
-    if line.startswith("Date") or ',' not in line:
-        continue  # skip the header line or lines without a comma
+    if ',' not in line:
+        continue  # skip lines without a comma
 
     date_str, value = line.split(',')
-    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
 
-    data_dict[date_obj] = float(value)
+    # Check if the second element is a number
+    if not value.replace('.', '', 1).isdigit():
+        continue
+
+    data_dict[date_str] = float(value)
 
 print(data_dict)
