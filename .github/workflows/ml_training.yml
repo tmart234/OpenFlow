@@ -25,5 +25,5 @@ jobs:
         pip install -r /openFlowML/requirements.txt
 
     - name: Run feature scrape
-      run: python /openFlowML/get_flow&temp_csv.py
+      run: python /openFlowML/get_temp&flow_csv.py
         
