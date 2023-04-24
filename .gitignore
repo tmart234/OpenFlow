@@ -45,3 +45,7 @@ graphql/schema.json
 graphql/subscriptions.graphql
 WW-app.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 WW-app.xcodeproj/xcuserdata/tylermartin.xcuserdatad/xcdebugger/Breakpoints_v2.xcbkptlist
+*.csv
+*.xcbkptlist
+WW-app.xcodeproj/xcuserdata/tylermartin.xcuserdatad/xcdebugger/Breakpoints_v2.xcbkptlist
+WW-app.xcodeproj/xcuserdata/tylermartin.xcuserdatad/xcdebugger/Breakpoints_v2.xcbkptlist

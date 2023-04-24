@@ -31,4 +31,13 @@ struct ReservoirInfo: Identifiable {
     let reservoirName: String
     let reservoirData: ReservoirData
     let percentageFilled: Double
+    
+    static let reservoirDetails: [Int: (name: String, capacity: Double)] = [
+        100163: ("Turquoise Lake Reservoir", 129440),
+        100275: ("Twin Lakes Reservoir", 141000),
+        2000: ("Green Mountain Reservoir", 154600),
+        2005: ("Williams Fork Reservoir", 097000),
+        1999: ("Granby Lake", 539758)
+    ]
 }
+

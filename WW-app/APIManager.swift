@@ -47,16 +47,8 @@ class APIManager {
             }
         }
     }
-    let reservoirDetails: [Int: (name: String, capacity: Double)] = [
-        100163: ("Turquoise Lake Reservoir", 129440),
-        100275: ("Twin Lakes Reservoir", 141000),
-        2000: ("Green Mountain Reservoir", 154600),
-        2005: ("Williams Fork Reservoir", 97000),
-        1999: ("Granby Lake", 539758)
-    ]
-
     func getReservoirDetails(for siteID: Int, completion: @escaping (Result<ReservoirInfo, APIError>) -> Void) {
-        guard let reservoir = reservoirDetails[siteID] else {
+        guard let reservoir = ReservoirInfo.reservoirDetails[siteID] else {
             completion(.failure(.invalidSiteID))
             return
         }
@@ -64,7 +56,7 @@ class APIManager {
         fetchReservoirData(siteID: siteID) { result in
             switch result {
             case .success(let reservoirData):
-                guard let latestStorageData = reservoirData.data.last else {
+                guard let latestStorageData = reservoirData.data.max(by: { $0.date < $1.date }) else {
                     completion(.failure(.noData))
                     return
                 }

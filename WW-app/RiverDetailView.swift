@@ -9,6 +9,8 @@ import SwiftUI
 import Foundation
 import Amplify
 
+
+
 struct RiverDetailView: View {
     let river: RiverData
 
@@ -24,16 +26,38 @@ struct RiverDetailView: View {
     @State private var flowData: String = ""
     @EnvironmentObject private var backend: Backend
 
+    func calculatePercentageFilled(current: Double, reservoirID: Int) -> Double {
+        if let reservoir = ReservoirInfo.reservoirDetails[reservoirID] {
+            return (current / reservoir.capacity) * 100
+        } else {
+            return 0.0
+        }
+    }
+
     private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
         return reservoirData.data.sorted { $0.date > $1.date }.first
     }
+    
     private func fetchReservoirData(siteIDs: [Int]) {
         for siteID in river.reservoirSiteIDs {
             APIManager.shared.getReservoirDetails(for: siteID) { result in
                 switch result {
                 case .success(let info):
                     DispatchQueue.main.async {
-                        self.reservoirData.append(info)
+                        // Find the most recent storage value
+                        var currentStorage: Double = 0.0
+                        var mostRecentDate: Date? = nil
+                        for storageData in info.reservoirData.data {
+                            if mostRecentDate == nil || storageData.date > mostRecentDate! {
+                                mostRecentDate = storageData.date
+                                currentStorage = storageData.storage
+                            }
+                        }
+                        
+                        let percentageFilled = calculatePercentageFilled(current: currentStorage, reservoirID: siteID)
+
+                        let reservoirInfo = ReservoirInfo(reservoirName: info.reservoirName, reservoirData: info.reservoirData, percentageFilled: percentageFilled)
+                        self.reservoirData.append(reservoirInfo)
                     }
                 case .failure(let error):
                     print("Error fetching reservoir details:", error)
@@ -41,6 +65,7 @@ struct RiverDetailView: View {
             }
         }
     }
+
     private func fetchFlowData() {
         APIManager.shared.getFlowData(usgsSiteID: river.usgsSiteID) { result in
             switch result {
@@ -74,16 +99,20 @@ struct RiverDetailView: View {
                 .font(.title2)
                 .padding(.top)
             
+            Spacer()
+                .frame(height: 20)
+
             if reservoirData.isEmpty {
                 ProgressView()
             } else {
                 VStack {
+                    Text("Reservoir Data:")
                     ForEach(reservoirData, id: \.reservoirName) { info in
                         VStack(alignment: .leading) {
                             Text(info.reservoirName)
                                 .font(.headline)
                             
-                            if info.reservoirData.data.sorted(by: { $0.date > $1.date }).first != nil {
+                            if let latestStorageData = info.reservoirData.data.sorted(by: { $0.date > $1.date }).first {
                                 Text("Percentage filled: \(info.percentageFilled, specifier: "%.1f")%")
                             }
                         }
