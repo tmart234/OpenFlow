@@ -19,8 +19,10 @@ def fetch_noaa_temps(noaa_station_id):
     today_str = today.strftime("%Y-%m-%d")
     one_year_ago = today - timedelta(days=365)
     one_year_ago_str = one_year_ago.strftime("%Y-%m-%d")
-
-    ncei_base_url = "https://www.ncei.noaa.gov/access/services/data/v3"
+    # TODO: use NCEI Search Service API to search for "Global Historical Climatology Network - Daily (GHCN-Daily), Version 3" dataset
+    # create a boundary box of 5 miles around location and increase by 5 miles each time it doesnt find a station until it finds one
+    # ex: https://www.ncei.noaa.gov/access/search/data-search/daily-summaries?bbox=39.175,-106.689,38.721,-105.927&dataTypes=PRCP&dataTypes=TMAX&dataTypes=TMIN
+    ncei_base_url = "https://www.ncei.noaa.gov/access/services/search/v1"
     ncei_params = {
         "dataset": "daily-summaries",
         "stations": noaa_station_id,
@@ -163,7 +165,7 @@ for site_id, site_data in filtered_station_data.items():
 
         temp_distance = haversine_distance(site_data["dec_lat_va"], site_data["dec_long_va"], station_latitude, station_longitude)
         station_maxdate = datetime.strptime(station["maxdate"], "%Y-%m-%d")
-
+        # Global Historical Climatology Network - Daily
         if (nearest_distance == None or temp_distance < nearest_distance) and station_maxdate >= days_ago and "GHCND:" in station["id"]:
             # checks that the station ID contains valid tempature data
             if fetch_noaa_temps(station['id']):
