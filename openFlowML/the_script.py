@@ -13,44 +13,41 @@ import csv
 
 noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa"
 
-def fetch_noaa_temps(noaa_station_id):
+def lat_lon_to_bbox(lat, lon, miles):
+    miles_to_degrees = 1 / 69
+    delta = miles * miles_to_degrees
+    return lat - delta, lon - delta, lat + delta, lon + delta
+
+def fetch_noaa_temps(noaa_station_id, latitude, longitude):
     temperature_data = {}
     today = datetime.today()
-    today_str = today.strftime("%Y-%m-%d")
+    today_str = today.strftime("%Y-%m-%dT%H:%M:%SZ")
     one_year_ago = today - timedelta(days=365)
-    one_year_ago_str = one_year_ago.strftime("%Y-%m-%d")
-    # TODO: use NCEI Search Service API to search for "Global Historical Climatology Network - Daily (GHCN-Daily), Version 3" dataset
-    # create a boundary box of 5 miles around location and increase by 5 miles each time it doesnt find a station until it finds one
-    # ex: https://www.ncei.noaa.gov/access/search/data-search/daily-summaries?bbox=39.175,-106.689,38.721,-105.927&dataTypes=PRCP&dataTypes=TMAX&dataTypes=TMIN
-    ncei_base_url = "https://www.ncei.noaa.gov/access/services/search/v1"
-    ncei_params = {
+    one_year_ago_str = one_year_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
+    ncei_search_url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
+    bbox = lat_lon_to_bbox(latitude, longitude, 5)
+    ncei_search_params = {
         "dataset": "daily-summaries",
-        "stations": noaa_station_id,
         "startDate": one_year_ago_str,
         "endDate": today_str,
+        "boundingBox": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
         "dataTypes": "TMIN,TMAX",
+        "stations": noaa_station_id,
         "format": "csv",
     }
+    search_response = requests.get(ncei_search_url, params=ncei_search_params)
+    if search_response.status_code == 200 and search_response.text.strip():
+        reader = csv.DictReader(io.StringIO(search_response.text))
+        for row in reader:
+            date_str = row["DATE"]
+            min_temp = float(row["TMIN"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+            max_temp = float(row["TMAX"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+            temperature_data[date_str] = (min_temp, max_temp)
 
-    response = requests.get(ncei_base_url, params=ncei_params)
-    print(response.text)
-
-    if response.status_code != 200:
-        print(f"Error: Received a {response.status_code} status code from the NCEI server.")
-        exit()
-
-    content = response.text.splitlines()
-    for row in content[:10]:
-        print(row)
-    reader = csv.DictReader(io.StringIO(response.text))
-    for row in reader:
-        date_str = row["DATE"]
-        min_temp = float(row["TMIN"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-        max_temp = float(row["TMAX"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-        temperature_data[date_str] = (min_temp, max_temp)
-
+    return temperature_data
 
 # Find the distance between 2 lats and longs
+# TODO: ideally it's not just a close NOAA station, but also resides in same basin/drainage as the USGS station
 def haversine_distance(lat1, lon1, lat2, lon2):
     from math import radians, sin, cos, sqrt, atan2
 
@@ -153,6 +150,7 @@ stations = get_noaa_stations(url, headers=headers)
 nearest_stations = {}
 #print(stations)
 # TODO: might need better methods to vouch for quality of a NOAA station's data and choose near but best quality
+
 for site_id, site_data in filtered_station_data.items():
     nearest_station = None
     nearest_distance = None
@@ -167,8 +165,8 @@ for site_id, site_data in filtered_station_data.items():
         station_maxdate = datetime.strptime(station["maxdate"], "%Y-%m-%d")
         # Global Historical Climatology Network - Daily
         if (nearest_distance == None or temp_distance < nearest_distance) and station_maxdate >= days_ago and "GHCND:" in station["id"]:
-            # checks that the station ID contains valid tempature data
-            if fetch_noaa_temps(station['id']):
+            temperature_data = fetch_noaa_temps(station['id'], site_data['dec_lat_va'], site_data['dec_long_va'])
+            if temperature_data:
                 nearest_distance = temp_distance
                 nearest_station = station
                 most_recent_maxdate = station_maxdate
@@ -177,39 +175,4 @@ for site_id, site_data in filtered_station_data.items():
 
     # Update filtered_station_data with the nearest NOAA station data
     site_data["nearest_station"] = nearest_station
-
-print("Filtered data with nearest stations:")
-print(filtered_station_data)
-
-# Fetch temperature data and save to CSV for each nearest station selection
-for site_id, site_data in filtered_station_data.items():
-    nearest_station = site_data["nearest_station"]
-    station_id = nearest_station["id"]
-    end_date = datetime.today().date()
-    start_date = (end_date - timedelta(days=data_years * 365))
-
-    url = f"https://www.ncdc.noaa.gov/cdo-web/api/v2/data?datasetid=GHCND&datatypeid=TMAX,TMIN&startdate={start_date}&enddate={end_date}&stationid={station_id}&limit=1000"    
-    headers_token = {"token": noaa_api_token}
-    response = fetch_data_with_retry(url, headers_token)
-    print(response)
-
-    temperature_data = []
-    print(f"Request URL: {url}")
-
-    if response:
-        if response.status_code == 200 and response.text:
-            data = response.json()
-
-            if 'results' in data:
-                for item in data['results']:
-                    temperature_data.append([station_id, item['date'], item['datatype'], item['value']])
-            else:
-                print(f"No results received from the API for station {station_id}")
-        else:
-            error_message = response.json().get("message", "No additional error message provided.")
-            print(f"Error: Received status code {response.status_code} from the API for station {station_id}. Error message: {error_message}")
-    else:
-        print(f"Error: Failed to fetch data for station {station_id} after retries.")
-
-    # Save temperature data to a CSV file
-    save_to_csv(station_id, temperature_data)
+    site_data["temperature_data"] = temperature_data
