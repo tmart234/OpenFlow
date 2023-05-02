@@ -52,6 +52,17 @@ Site Service Documentation:
 https://waterservices.usgs.gov/rest/Site-Service.html
 - use this service to retrieve information about the millions of hydrologic sites
 
+## USGS GitHUB
+
+River DL
+https://github.com/USGS-R/river-dl
+- intent of this repository was to predict stream temperature and streamflow
+
+FCPG Tools:
+https://fcpgtools.readthedocs.io/en/latest/cookbook.html
+- produce pre-computed girds of upstream basin characteristics
+
+
 # USBR
 The United States Bureau of Reclamation (USBR) manages water resources in the western United States, including reservoirs and dams. The USBR provides historical and current data for reservoirs, as well as an API called RISE for accessing information about reservoirs, such as coordinates, location tags, and basin information. The RISE API can also be used to fetch historical data.
 
@@ -67,4 +78,6 @@ https://github.com/usbr/PyForecast
  - useful in predicting monthly and seasonal inflows and streamflows
  - "In this project, we use a combination of APIs and services provided by NOAA, USGS, and USBR to fetch, analyze, and visualize temperature, water flow, and reservoir data. The collected data is then stored in CSV files for further processing and analysis."
 
-
+# Other Github Repos
+https://github.com/AIStream-Peelout/flow-forecast
+- LSTM flow forecasting
