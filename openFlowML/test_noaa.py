@@ -1,5 +1,4 @@
 import requests
-import pandas as pd
 import io
 from datetime import datetime, timedelta
 import time
@@ -163,25 +162,36 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     ncei_search_url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
     ncei_search_params = {
         "dataset": "daily-summaries",
-        "startDate": one_year_ago_str,
-        "endDate": end_date_str,
-        "dataTypes": "TMIN,TMAX",
+        "startDate": one_year_ago_str + "T00:00:00",
+        "endDate": end_date_str + "T00:00:00",
+        "dataTypes": "TMIN",
+        "dataTypes": "TMAX",
         "stations": nearest_station_id,
-        "format": "csv",
+        "limit": 1000,
+        "offset": 0
     }
 
-    request_url = ncei_search_url + "?" + urllib.parse.urlencode(ncei_search_params)
+    # Encode the parameters without encoding the colons in the datetime strings
+    encoded_params = [
+        f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()
+    ]
+
+    # Join the encoded parameters with '&' and add them to the URL
+    request_url = ncei_search_url + "?" + "&".join(encoded_params)
     print("Temperature data URL:", request_url)
 
     response_text = get_data(request_url, headers=headers)
 
     if response_text:
+        print(response_text)
         reader = csv.DictReader(io.StringIO(response_text))
         for row in reader:
             date_str = row["DATE"]
             min_temp = float(row["TMIN"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
             max_temp = float(row["TMAX"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
             temperature_data[date_str] = (min_temp, max_temp)
+    else:
+        print("Could not get temperature data!!")
 
     # Save temperature data to a CSV file
     with open("temperature_data.csv", "w", newline="") as csvfile:
