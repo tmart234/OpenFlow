@@ -156,28 +156,11 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     one_year_ago = end_date - timedelta(days=365)
     one_year_ago_str = one_year_ago.strftime("%Y-%m-%d")
 
-    ncei_search_url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
-    ncei_search_params = {
-        "dataset": "daily-summaries",
-        "startDate": one_year_ago_str + "T00:00:00",
-        "endDate": end_date_str + "T00:00:00",
-        "dataTypes": "TMIN",
-        "dataTypes": "TMAX",
-        "stations": nearest_station_id,
-        "limit": 1000,
-        "offset": 0
-    }
+    ncei_search_url = f"https://www.ncei.noaa.gov/access/services/data/daily-summaries/access/{nearest_station_id}.csv"
 
-    # Encode the parameters without encoding the colons in the datetime strings
-    encoded_params = [
-        f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()
-    ]
+    print("Temperature data URL:", ncei_search_url)
 
-    # Join the encoded parameters with '&' and add them to the URL
-    request_url = ncei_search_url + "?" + "&".join(encoded_params)
-    print("Temperature data URL:", request_url)
-
-    response_text = get_data(request_url, headers=headers)
+    response_text = get_data(ncei_search_url, headers=headers)
 
     if response_text:
         print(response_text)
