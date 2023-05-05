@@ -6,7 +6,6 @@ import csv
 import math
 import re
 import json
-import urllib.parse
 
 # given a coordinate, find closest NOAA station
 # tests a single NOAA station to get 1 year of historical temperature data
@@ -16,8 +15,6 @@ import urllib.parse
 Country = 'US'
 noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa"
 headers = {"token": noaa_api_token}
-latitude = 39.045002
-longitude = -106.257903
 
 def get_data(url, headers=None, max_retries=3):
     retries = 0
@@ -193,22 +190,30 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     else:
         print("Could not get temperature data!!")
 
-    # Save temperature data to a CSV file
-    with open("temperature_data.csv", "w", newline="") as csvfile:
-        fieldnames = ["DATE", "TMIN", "TMAX"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    csv_string = io.StringIO()
+    fieldnames = ["DATE", "TMIN", "TMAX"]
+    writer = csv.DictWriter(csv_string, fieldnames=fieldnames)
 
-        writer.writeheader()
-        for date_str, (min_temp, max_temp) in temperature_data.items():
-            writer.writerow({"DATE": date_str, "TMIN": min_temp, "TMAX": max_temp})
+    writer.writeheader()
+    for date_str, (min_temp, max_temp) in temperature_data.items():
+        writer.writerow({"DATE": date_str, "TMIN": min_temp, "TMAX": max_temp})
 
-    return temperature_data
+    return csv_string.getvalue()
+
+def main(latitude, longitude, noaa_api_token):
+    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token)
+    if nearest_station_id:
+        print("Nearest station ID with good data:", nearest_station_id)
+        temperature_data = fetch_temperature_data(nearest_station_id, noaa_api_token)
+        return nearest_station_id, temperature_data
+    else:
+        print("No station found near the specified location.")
 
 
 if __name__ == "__main__":
-    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token)
-    if nearest_station_id:
-        print("Nearest station ID with good data:", nearest_station_id) 
-        fetch_temperature_data(nearest_station_id, noaa_api_token) 
-    else: 
-        print("No station found near the specified location.")
+    latitude = 39.045002
+    longitude = -106.257903
+    id, temp_data = main(latitude, longitude, noaa_api_token)
+    # save csv file locally
+    with open(f"{id}_temperature_data.csv", "w") as csv_file:
+        csv_file.write(temp_data)
