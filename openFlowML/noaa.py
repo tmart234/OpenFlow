@@ -15,6 +15,57 @@ import json
 Country = 'US'
 noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa"
 headers = {"token": noaa_api_token}
+fileds = ["TMIN","TMAX"]
+
+def find_station_with_recent_data(sorted_stations, noaa_api_token, fields):
+    # TODO: also check for data coverage greater than 0.9
+    current_year = datetime.now().year
+    one_month_ago = datetime(current_year, datetime.now().month, 1) - timedelta(days=1)
+    #print(f"One month ago is: {one_month_ago.month} and current year is {current_year}")
+
+    for station_id in sorted_stations:
+        metadata = get_station_metadata(station_id, noaa_api_token)
+        if metadata:
+            maxdate_str = metadata.get("maxdate")
+            maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
+            print(f"Station ID: {station_id} has a month of: {maxdate.month} and year {maxdate.year}")
+
+            # check that the station has valid data for the last year and last month
+            if maxdate.year == current_year and maxdate.month >= one_month_ago.month:
+                bool_value = check_fields(fields, station_id)
+                if bool_value:
+                    return station_id
+    return None
+
+def check_fields(fields, id, start_str, end_date_str):
+    url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
+    ncei_search_params = {
+        "dataset": "daily-summaries",
+        "startDate": start_str + "T00:00:00",
+        "endDate": end_date_str + "T00:00:00",
+        "dataTypes": ",".join(fields),
+        "stations": id,
+    }
+
+    # Encode the parameters without encoding the colons in the datetime strings
+    encoded_params = [
+        f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()
+    ]
+
+    # Join the encoded parameters with '&' and add them to the URL
+    request_url = url + "?" + "&".join(encoded_params)
+    print(f"checking fields for: {request_url}")
+
+    search_response = get_data(request_url)
+    # Assuming search_response is a JSON string
+    search_response_json = json.loads(search_response)
+    data_types = search_response_json.get("dataTypes", {}).get("buckets", [])
+    # Check if the desired fields are in the response
+    response_fields = {data_type["key"] for data_type in data_types}
+    if all(field in response_fields for field in fields):
+        return True
+    print("bad fields... checking next ID")
+    return False
 
 def get_data(url, headers=None, max_retries=3):
     retries = 0
@@ -49,8 +100,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def find_closest_ghcnd_station(latitude, longitude, noaa_api_token):
-    # TODO: use NOAA search to only get station with TMIN and TMAX
+def find_closest_ghcnd_station(latitude, longitude, noaa_api_token, fields):
     # store all US stations in us_stations
     stations_url = "https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-stations.txt"
     response_text = get_data(stations_url)
@@ -71,9 +121,6 @@ def find_closest_ghcnd_station(latitude, longitude, noaa_api_token):
         exit()
 
     closest_station = None
-    min_distance = float("inf")
-    current_year = datetime.now().year
-    one_month_ago = datetime(current_year, datetime.now().month, 1) - timedelta(days=1)
 
      # regex pattern for stations
     pattern = re.compile(r"US[a-zA-Z0-9_]{6}\d+")
@@ -92,6 +139,7 @@ def find_closest_ghcnd_station(latitude, longitude, noaa_api_token):
         stations_with_distances.append((station_id, distance))
 
     # Sort stations by distance and limit the list to 15 items
+    # increase size if this part is failing
     sorted_stations = sorted(stations_with_distances, key=lambda x: x[1])[:15]
     print(f"Close station list: {sorted_stations}")
 
@@ -100,23 +148,11 @@ def find_closest_ghcnd_station(latitude, longitude, noaa_api_token):
         return None
 
     closest_station = None
-    current_year = datetime.now().year
-    one_month_ago = datetime(current_year, datetime.now().month, 1) - timedelta(days=1)
-    #print(f"One month ago is: {one_month_ago.month} and current year is {current_year}")
-
-    # TODO: also check for data coverage greater than 0.9
-    for station_id, distance in sorted_stations:
-        metadata_str = get_station_metadata(station_id, noaa_api_token)
-        if metadata_str:
-            maxdate_str = metadata_str.get("maxdate")
-            maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
-            maxdate = maxdate
-            print(f"Station ID: {station_id} has a month of: {maxdate.month} and year {maxdate.year}")
-
-            # check that the station has valid data for the last year and last month
-            if maxdate.year == current_year and maxdate.month >= one_month_ago.month:
-                closest_station = station_id
-                break
+    closest_station = find_station_with_recent_data(sorted_stations, noaa_api_token, fields)
+    if closest_station:
+        print(f"The closest station with recent data and valid fields is {closest_station}.")
+    else:
+        print("No station found with recent data and valid fields.")
     return closest_station
 
 def get_station_metadata(noaa_station_id, noaa_api_token):
@@ -170,7 +206,6 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     encoded_params = [
         f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()
     ]
-
     # Join the encoded parameters with '&' and add them to the URL
     request_url = ncei_search_url + "?" + "&".join(encoded_params)
     print("Temperature data URL:", request_url)
@@ -200,8 +235,8 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     return csv_string.getvalue()
 
 def main(latitude, longitude, noaa_api_token):
-    #nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token)
-    nearest_station_id = "US1COCF0005"
+    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token, fileds)
+    #nearest_station_id = "USC00058501"
     if nearest_station_id:
         print("Nearest station ID with good data:", nearest_station_id)
         temperature_data = fetch_temperature_data(nearest_station_id, noaa_api_token)
