@@ -50,6 +50,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 def find_closest_ghcnd_station(latitude, longitude, noaa_api_token):
+    # TODO: use NOAA search to only get station with TMIN and TMAX
     # store all US stations in us_stations
     stations_url = "https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-stations.txt"
     response_text = get_data(stations_url)
@@ -156,19 +157,34 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     one_year_ago = end_date - timedelta(days=365)
     one_year_ago_str = one_year_ago.strftime("%Y-%m-%d")
 
-    ncei_search_url = f"https://www.ncei.noaa.gov/access/services/data/daily-summaries/access/{nearest_station_id}.csv"
+    ncei_search_url = "https://www.ncei.noaa.gov/access/services/data/v1"
+    ncei_search_params = {
+        "dataset": "daily-summaries",
+        "startDate": one_year_ago_str + "T00:00:00",
+        "endDate": end_date_str + "T00:00:00",
+        "dataTypes": "TMIN,TMAX",
+        "stations": nearest_station_id,
+    }
 
-    print("Temperature data URL:", ncei_search_url)
+    # Encode the parameters without encoding the colons in the datetime strings
+    encoded_params = [
+        f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()
+    ]
 
-    response_text = get_data(ncei_search_url, headers=headers)
+    # Join the encoded parameters with '&' and add them to the URL
+    request_url = ncei_search_url + "?" + "&".join(encoded_params)
+    print("Temperature data URL:", request_url)
+
+    response_text = get_data(request_url, headers=headers)
 
     if response_text:
         print(response_text)
         reader = csv.DictReader(io.StringIO(response_text))
         for row in reader:
             date_str = row["DATE"]
-            min_temp = float(row["TMIN"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-            max_temp = float(row["TMAX"]) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+            # temperature values are given in tenths of degrees Celsius. In this case, we need to divide the values by 10 
+            min_temp = (float(row["TMIN"])/10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+            max_temp = (float(row["TMAX"])/10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
             temperature_data[date_str] = (min_temp, max_temp)
     else:
         print("Could not get temperature data!!")
@@ -184,13 +200,15 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     return csv_string.getvalue()
 
 def main(latitude, longitude, noaa_api_token):
-    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token)
+    #nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token)
+    nearest_station_id = "US1COCF0005"
     if nearest_station_id:
         print("Nearest station ID with good data:", nearest_station_id)
         temperature_data = fetch_temperature_data(nearest_station_id, noaa_api_token)
         return nearest_station_id, temperature_data
     else:
         print("No station found near the specified location.")
+        return None
 
 
 if __name__ == "__main__":
