@@ -15,17 +15,21 @@ url = url_template.format(
     station_id=station_id,
     state=state,
 )
-
+#print(url)
 response = requests.get(url)
 content = response.text.splitlines()
 
 data_dict = {}
 
 for line in content:
-    if ',' not in line:
+    if ',' not in line and not line.strip().startswith('#'):
         continue  # skip lines without a comma
-
-    date_str, value = line.split(',')
+    try:
+        date_str, value = line.split(',')
+    except Exception as e:
+        print(f"Error processing line: {line}")
+        print(f"Exception: {e}")
+        continue
 
     # Check if the second element is a number
     if not value.replace('.', '', 1).isdigit():
