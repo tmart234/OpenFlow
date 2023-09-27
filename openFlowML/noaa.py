@@ -37,7 +37,8 @@ def find_station_with_recent_data(sorted_stations, noaa_api_token, fields):
                     return station_id
     return None
 
-def check_fields(fields, id, start_str, end_date_str):
+def check_fields(fields, id, start_str):
+    end_date_str =  datetime.now().strftime("%Y-%m-%d")
     url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
     ncei_search_params = {
         "dataset": "daily-summaries",
