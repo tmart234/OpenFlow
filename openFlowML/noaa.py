@@ -17,33 +17,31 @@ noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa"
 headers = {"token": noaa_api_token}
 fileds = ["TMIN","TMAX"]
 
-def find_station_with_recent_data(sorted_stations, noaa_api_token, fields):
-    # TODO: also check for data coverage greater than 0.9
-    current_year = datetime.now().year
-    one_month_ago = datetime(current_year, datetime.now().month, 1) - timedelta(days=1)
+def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
     #print(f"One month ago is: {one_month_ago.month} and current year is {current_year}")
-
     for station_id in sorted_stations:
-        metadata = get_station_metadata(station_id, noaa_api_token)
+        metadata = get_station_metadata(station_id)
         if metadata:
-            maxdate_str = metadata.get("maxdate")
-            maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
-            print(f"Station ID: {station_id} has a month of: {maxdate.month} and year {maxdate.year}")
-
-            # check that the station has valid data for the last year and last month
-            if maxdate.year == current_year and maxdate.month >= one_month_ago.month:
-                bool_value = check_fields(fields, station_id)
-                if bool_value:
-                    return station_id
+            # check for high data coverage
+            if metadata.get("datacoverage") > 0.87:
+                maxdate_str = metadata.get("maxdate")
+                mindate_str = metadata.get("mindate")
+                maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
+                mindate = datetime.strptime(mindate_str, "%Y-%m-%d")
+                print(f"Station ID: {station_id} has a end of: {maxdate} and start of {mindate}")
+                # check that the station has valid data for end
+                if maxdate >= endStr and mindate <= startStr:
+                    bool_value = check_fields(fields, station_id[0], startStr, endStr)
+                    if bool_value:
+                        return station_id
     return None
 
-def check_fields(fields, id, start_str):
-    end_date_str =  datetime.now().strftime("%Y-%m-%d")
+def check_fields(fields, id, start_str, end_str):
     url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
     ncei_search_params = {
         "dataset": "daily-summaries",
-        "startDate": start_str + "T00:00:00",
-        "endDate": end_date_str + "T00:00:00",
+        "startDate": start_str.strftime("%Y-%m-%d") + "T00:00:00",
+        "endDate": end_str.strftime("%Y-%m-%d") + "T00:00:00",
         "dataTypes": ",".join(fields),
         "stations": id,
     }
@@ -101,7 +99,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def find_closest_ghcnd_station(latitude, longitude, noaa_api_token, fields):
+def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
     # store all US stations in us_stations
     stations_url = "https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-stations.txt"
     response_text = get_data(stations_url)
@@ -139,9 +137,9 @@ def find_closest_ghcnd_station(latitude, longitude, noaa_api_token, fields):
         distance = haversine_distance(latitude, longitude, lat, lon)
         stations_with_distances.append((station_id, distance))
 
-    # Sort stations by distance and limit the list to 15 items
+    # Sort stations by distance and limit the list to 50 items
     # increase size if this part is failing
-    sorted_stations = sorted(stations_with_distances, key=lambda x: x[1])[:15]
+    sorted_stations = sorted(stations_with_distances, key=lambda x: x[1])[:50]
     print(f"Close station list: {sorted_stations}")
 
     if not sorted_stations:
@@ -149,14 +147,19 @@ def find_closest_ghcnd_station(latitude, longitude, noaa_api_token, fields):
         return None
 
     closest_station = None
-    closest_station = find_station_with_recent_data(sorted_stations, noaa_api_token, fields)
+    closest_station = find_station_with_recent_data(sorted_stations, startStr, fields, endStr)
     if closest_station:
         print(f"The closest station with recent data and valid fields is {closest_station}.")
     else:
         print("No station found with recent data and valid fields.")
     return closest_station
 
-def get_station_metadata(noaa_station_id, noaa_api_token):
+def get_station_metadata(noaa_station_id):
+    # Check if noaa_station_id is a tuple, and if so, take the first element
+    if isinstance(noaa_station_id, tuple):
+        noaa_station_id = noaa_station_id[0]
+    # Ensure noaa_station_id is a string
+    noaa_station_id = str(noaa_station_id)
     if not noaa_station_id.startswith("GHCND:"):
         noaa_station_id = "GHCND:" + noaa_station_id
     cdo_api_url = "https://www.ncei.noaa.gov/cdo-web/api/v2/stations/"
@@ -170,35 +173,31 @@ def get_station_metadata(noaa_station_id, noaa_api_token):
         if not metadata:
             print(f"No metadata found for URL: {metadata}")
             return None
-        print(f"{noaa_station_id} metadata: {metadata}")
+        #print(f"{noaa_station_id} metadata: {metadata}")
         return metadata
     else:
         print("No metadata received.")
         return None
 
 
-def fetch_temperature_data(nearest_station_id, noaa_api_token):
+def fetch_temperature_data(nearest_station_id, startStr, endStr):
     temperature_data = {}
-    
+    # Convert datetime objects to strings with the desired format
+    start_str = startStr.strftime("%Y-%m-%d")
+    end_str = endStr.strftime("%Y-%m-%d")
     # Get station metadata
-    metadata = get_station_metadata(nearest_station_id, noaa_api_token)
+    metadata = get_station_metadata(nearest_station_id)
     print(metadata)
     
     if not metadata:
         print("Failed to fetch station metadata.")
         return temperature_data
 
-    # Use the end date on record if available
-    end_date_str = metadata.get("maxdate") if metadata.get("maxdate") else datetime.today().strftime("%Y-%m-%d")
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
-    one_year_ago = end_date - timedelta(days=365)
-    one_year_ago_str = one_year_ago.strftime("%Y-%m-%d")
-
     ncei_search_url = "https://www.ncei.noaa.gov/access/services/data/v1"
     ncei_search_params = {
         "dataset": "daily-summaries",
-        "startDate": one_year_ago_str + "T00:00:00",
-        "endDate": end_date_str + "T00:00:00",
+        "startDate": start_str + "T00:00:00",
+        "endDate": end_str + "T00:00:00",
         "dataTypes": "TMIN,TMAX",
         "stations": nearest_station_id,
     }
@@ -214,14 +213,19 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
     response_text = get_data(request_url, headers=headers)
 
     if response_text:
+        # Preprocess the response text to remove extra spaces
+        response_text = "\n".join([line.strip().replace('"', '') for line in response_text.splitlines()])
         print(response_text)
         reader = csv.DictReader(io.StringIO(response_text))
         for row in reader:
             date_str = row["DATE"]
-            # temperature values are given in tenths of degrees Celsius. In this case, we need to divide the values by 10 
-            min_temp = (float(row["TMIN"])/10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-            max_temp = (float(row["TMAX"])/10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-            temperature_data[date_str] = (min_temp, max_temp)
+            try:
+                # temperature values are given in tenths of degrees Celsius. In this case, we need to divide the values by 10 
+                min_temp = (float(int(row[3].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+                max_temp = (float(int(row[2].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+                temperature_data[date_str] = (min_temp, max_temp)
+            except ValueError:
+                print(f"Skipping row with non-numeric temperature data: {row}")
     else:
         print("Could not get temperature data!!")
 
@@ -235,22 +239,31 @@ def fetch_temperature_data(nearest_station_id, noaa_api_token):
 
     return csv_string.getvalue()
 
-def main(latitude, longitude, noaa_api_token):
-    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, noaa_api_token, fileds)
-    #nearest_station_id = "USC00058501"
+def main(latitude, longitude, startStr, endStr):
+    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, fileds, startStr, endStr)
+
     if nearest_station_id:
-        print("Nearest station ID with good data:", nearest_station_id)
-        temperature_data = fetch_temperature_data(nearest_station_id, noaa_api_token)
-        return nearest_station_id, temperature_data
+        print(f"Nearest station ID with good data: {nearest_station_id[0]}")
+        temperature_data = fetch_temperature_data(nearest_station_id[0], startStr, endStr)
+        return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
         return None
 
 
 if __name__ == "__main__":
+    # use this as example
+    # Get the current date and time
+    current_datetime = datetime.now()
+    # Calculate one week ago
+    endStr = current_datetime - timedelta(weeks=1)
+    # Calculate 5 years and 1 week ago
+    startStr = current_datetime - timedelta(weeks=1, days=365*5)
+    
     latitude = 39.045002
     longitude = -106.257903
-    id, temp_data = main(latitude, longitude, noaa_api_token)
+
+    id, temp_data = main(latitude, longitude, startStr, endStr)
     # save csv file locally
     with open(f"{id}_temperature_data.csv", "w") as csv_file:
         csv_file.write(temp_data)
