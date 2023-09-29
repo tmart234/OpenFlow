@@ -5,9 +5,6 @@ from zipfile import ZipFile
 from io import BytesIO
 import os
 
-# URL of the zipped shapefile
-shapefile_url = 'https://geo.colorado.edu/apps/geolibrary/datasets/WBDHU12.zip'
-
 def download_and_unzip(url, download_dir):
     response = requests.get(url)
     
@@ -36,9 +33,6 @@ def find_watershed(gps_coordinate, shapefile_path):
     # Load the shapefile using geopandas
     watersheds = gpd.read_file(shapefile_path)
 
-    # Print the column names to see what's available
-    print("Available columns in the shapefile:", watersheds.columns)
-
     # Create a Point object from the GPS coordinate
     point = Point(gps_coordinate)
 
@@ -47,30 +41,45 @@ def find_watershed(gps_coordinate, shapefile_path):
         if point.within(watershed.geometry):  # Use 'geometry' for the polygon
             return watershed  # Return the entire watershed data
 
-    return "Not Found"  # If no watershed is found
+    return None  # If no watershed is found
 
-# Directory to store the downloaded and unzipped shapefile
-download_directory = 'shapefile_data'
+def get_watershed_info(gps_coordinate):
+    # Directory to store the downloaded and unzipped shapefile
+    download_directory = 'shapefile_data'
 
-# Ensure the download directory exists
-os.makedirs(download_directory, exist_ok=True)
+    # Ensure the download directory exists
+    os.makedirs(download_directory, exist_ok=True)
 
-# Download and unzip the shapefile, and get the path to the shapefile
-shapefile_path = download_and_unzip(shapefile_url, download_directory)
+    # URL of the zipped shapefile
+    shapefile_url = 'https://geo.colorado.edu/apps/geolibrary/datasets/WBDHU12.zip'
 
-if shapefile_path is not None:
+    # Download and unzip the shapefile, and get the path to the shapefile
+    shapefile_path = download_and_unzip(shapefile_url, download_directory)
+
+    if shapefile_path is not None:
+        # Find the watershed for the GPS coordinate
+        result = find_watershed(gps_coordinate, shapefile_path)
+        if result is None:
+            return None  # No watershed found
+        else:
+            # Split the Name column into two variables based on the dash "-"
+            name_parts = result.Name.split('-')
+            # Assign the parts to separate variables
+            part1 = name_parts[0].strip()  # Removes leading/trailing whitespace
+            part2 = name_parts[1].strip()
+            return (part1, part2)
+    else:
+        return None  # Error in downloading or unzipping the shapefile
+
+if __name__ == "__main__":
     # Example GPS coordinate for the SWE station (39.181624, -106.282648)
     gps_coordinate = (-106.282648, 39.181624)
     
-    # Find the watershed for the GPS coordinate
-    result = find_watershed(gps_coordinate, shapefile_path)
-    if isinstance(result, str) and result == "Not Found":
-        print("The GPS coordinate is not within any watershed.")
+    # Get watershed information for the GPS coordinate
+    result = get_watershed_info(gps_coordinate)
+    
+    if result is None:
+        print("Error: Unable to find watershed information.")
     else:
-        print("The GPS coordinate is in the watershed with data:")
-        # Split the Name column into two variables based on the dash "-"
-        name_parts = result.Name.split('-')
-        # Assign the parts to separate variables
-        part1 = name_parts[0].strip()  # Removes leading/trailing whitespace
-        part2 = name_parts[1].strip()
+        part1, part2 = result
         print(part2 + " near " + part1)
