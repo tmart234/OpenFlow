@@ -9,9 +9,10 @@ import json
 import os
 
 # given a coordinate, find closest NOAA station
-# tests a single NOAA station to get 1 year of historical temperature data
+# tests a single NOAA station to get historical temperature data
 # handle errors accordingly if data is not available
 # NOAA station may not have current daily data so script wiil find one with recent data
+# TODO: need better ways to check completness of numeric temperature data before deciding it's good data
 
 Country = 'US'
 noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa"
@@ -150,7 +151,7 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
     closest_station = None
     closest_station = find_station_with_recent_data(sorted_stations, startStr, fields, endStr)
     if closest_station:
-        print(f"The closest station with recent data and valid fields is {closest_station}.")
+        print(f"The closest station with recent data and valid fields is {closest_station[0]} and it is {closest_station[1]} distance")
     else:
         print("No station found with recent data and valid fields.")
     return closest_station
