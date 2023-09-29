@@ -6,6 +6,7 @@ import csv
 import math
 import re
 import json
+import os
 
 # given a coordinate, find closest NOAA station
 # tests a single NOAA station to get 1 year of historical temperature data
@@ -211,18 +212,17 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     print("Temperature data URL:", request_url)
 
     response_text = get_data(request_url, headers=headers)
-
     if response_text:
         # Preprocess the response text to remove extra spaces
         response_text = "\n".join([line.strip().replace('"', '') for line in response_text.splitlines()])
-        print(response_text)
+        #print(response_text)
         reader = csv.DictReader(io.StringIO(response_text))
         for row in reader:
             date_str = row["DATE"]
             try:
                 # temperature values are given in tenths of degrees Celsius. In this case, we need to divide the values by 10 
-                min_temp = (float(int(row[3].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-                max_temp = (float(int(row[2].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+                min_temp = (float(int(row["TMIN"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
+                max_temp = (float(int(row["TMAX"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
                 temperature_data[date_str] = (min_temp, max_temp)
             except ValueError:
                 print(f"Skipping row with non-numeric temperature data: {row}")
@@ -236,7 +236,6 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     writer.writeheader()
     for date_str, (min_temp, max_temp) in temperature_data.items():
         writer.writerow({"DATE": date_str, "TMIN": min_temp, "TMAX": max_temp})
-
     return csv_string.getvalue()
 
 def main(latitude, longitude, startStr, endStr):
@@ -245,6 +244,11 @@ def main(latitude, longitude, startStr, endStr):
     if nearest_station_id:
         print(f"Nearest station ID with good data: {nearest_station_id[0]}")
         temperature_data = fetch_temperature_data(nearest_station_id[0], startStr, endStr)
+        # save csv file locally
+        script_directory = os.path.dirname(os.path.abspath(__file__))
+        csv_file_path = os.path.join(script_directory, f"{nearest_station_id[0]}_temperature_data.csv")
+        with open(csv_file_path, "w") as csv_file:
+            csv_file.write(temperature_data)
         return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
@@ -256,14 +260,11 @@ if __name__ == "__main__":
     # Get the current date and time
     current_datetime = datetime.now()
     # Calculate one week ago
-    endStr = current_datetime - timedelta(weeks=1)
+    endStr = current_datetime - timedelta(weeks=2)
     # Calculate 5 years and 1 week ago
-    startStr = current_datetime - timedelta(weeks=1, days=365*5)
+    startStr = current_datetime - timedelta(weeks=2, days=365*5)
     
     latitude = 39.045002
     longitude = -106.257903
 
     id, temp_data = main(latitude, longitude, startStr, endStr)
-    # save csv file locally
-    with open(f"{id}_temperature_data.csv", "w") as csv_file:
-        csv_file.write(temp_data)
