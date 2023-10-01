@@ -25,7 +25,7 @@ def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
         metadata = get_station_metadata(station_id)
         if metadata:
             # check for high data coverage
-            if metadata.get("datacoverage") > 0.87:
+            if metadata.get("datacoverage") > 0.95:
                 maxdate_str = metadata.get("maxdate")
                 mindate_str = metadata.get("mindate")
                 maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
