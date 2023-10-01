@@ -15,7 +15,7 @@ import os
 # TODO: need better ways to check completness of numeric temperature data before deciding it's good data
 
 Country = 'US'
-noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa"
+noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa" # not sensitive or currently used
 headers = {"token": noaa_api_token}
 fileds = ["TMIN","TMAX"]
 
