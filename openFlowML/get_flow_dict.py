@@ -34,13 +34,13 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
                 # Convert the flow value to a float
                 flow = float(flow)
                 
-                # Check if the date is already in the dictionary
                 if date_str in daily_flow_data:
-                    # Update the minimum and maximum flow values if needed
-                    min_flow = min(daily_flow_data[date_str]["min"], flow)
-                    max_flow = max(daily_flow_data[date_str]["max"], flow)
-                    daily_flow_data[date_str]["min"] = min_flow
-                    daily_flow_data[date_str]["max"] = max_flow
+                    # Check and update the minimum flow value
+                    if "min" not in daily_flow_data[date_str] or flow < daily_flow_data[date_str]["min"]:
+                        daily_flow_data[date_str]["min"] = flow
+                    # Check and update the maximum flow value
+                    if "max" not in daily_flow_data[date_str] or flow > daily_flow_data[date_str]["max"]:
+                        daily_flow_data[date_str]["max"] = flow
                 else:
                     # If it's a new date, initialize the dictionary entry
                     daily_flow_data[date_str] = {"min": flow, "max": flow}
