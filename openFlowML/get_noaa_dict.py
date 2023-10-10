@@ -230,14 +230,7 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     else:
         print("Could not get temperature data!!")
 
-    csv_string = io.StringIO()
-    fieldnames = ["DATE", "TMIN", "TMAX"]
-    writer = csv.DictWriter(csv_string, fieldnames=fieldnames)
-
-    writer.writeheader()
-    for date_str, (min_temp, max_temp) in temperature_data.items():
-        writer.writerow({"DATE": date_str, "TMIN": min_temp, "TMAX": max_temp})
-    return csv_string.getvalue()
+    return temperature_data
 
 def main(latitude, longitude, startStr, endStr):
     nearest_station_id = find_closest_ghcnd_station(latitude, longitude, fileds, startStr, endStr)
@@ -269,3 +262,5 @@ if __name__ == "__main__":
     longitude = -106.257903
 
     id, temp_data = main(latitude, longitude, startStr, endStr)
+    print("Temperature Data:")
+    print(temp_data)
