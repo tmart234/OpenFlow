@@ -24,5 +24,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
 
-    - name: Run feature scrape
+    - name: Run feature temp scrape
       run: python $GITHUB_WORKSPACE/openFlowML/get_noaa_dict.py
+
+    - name: Save CSV features file as artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: temperature_data  # Set the name of the artifact
+        path: $GITHUB_WORKSPACE/openFlowML/nearest_station_id_temperature_data.csv
