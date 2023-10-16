@@ -25,4 +25,4 @@ jobs:
         pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
 
     - name: Run feature scrape
-      run: python /openFlowML/get_noaa_dict.py
+      run: python $GITHUB_WORKSPACE/openFlowML/get_noaa_dict.py
