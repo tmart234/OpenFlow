@@ -25,13 +25,4 @@ jobs:
         pip install -r /openFlowML/requirements.txt
 
     - name: Run feature scrape
-      run: python /openFlowML/get_temp&flow_csv.py
-      
-    - name: Generate river (station) IDs
-      run: python generate_river_ids.py
-
-    - name: Run feature scrape for each river
-      run: |
-        while read river_id; do
-          python /openFlowML/get_temp&flow_csv.py --river_id "$river_id" --output "output_${river_id}.csv"
-        done < river_ids.txt
+      run: python /openFlowML/get_noaa_dict.py
