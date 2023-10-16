@@ -247,8 +247,10 @@ def main(latitude, longitude, startStr, endStr):
         script_directory = os.path.dirname(os.path.abspath(__file__))
         csv_file_path = os.path.join(script_directory, f"{nearest_station_id[0]}_temperature_data.csv")
         temperature_data.to_csv(csv_file_path)
-        # Set the path as an output variable
-        print(f"::set-output name=CSV_FILE_PATH::{csv_file_path}")        
+        # Set the path as an environment variable file
+        env_file = os.getenv('GITHUB_ENV')
+        with open(env_file, "a") as myfile:
+            myfile.write(f"CSV_FILE_PATH={csv_file_path}")    
         return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
