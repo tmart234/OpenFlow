@@ -247,7 +247,8 @@ def main(latitude, longitude, startStr, endStr):
         script_directory = os.path.dirname(os.path.abspath(__file__))
         csv_file_path = os.path.join(script_directory, f"{nearest_station_id[0]}_temperature_data.csv")
         temperature_data.to_csv(csv_file_path)
-        
+        # Set the path as an environment variable to find later with GHA
+        os.environ["CSV_FILE_PATH"] = csv_file_path
         print(f"Temperature data saved to {csv_file_path}")
         
         return nearest_station_id[0], temperature_data
