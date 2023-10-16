@@ -233,7 +233,7 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
 
     # Convert temperature_data to a pandas DataFrame
     temperature_df = pd.DataFrame.from_dict(temperature_data, orient="index", columns=["TMIN", "TMAX"])
-    temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y%m%d")
+    temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y-%m-%d")
     return temperature_df
 
 def main(latitude, longitude, startStr, endStr):
