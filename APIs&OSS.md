@@ -65,8 +65,9 @@ The United States Bureau of Reclamation (USBR) manages water resources in the we
 - https://www.usbr.gov/gp/lakes_reservoirs/colorado_lakes.html
 
 ## RISE API
+Use to get reservoirs/dam level readings
 - https://data.usbr.gov/rise/api
-    - https://data.usbr.gov/rise/api/result/downloadall?query[]=itemId.383.before.2023-05-01.after.2023-04-24.order.ASC&type=json&filename=RISE%20Time%20Series%20Query%20Package%20(2023-05-01)&order=ASC
+    - URL ex: https://data.usbr.gov/rise/api/result/downloadall?query[]=itemId.383.before.2023-05-01.after.2023-04-24.order.ASC&type=json&filename=RISE%20Time%20Series%20Query%20Package%20(2023-05-01)&order=ASC
 
 ## pyForecast
 https://github.com/usbr/PyForecast
