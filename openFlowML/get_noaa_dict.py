@@ -216,21 +216,24 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     if response_text:
         # Preprocess the response text to remove extra spaces
         response_text = "\n".join([line.strip().replace('"', '') for line in response_text.splitlines()])
-        #print(response_text)
+        # Use csv.DictReader to read the response data
         reader = csv.DictReader(io.StringIO(response_text))
         for row in reader:
             date_str = row["DATE"]
             try:
-                # temperature values are given in tenths of degrees Celsius. In this case, we need to divide the values by 10 
+                # temperature values are given in tenths of degrees Celsius.
                 min_temp = (float(int(row["TMIN"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
                 max_temp = (float(int(row["TMAX"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-                temperature_data[date_str] = (min_temp, max_temp)
+                temperature_data[date_str] = {"TMIN": min_temp, "TMAX": max_temp}
             except ValueError:
                 print(f"Skipping row with non-numeric temperature data: {row}")
     else:
         print("Could not get temperature data!!")
 
-    return temperature_data
+    # Convert temperature_data to a pandas DataFrame
+    temperature_df = pd.DataFrame.from_dict(temperature_data, orient="index", columns=["TMIN", "TMAX"])
+    temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y%m%d")
+    return temperature_df
 
 def main(latitude, longitude, startStr, endStr):
     nearest_station_id = find_closest_ghcnd_station(latitude, longitude, fileds, startStr, endStr)
@@ -238,16 +241,18 @@ def main(latitude, longitude, startStr, endStr):
     if nearest_station_id:
         print(f"Nearest station ID with good data: {nearest_station_id[0]}")
         temperature_data = fetch_temperature_data(nearest_station_id[0], startStr, endStr)
-        # save csv file locally
+        
+        # Save the temperature data to a CSV file by converting PD DataFrame to a CSV file
         script_directory = os.path.dirname(os.path.abspath(__file__))
         csv_file_path = os.path.join(script_directory, f"{nearest_station_id[0]}_temperature_data.csv")
-        with open(csv_file_path, "w") as csv_file:
-            csv_file.write(temperature_data)
+        temperature_data.to_csv(csv_file_path)
+        
+        print(f"Temperature data saved to {csv_file_path}")
+        
         return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
         return None
-
 
 if __name__ == "__main__":
     # use this as example
