@@ -31,4 +31,4 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: temperature_data  # Set the name of the artifact
-        path: ${{ env.CSV_FILE_PATH }}
+        path: ${{ steps.run-python.outputs.CSV_FILE_PATH }}
