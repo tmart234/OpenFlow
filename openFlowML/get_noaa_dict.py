@@ -1,4 +1,5 @@
 import requests
+import pandas as pd
 import io
 from datetime import datetime, timedelta
 import time
