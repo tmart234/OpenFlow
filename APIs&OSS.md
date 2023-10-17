@@ -77,3 +77,4 @@ https://github.com/usbr/PyForecast
 # Other Github Repos
 https://github.com/AIStream-Peelout/flow-forecast
 - LSTM flow forecasting
+- running in inference mode: https://flow-forecast.readthedocs.io/en/latest/inference.html
