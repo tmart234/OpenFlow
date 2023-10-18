@@ -77,4 +77,8 @@ https://github.com/usbr/PyForecast
 # Other Github Repos
 https://github.com/AIStream-Peelout/flow-forecast
 - LSTM flow forecasting
-- running in inference mode: https://flow-forecast.readthedocs.io/en/latest/inference.html
+- run pretrained model in inference mode: https://flow-forecast.readthedocs.io/en/latest/inference.html
+- download the model with the model's ID and pip flow-forecast package
+    - Find ID and config file in the public wandb.io training run's
+    - download model as ONYX
+    - DA-RNN is easiest model to use (minimal features)
