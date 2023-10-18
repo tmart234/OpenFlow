@@ -75,10 +75,12 @@ https://github.com/usbr/PyForecast
  - "In this project, we use a combination of APIs and services provided by NOAA, USGS, and USBR to fetch, analyze, and visualize temperature, water flow, and reservoir data. The collected data is then stored in CSV files for further processing and analysis."
 
 # Other Github Repos
+## Flow Forecast
 https://github.com/AIStream-Peelout/flow-forecast
 - LSTM flow forecasting
 - run pretrained model in inference mode: https://flow-forecast.readthedocs.io/en/latest/inference.html
 - download the model with the model's ID using flow-forecast's pip package
-    - Find ID and config file in the public wandb.io training run's
+    - Find ID and model config file in the public wandb.io training run's
     - download model as ONYX
     - DA-RNN is easiest model to use (minimal features)
+        - model feature inputs: historical tempature, ....
