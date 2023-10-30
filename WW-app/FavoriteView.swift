@@ -33,6 +33,7 @@ struct FavoriteView: View {
                 }
             }
             .navigationBarTitle("Favorites")
+            .onAppear(perform: riverDataModel.loadFavoriteRivers)
         }
     }
 }

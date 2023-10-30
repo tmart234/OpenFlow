@@ -28,22 +28,15 @@ struct USGSRiverData: Identifiable, Codable {
 
 class RiverDataModel: ObservableObject {
     @Published var rivers: [USGSRiverData] = []
-
-    var favoriteSiteNumbers: [Int] = []  // Moved this out to be an instance variable
+    var favoriteRivers: [USGSRiverData] = []
 
     init() {
-        // Load the list of favorite river identifiers from LocalStorage
         if let fetchedFavorites = LocalStorage.getFavoriteRivers() {
-            self.favoriteSiteNumbers = fetchedFavorites
+            self.favoriteRivers = fetchedFavorites
             for index in rivers.indices {
-                // Since siteNumber is not optional, we don't need conditional binding
-                if favoriteSiteNumbers.contains(rivers[index].siteNumber) {
+                if favoriteRivers.contains(where: { $0.siteNumber == rivers[index].siteNumber }) {
                     rivers[index].isFavorite = true
                 }
-                else{
-                    rivers[index].isFavorite = false
-                }
-                    
             }
         }
         fetchAndParseData()
@@ -61,6 +54,21 @@ class RiverDataModel: ObservableObject {
             task.resume()
         }
     }
+    func updateFavoriteRivers() {
+        favoriteRivers = rivers.filter { $0.isFavorite }
+        LocalStorage.saveFavoriteRivers(favoriteRivers)
+    }
+
+    func loadFavoriteRivers() {
+        if let savedFavorites = LocalStorage.getFavoriteRivers() {
+            rivers = savedFavorites
+        }
+    }
+    func toggleFavorite(at index: Int) {
+        rivers[index].isFavorite.toggle()
+        updateFavoriteRivers()
+    }
+
     
     func parseData(_ data: String) {
         let lines = data.components(separatedBy: .newlines)
@@ -78,7 +86,7 @@ class RiverDataModel: ObservableObject {
                 if values.count >= 10 {
                     let siteNumber = Int(values[1]) ?? 0  // Convert to Int
                     // Calculate isFavorite based on the favoriteSiteNumbers
-                    let isFavorite = favoriteSiteNumbers.contains(siteNumber)
+                    let isFavorite = favoriteRivers.contains(where: { $0.siteNumber == siteNumber })
                     let river = USGSRiverData(
                         agency: values[0],
                         siteNumber: siteNumber,
@@ -108,20 +116,6 @@ class RiverDataModel: ObservableObject {
     
 }
 
-extension RiverDataModel {
-    func toggleFavorite(at index: Int) {
-        rivers[index].isFavorite.toggle()
-        
-        if rivers[index].isFavorite {
-            favoriteSiteNumbers.append(rivers[index].siteNumber)
-        } else {
-            favoriteSiteNumbers.removeAll { $0 == rivers[index].siteNumber }
-        }
-        
-        LocalStorage.saveFavoriteRivers(favoriteSiteNumbers)
-    }
-}
-
 // saves:
 // 1) favorite USGS rivers and
 // 2) feteched river data in RiverDeatilView
@@ -142,14 +136,19 @@ class LocalStorage {
         return nil
     }
     
-    // Save favorite river site numbers
-    static func saveFavoriteRivers(_ favoriteSiteNumbers: [Int]) {
-        UserDefaults.standard.set(favoriteSiteNumbers, forKey: favoriteRiversKey)
+    // Save favorite rivers
+    static func saveFavoriteRivers(_ favoriteRivers: [USGSRiverData]) {
+        if let encodedData = try? JSONEncoder().encode(favoriteRivers) {
+            UserDefaults.standard.set(encodedData, forKey: favoriteRiversKey)
+        }
     }
 
-    // Retrieve favorite river site numbers
-    static func getFavoriteRivers() -> [Int]? {
-        return UserDefaults.standard.array(forKey: favoriteRiversKey) as? [Int]
+    // Retrieve favorite rivers
+    static func getFavoriteRivers() -> [USGSRiverData]? {
+        if let data = UserDefaults.standard.data(forKey: favoriteRiversKey) {
+            return try? JSONDecoder().decode([USGSRiverData].self, from: data)
+        }
+        return nil
     }
 }
 
