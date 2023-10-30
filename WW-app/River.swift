@@ -23,7 +23,8 @@ struct USGSRiverData: Identifiable, Codable {
     let reservoirSiteIDs: [Int]
     let lastFetchedDate: Date
     var isFavorite: Bool
-    
+    let latitude: Double
+    let longitude: Double
 }
 
 class RiverDataModel: ObservableObject {
@@ -54,6 +55,8 @@ class RiverDataModel: ObservableObject {
             task.resume()
         }
     }
+
+    
     func updateFavoriteRivers() {
         favoriteRivers = rivers.filter { $0.isFavorite }
         LocalStorage.saveFavoriteRivers(favoriteRivers)
@@ -102,7 +105,9 @@ class RiverDataModel: ObservableObject {
                         snotelStationID: "",
                         reservoirSiteIDs: [],
                         lastFetchedDate: Date(),
-                        isFavorite: isFavorite
+                        isFavorite: isFavorite,
+                        latitude: 0.0, // Placeholder value
+                        longitude: 0.0  // Placeholder value
                     )
                     parsedRivers.append(river)
                 }
