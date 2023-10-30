@@ -1,4 +1,3 @@
-//
 //  RiverListView.swift
 //  WW-app
 //
@@ -6,43 +5,41 @@
 //
 
 import SwiftUI
-import Amplify
 
 struct RiverListView: View {
-    let rivers: [RiverData]
-    @EnvironmentObject private var backend: Backend
-    
+    @EnvironmentObject var riverDataModel: RiverDataModel
+
     var body: some View {
-        VStack {
-            List(rivers) { riverData in
-                NavigationLink(destination: RiverDetailView(river: riverData).environmentObject(backend)) {
-                    VStack(alignment: .leading) {
-                        Text(riverData.name)
-                            .font(.headline)
-                        Text(riverData.location)
-                            .font(.subheadline)
+        NavigationView {
+            List {
+                ForEach(riverDataModel.rivers.indices, id: \.self) { index in
+                    NavigationLink(destination: RiverDetailView(river: riverDataModel.rivers[index])) {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(riverDataModel.rivers[index].stationName)
+                                    .font(.headline)
+                                Text("\(riverDataModel.rivers[index].siteNumber)")
+                                    .font(.subheadline)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .swipeActions {
+                        Button(action: {
+                            riverDataModel.toggleFavorite(at: index)
+                        }) {
+                            Label(riverDataModel.rivers[index].isFavorite ? "Unfavorite" : "Favorite", systemImage: riverDataModel.rivers[index].isFavorite ? "star.slash.fill" : "star.fill")
+                        }
+                        .tint(riverDataModel.rivers[index].isFavorite ? .gray : .yellow)
                     }
                 }
             }
-            .navigationTitle("Rivers")
-            if backend.isSignedIn {
-                SignOutButton(action: { Task { await Backend.shared.signOut() } })
-            } else {
-                SignInButton(action: { Task { await Backend.shared.signIn() } })
-            }
-        }
-        .onAppear {
-            Task {
-                do {
-                    let session = try await Amplify.Auth.fetchAuthSession()
-                    backend.isSignedIn = session.isSignedIn
-                } catch {
-                    print("Fetch auth session failed with error - \(error)")
-                }
-            }
+            .navigationBarTitle("Rivers")
         }
     }
 }
-    
+
+
+
 
 

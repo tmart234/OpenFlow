@@ -13,19 +13,19 @@ import AWSAPIPlugin
 
 @main
 struct WW_appApp: App {
-    init() {
-        // Initialize Amplify and other configurations
-        _ = Backend.initialize()
-    }
-
     var body: some Scene {
         WindowGroup {
-            NavigationView {
-                RiverListView(rivers: [
-                    RiverData(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", usgsSiteID: 9058000, reservoirSiteIDs: [1999, 2000, 2005], lastFetchedDate: Date()),
-                    RiverData(id: 2, name: "Arkansas River by the Numbers", location: "Colorado", snotelStationID: "369", usgsSiteID: 7087050, reservoirSiteIDs: [100163, 100275], lastFetchedDate: Date())
-                ])
-                .environmentObject(Backend.shared)
+            TabView {
+                RiverListView()
+                    .environmentObject(RiverDataModel())
+                    .tabItem {
+                        Label("Rivers", systemImage: "waveform.path.ecg")
+                    }
+                FavoriteView()
+                    .environmentObject(RiverDataModel())
+                    .tabItem {
+                        Label("Favorites", systemImage: "star.fill")
+                    }
             }
         }
     }

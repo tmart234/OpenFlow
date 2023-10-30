@@ -19,6 +19,7 @@
 		9907233F29D936F400C18065 /* AWSS3StoragePlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233E29D936F400C18065 /* AWSS3StoragePlugin */; };
 		9907234129D936F400C18065 /* Amplify in Frameworks */ = {isa = PBXBuildFile; productRef = 9907234029D936F400C18065 /* Amplify */; };
 		997623B82AEF21960004185E /* AuthButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 997623B72AEF21960004185E /* AuthButtons.swift */; };
+		997623BC2AEF63900004185E /* FavoriteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 997623BB2AEF63900004185E /* FavoriteView.swift */; };
 		99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BA829D79C3D00A37181 /* SwiftCSV */; };
 		99C62BAC29D7B21500A37181 /* CSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BAB29D7B21500A37181 /* CSV */; };
 		99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16D29D52DDD0069F04E /* WW_appApp.swift */; };
@@ -46,6 +47,7 @@
 		9907231129D9316000C18065 /* amplifyconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = amplifyconfiguration.json; sourceTree = SOURCE_ROOT; };
 		9907231229D9316000C18065 /* awsconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = awsconfiguration.json; sourceTree = SOURCE_ROOT; };
 		997623B72AEF21960004185E /* AuthButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthButtons.swift; sourceTree = "<group>"; };
+		997623BB2AEF63900004185E /* FavoriteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoriteView.swift; sourceTree = "<group>"; };
 		99CFC16A29D52DDD0069F04E /* WW-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WW-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		99CFC16D29D52DDD0069F04E /* WW_appApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WW_appApp.swift; sourceTree = "<group>"; };
 		99CFC16F29D52DDD0069F04E /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				9907231129D9316000C18065 /* amplifyconfiguration.json */,
 				9907231229D9316000C18065 /* awsconfiguration.json */,
 				997623B72AEF21960004185E /* AuthButtons.swift */,
+				997623BB2AEF63900004185E /* FavoriteView.swift */,
 			);
 			path = "WW-app";
 			sourceTree = "<group>";
@@ -241,6 +244,7 @@
 			files = (
 				99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */,
 				99CFC18829D531780069F04E /* RiverListView.swift in Sources */,
+				997623BC2AEF63900004185E /* FavoriteView.swift in Sources */,
 				99CFC19329D53DF80069F04E /* NRCSResponse.swift in Sources */,
 				99CFC19529D55FCF0069F04E /* WeatherResponse.swift in Sources */,
 				99CFC17029D52DDD0069F04E /* Persistence.swift in Sources */,

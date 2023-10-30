@@ -7,30 +7,149 @@
 
 import Foundation
 
-struct RiverData: Identifiable, Codable {
-    let id: Int
-    let name: String
-    let location: String
+struct USGSRiverData: Identifiable, Codable {
+    let id = UUID()
+    let agency: String
+    let siteNumber: Int
+    let stationName: String
+    let timeSeriesID: String
+    let parameterCode: String
+    let resultDate: String
+    let resultTimezone: String
+    let resultValue: String
+    let resultCode: String
+    let resultModifiedDate: String
     let snotelStationID: String
-    let usgsSiteID: Int
     let reservoirSiteIDs: [Int]
     let lastFetchedDate: Date
+    var isFavorite: Bool
+    
 }
 
+class RiverDataModel: ObservableObject {
+    @Published var rivers: [USGSRiverData] = []
+
+    var favoriteSiteNumbers: [Int] = []  // Moved this out to be an instance variable
+
+    init() {
+        // Load the list of favorite river identifiers from LocalStorage
+        if let fetchedFavorites = LocalStorage.getFavoriteRivers() {
+            self.favoriteSiteNumbers = fetchedFavorites
+            for index in rivers.indices {
+                // Since siteNumber is not optional, we don't need conditional binding
+                if favoriteSiteNumbers.contains(rivers[index].siteNumber) {
+                    rivers[index].isFavorite = true
+                }
+                else{
+                    rivers[index].isFavorite = false
+                }
+                    
+            }
+        }
+        fetchAndParseData()
+    }
+    
+    func fetchAndParseData() {
+        if let dataURL = URL(string: "https://waterdata.usgs.gov/co/nwis/current?index_pmcode_STATION_NM=1&index_pmcode_DATETIME=2&index_pmcode_00060=3&group_key=NONE&sitefile_output_format=html_table&column_name=agency_cd&column_name=site_no&column_name=station_nm&sort_key_2=site_no&html_table_group_key=NONE&format=rdb&rdb_compression=value&list_of_search_criteria=realtime_parameter_selection") {
+            let task = URLSession.shared.dataTask(with: dataURL) { data, response, error in
+                if let data = data {
+                    if let dataString = String(data: data, encoding: .utf8) {
+                        self.parseData(dataString)
+                    }
+                }
+            }
+            task.resume()
+        }
+    }
+    
+    func parseData(_ data: String) {
+        let lines = data.components(separatedBy: .newlines)
+        
+        var linesToSkip = 2  // Counter to track lines to skip
+        var parsedRivers: [USGSRiverData] = [] // Temporary storage for the parsed rivers
+        for line in lines {
+            if !line.isEmpty && !line.hasPrefix("#") {
+                if linesToSkip > 0 {
+                    linesToSkip -= 1
+                    continue
+                }
+                
+                let values = line.components(separatedBy: "\t")
+                if values.count >= 10 {
+                    let siteNumber = Int(values[1]) ?? 0  // Convert to Int
+                    // Calculate isFavorite based on the favoriteSiteNumbers
+                    let isFavorite = favoriteSiteNumbers.contains(siteNumber)
+                    let river = USGSRiverData(
+                        agency: values[0],
+                        siteNumber: siteNumber,
+                        stationName: values[2],
+                        timeSeriesID: values[3],
+                        parameterCode: values[4],
+                        resultDate: values[5],
+                        resultTimezone: values[6],
+                        resultValue: values[7],
+                        resultCode: values[8],
+                        resultModifiedDate: values[9],
+                        snotelStationID: "",
+                        reservoirSiteIDs: [],
+                        lastFetchedDate: Date(),
+                        isFavorite: isFavorite
+                    )
+                    parsedRivers.append(river)
+                }
+            }
+        }
+
+        // Update the rivers property on the main thread
+        DispatchQueue.main.async {
+            self.rivers = parsedRivers
+        }
+    }
+    
+}
+
+extension RiverDataModel {
+    func toggleFavorite(at index: Int) {
+        rivers[index].isFavorite.toggle()
+        
+        if rivers[index].isFavorite {
+            favoriteSiteNumbers.append(rivers[index].siteNumber)
+        } else {
+            favoriteSiteNumbers.removeAll { $0 == rivers[index].siteNumber }
+        }
+        
+        LocalStorage.saveFavoriteRivers(favoriteSiteNumbers)
+    }
+}
+
+// saves:
+// 1) favorite USGS rivers and
+// 2) feteched river data in RiverDeatilView
 class LocalStorage {
     private static let riverDataKey = "riverData"
-
-    static func saveRiverData(_ riverData: RiverData) {
+    private static let favoriteRiversKey = "favoriteRivers"
+    // Save the river data
+    static func saveRiverData(_ riverData: USGSRiverData) {
         if let encodedData = try? JSONEncoder().encode(riverData) {
             UserDefaults.standard.set(encodedData, forKey: riverDataKey)
         }
     }
-
-    static func getRiverData() -> RiverData? {
+    // Retrieve the river data
+    static func getRiverData() -> USGSRiverData? {
         if let data = UserDefaults.standard.data(forKey: riverDataKey) {
-            return try? JSONDecoder().decode(RiverData.self, from: data)
+            return try? JSONDecoder().decode(USGSRiverData.self, from: data)
         }
         return nil
+    }
+    
+    // Save favorite river site numbers
+    static func saveFavoriteRivers(_ favoriteSiteNumbers: [Int]) {
+        UserDefaults.standard.set(favoriteSiteNumbers, forKey: favoriteRiversKey)
+    }
+
+    // Retrieve favorite river site numbers
+    static func getFavoriteRivers() -> [Int]? {
+        return UserDefaults.standard.array(forKey: favoriteRiversKey) as? [Int]
     }
 }
 

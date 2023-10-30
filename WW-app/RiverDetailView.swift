@@ -12,7 +12,7 @@ import Amplify
 
 
 struct RiverDetailView: View {
-    let river: RiverData
+    let river: USGSRiverData
 
     @State private var selectedDate = Date()
     @State private var snowpackData: SnowpackData?
@@ -67,7 +67,7 @@ struct RiverDetailView: View {
     }
 
     private func fetchFlowData() {
-        APIManager.shared.getFlowData(usgsSiteID: river.usgsSiteID) { result in
+        APIManager.shared.getFlowData(usgsSiteID: river.siteNumber) { result in
             switch result {
             case .success(let flowData):
                 DispatchQueue.main.async {
@@ -142,7 +142,7 @@ struct RiverDetailView: View {
 
         } // This is the corrected closing brace for the VStack
         .padding(.horizontal)
-        .navigationTitle(river.name)
+        .navigationTitle(river.stationName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             fetchWeatherData()
@@ -176,9 +176,9 @@ struct RiverDetailView: View {
             let apiKey = "74e6dd2bb94e19344d2ce618bdb33147" // Replace with your actual OpenWeatherMap API key
             let coordinates: (latitude: Double, longitude: Double)
 
-        if river.name == "Arkansas River by the Numbers" {
+        if river.stationName == "Arkansas River by the Numbers" {
                 coordinates = (latitude: 38.5577, longitude: -106.2031)
-        } else if river.name == "Upper Colorado River" {
+        } else if river.stationName == "Upper Colorado River" {
                 coordinates = (latitude: 39.9827, longitude: -106.5384)
             } else {
                 return
