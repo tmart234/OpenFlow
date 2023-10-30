@@ -67,17 +67,22 @@ struct RiverDetailView: View {
     }
 
     private func fetchFlowData() {
-        APIManager.shared.getFlowData(usgsSiteID: river.siteNumber) { result in
-            switch result {
-            case .success(let flowData):
-                DispatchQueue.main.async {
-                    self.flowData = flowData
+        if let siteID = Int(river.siteNumber) {
+            APIManager.shared.getFlowData(usgsSiteID: siteID) { result in
+                switch result {
+                case .success(let flowData):
+                    DispatchQueue.main.async {
+                        self.flowData = flowData
+                    }
+                case .failure(let error):
+                    print("Error fetching flow data:", error)
                 }
-            case .failure(let error):
-                print("Error fetching flow data:", error)
             }
+        } else {
+            print("Invalid site number:", river.siteNumber)
         }
     }
+
 
     var body: some View {
         VStack {

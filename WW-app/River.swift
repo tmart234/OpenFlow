@@ -10,7 +10,7 @@ import Foundation
 struct USGSRiverData: Identifiable, Codable {
     let id = UUID()
     let agency: String
-    let siteNumber: Int
+    let siteNumber: String
     let stationName: String
     let timeSeriesID: String
     let parameterCode: String
@@ -72,7 +72,7 @@ class RiverDataModel: ObservableObject {
     
     func parseData(_ data: String) {
         let lines = data.components(separatedBy: .newlines)
-        
+
         var linesToSkip = 2  // Counter to track lines to skip
         var parsedRivers: [USGSRiverData] = [] // Temporary storage for the parsed rivers
         for line in lines {
@@ -84,13 +84,14 @@ class RiverDataModel: ObservableObject {
                 
                 let values = line.components(separatedBy: "\t")
                 if values.count >= 10 {
-                    let siteNumber = Int(values[1]) ?? 0  // Convert to Int
-                    // Calculate isFavorite based on the favoriteSiteNumbers
-                    let isFavorite = favoriteRivers.contains(where: { $0.siteNumber == siteNumber })
+                    let siteNumberString = values[1]  // Assuming siteNumber is now a string
+                    let isFavorite = favoriteRivers.contains(where: { $0.siteNumber == siteNumberString })
+                    let cleanedStationName = values[2].replacingOccurrences(of: ", CO", with: "").replacingOccurrences(of: ".", with: "")
+                    
                     let river = USGSRiverData(
                         agency: values[0],
-                        siteNumber: siteNumber,
-                        stationName: values[2],
+                        siteNumber: siteNumberString,  // Use the string here
+                        stationName: cleanedStationName,
                         timeSeriesID: values[3],
                         parameterCode: values[4],
                         resultDate: values[5],
