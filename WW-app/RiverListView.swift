@@ -25,7 +25,11 @@ struct RiverListView: View {
                 }
             }
             .navigationTitle("Rivers")
-            SignInButton()
+            if backend.isSignedIn {
+                SignOutButton(action: { Task { await Backend.shared.signOut() } })
+            } else {
+                SignInButton(action: { Task { await Backend.shared.signIn() } })
+            }
         }
         .onAppear {
             Task {
@@ -39,49 +43,6 @@ struct RiverListView: View {
         }
     }
 }
-
-struct SignInButton: View {
-    var body: some View {
-        Button(
-            action: {
-                Task { await Backend.shared.signIn() }
-            },
-            label: {
-                HStack {
-                    Image(systemName: "person.fill")
-                        .scaleEffect(1.5)
-                        .padding()
-                    Text("Sign In")
-                        .font(.largeTitle)
-                }
-                .padding()
-                .foregroundColor(.white)
-                .background(Color.green)
-                .cornerRadius(30)
-            }
-        )
-    }
-}
-struct SignOutButton : View {
-    var body: some View {
-        Button(
-            action: {
-                Task { await Backend.shared.signOut() }
-            },
-            label: { Text("Sign Out") }
-        )
-    }
-}
-
-
-struct RiverListView_Previews: PreviewProvider {
-    static var previews: some View {
-        RiverListView(rivers: [
-            RiverData(id: 1, name: "Upper Colorado River", location: "Colorado", snotelStationID: "1120", usgsSiteID: 09058000, reservoirSiteIDs: [100053, 2000, 2005], lastFetchedDate: Date()),
-            RiverData(id: 2, name: "Arkansas River by the Numbers", location: "Colorado", snotelStationID: "369", usgsSiteID: 07087050, reservoirSiteIDs: [100163, 100275],lastFetchedDate: Date())
-        ])
-    }
-}
-
+    
 
 
