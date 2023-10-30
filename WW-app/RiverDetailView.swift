@@ -36,7 +36,7 @@ struct RiverDetailView: View {
     }
     func fetchCoordinates(for siteID: String, completion: @escaping (Result<(Double, Double), Error>) -> Void) {
         let urlString = "https://waterdata.usgs.gov/nwis/inventory?search_site_no=\(siteID)&search_site_no_match_type=exact&group_key=NONE&format=sitefile_output&sitefile_output_format=rdb&column_name=dec_lat_va&column_name=dec_long_va&list_of_search_criteria=search_site_no"
-
+        print("USGS metadata URL: ", urlString)
         guard let url = URL(string: urlString) else {
             completion(.failure(NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
             return
@@ -147,23 +147,18 @@ struct RiverDetailView: View {
         }
     }
 
-    private func fetchFlowData() {
-        if let siteID = Int(river.siteNumber) {
-            APIManager.shared.getFlowData(usgsSiteID: siteID) { result in
-                switch result {
-                case .success(let flowData):
-                    DispatchQueue.main.async {
-                        self.flowData = flowData
-                    }
-                case .failure(let error):
-                    print("Error fetching flow data:", error)
+    private func fetchFlowData(for siteID: String) {
+        APIManager.shared.getFlowData(usgsSiteID: siteID) { result in
+            switch result {
+            case .success(let flowData):
+                DispatchQueue.main.async {
+                    self.flowData = flowData
                 }
+            case .failure(let error):
+                print("Error fetching flow data:", error)
             }
-        } else {
-            print("Invalid site number:", river.siteNumber)
         }
     }
-
 
     var body: some View {
         VStack {
@@ -231,7 +226,7 @@ struct RiverDetailView: View {
             fetchWeatherData()
             fetchSnowpackData()
             fetchReservoirData(siteIDs: river.reservoirSiteIDs)
-            fetchFlowData()
+            fetchFlowData(for: self.river.siteNumber)
             fetchCoordinates(for: self.river.siteNumber) { result in
                     switch result {
                     case .success(let (lat, lon)):

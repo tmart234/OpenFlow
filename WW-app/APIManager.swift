@@ -72,10 +72,42 @@ class APIManager {
             }
         }
     }
-    func getFlowData(usgsSiteID: Int, completionHandler: @escaping (Result<String, Error>) -> Void) {
-        let siteIDString = String(format: "%08d", usgsSiteID)
-        let url = "https://waterservices.usgs.gov/nwis/iv/?sites=\(siteIDString)&parameterCd=00060&startDT=2023-03-24T23:34:28.131-06:00&endDT=2023-03-31T23:34:28.131-06:00&siteStatus=all&format=rdb"
-        print("USGS URL: ", url)
+    func getFlowData(usgsSiteID: String, completionHandler: @escaping (Result<String, Error>) -> Void) {
+
+        // Get today and yesterday's dates
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            let currentDate = Date()
+            guard let yesterdayDate = Calendar.current.date(byAdding: .day, value: -1, to: currentDate) else {
+                completionHandler(.failure(NSError(domain: "", code: 500, userInfo: [NSLocalizedDescriptionKey: "Date calculation failed"])))
+                return
+            }
+            let fromDate = dateFormatter.string(from: yesterdayDate)
+            let toDate = dateFormatter.string(from: currentDate)
+
+            // Construct the URL
+            var urlComponents = URLComponents()
+            urlComponents.scheme = "https"
+            urlComponents.host = "waterdata.usgs.gov"
+            urlComponents.path = "/nwis/uv"
+            urlComponents.queryItems = [
+                URLQueryItem(name: "cb_00060", value: "on"),
+                URLQueryItem(name: "cb_00065", value: "on"),
+                URLQueryItem(name: "format", value: "rdb"),
+                URLQueryItem(name: "site_no", value: usgsSiteID),
+                URLQueryItem(name: "legacy", value: "1"),
+                URLQueryItem(name: "period", value: ""),
+                URLQueryItem(name: "begin_date", value: fromDate),
+                URLQueryItem(name: "end_date", value: toDate)
+            ]
+
+            guard let url = urlComponents.url else {
+                completionHandler(.failure(NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+                return
+            }
+
+            print("USGS URL: ", url)
+
         AF.request(url).validate().responseString { response in
             switch response.result {
             case .success(let value):

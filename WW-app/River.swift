@@ -25,6 +25,12 @@ struct USGSRiverData: Identifiable, Codable {
     var isFavorite: Bool
     let latitude: Double
     let longitude: Double
+    var flowRate: Int
+    // CustomStringConvertible conformance
+    var description: String {
+        return "Site Number: \(siteNumber), Station Name: \(stationName), Flow Rate: \(flowRate)"
+    }
+
 }
 
 class RiverDataModel: ObservableObject {
@@ -52,6 +58,7 @@ class RiverDataModel: ObservableObject {
                     }
                 }
             }
+            print("USGS data URL: ", dataURL)
             task.resume()
         }
     }
@@ -87,13 +94,12 @@ class RiverDataModel: ObservableObject {
                 
                 let values = line.components(separatedBy: "\t")
                 if values.count >= 10 {
-                    let siteNumberString = values[1]  // Assuming siteNumber is now a string
-                    let isFavorite = favoriteRivers.contains(where: { $0.siteNumber == siteNumberString })
+                    let isFavorite = favoriteRivers.contains(where: { $0.siteNumber == values[1] })
                     let cleanedStationName = values[2].replacingOccurrences(of: ", CO", with: "").replacingOccurrences(of: ".", with: "")
                     
                     let river = USGSRiverData(
                         agency: values[0],
-                        siteNumber: siteNumberString,  // Use the string here
+                        siteNumber: values[1],
                         stationName: cleanedStationName,
                         timeSeriesID: values[3],
                         parameterCode: values[4],
@@ -107,7 +113,8 @@ class RiverDataModel: ObservableObject {
                         lastFetchedDate: Date(),
                         isFavorite: isFavorite,
                         latitude: 0.0, // Placeholder value
-                        longitude: 0.0  // Placeholder value
+                        longitude: 0.0,  // Placeholder value
+                        flowRate: 0
                     )
                     parsedRivers.append(river)
                 }
