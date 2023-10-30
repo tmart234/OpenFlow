@@ -27,7 +27,8 @@ jobs:
       run: python $GITHUB_WORKSPACE/openFlowML/get_noaa_dict.py
 
     - name: Normalize Temperature Data
-      run: python $GITHUB_WORKSPACE/openFlowML/normalize_temperature.py
+      working-directory: $GITHUB_WORKSPACE/openFlowML
+      run: python normalize_temperature.py
       
     - name: Save CSV features file as artifact
       uses: actions/upload-artifact@v2
