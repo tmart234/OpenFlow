@@ -17,15 +17,15 @@ def main():
 
     # Call the NOAA script
     subprocess.run(['python', 'get_noaa_dict.py', str(latitude), str(longitude), start_date, end_date])
+    
+    # Call the get_flow function directly instead of subprocess
+    flow_dict = get_flow(start_date, end_date, site_id)
+    flow_data = pd.DataFrame.from_dict(flow_dict, orient='index')
 
-    # Call the get_flow script
-    subprocess.run(['python', 'get_flow_dict.py', start_date, end_date, site_id])
+    # Load NOAA CSV
+    noaa_data = pd.read_csv('noaa_output.csv')  # Assuming this is the filename, adjust as necessary
 
-    # Load both CSVs
-    noaa_data = pd.read_csv('path_to_noaa_output.csv')
-    flow_data = pd.read_csv('path_to_flow_output.csv')
-
-    # Combine and save the data (You might need more advanced merging depending on your data format)
+    # Combine and save the data
     combined_data = pd.concat([noaa_data, flow_data], axis=1)
     combined_data.to_csv('combined_data.csv', index=False)
 
