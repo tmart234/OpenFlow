@@ -6,6 +6,13 @@ import get_noaa_dict
 import get_flow_dict  # You might want to import the relevant function from this module
 import pandas as pd
 
+def parse_date(x):
+    try:
+        return datetime.strptime(x, "%Y-%m-%d %H:%M")
+    except ValueError:
+        # Handle other date formats or raise the exception if necessary
+        return x
+
 def main():
     # Get dates for the last 5 years
     end_date = datetime.now().strftime('%Y-%m-%d')
@@ -26,8 +33,8 @@ def main():
     flow_data.reset_index(inplace=True)
     flow_data.rename(columns={'index': 'Date'}, inplace=True)
 
-    # Load NOAA CSV
-    noaa_data = pd.read_csv('noaa_output.csv')  # Assuming this is the filename, adjust as necessary
+    # Load NOAA CSV with custom date parser
+    noaa_data = pd.read_csv('noaa_output.csv', parse_dates=['Date'], date_parser=parse_date)  # Adjust the column name 'Date' if it's different in your CSV
 
     # Ensure the dates are the index for both dataframes for proper alignment
     flow_data.set_index('Date', inplace=True)
