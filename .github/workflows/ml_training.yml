@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  train_ml_model:
+  prepare_ml_data:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,20 +23,16 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
 
-    - name: Run feature temp scrape
-      run: python $GITHUB_WORKSPACE/openFlowML/get_noaa_dict.py
+    - name: Retrieve and Combine Data
+      run: python $GITHUB_WORKSPACE/openFlowML/CombineData.py
 
-    # Fetch the flow data
-    - name: Fetch flow data
-      run: python $GITHUB_WORKSPACE/openFlowML/get_flow_dict.py
+    - name: Normalize Combined Data
+      run: python $GITHUB_WORKSPACE/openFlowML/normalize_data.py
 
-    # Combine and normalize data
-    - name: Combine and Normalize Data
-      run: python $GITHUB_WORKSPACE/openFlowML/combineData.py
-
-    # Save combined and normalized data as an artifact
-    - name: Save combined normalized data as artifact
+    - name: Save normalized data as artifact
       uses: actions/upload-artifact@v2
       with:
-        name: combined_normalized_data
+        name: normalized_data
         path: ${{ env.CSV_FILE_PATH }}
+
+
