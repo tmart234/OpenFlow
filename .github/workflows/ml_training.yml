@@ -24,7 +24,7 @@ jobs:
         pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
 
     - name: Retrieve and Combine Data
-      run: python $GITHUB_WORKSPACE/openFlowML/CombineData.py
+      run: python $GITHUB_WORKSPACE/openFlowML/combineData.py
 
     - name: Normalize Combined Data
       run: python $GITHUB_WORKSPACE/openFlowML/normalize_data.py
