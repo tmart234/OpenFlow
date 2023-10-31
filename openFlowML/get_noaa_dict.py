@@ -8,6 +8,7 @@ import math
 import re
 import json
 import os
+import sys
 
 # given a coordinate, find closest NOAA station
 # tests a single NOAA station to get historical temperature data
