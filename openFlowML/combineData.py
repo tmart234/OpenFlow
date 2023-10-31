@@ -3,7 +3,7 @@ import sys
 import subprocess
 from datetime import datetime, timedelta
 import get_noaa_dict
-import get_flow
+import get_flow_dict
 import pandas as pd
 
 def main():
