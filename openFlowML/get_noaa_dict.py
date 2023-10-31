@@ -257,17 +257,8 @@ def main(latitude, longitude, startStr, endStr):
         return None
 
 if __name__ == "__main__":
-    # use this as example
-    # Get the current date and time
-    current_datetime = datetime.now()
-    # Calculate one week ago
-    endStr = current_datetime - timedelta(weeks=2)
-    # Calculate 5 years and 1 week ago
-    startStr = current_datetime - timedelta(weeks=2, days=365*5)
-    
-    latitude = 39.045002
-    longitude = -106.257903
-
-    id, temp_data = main(latitude, longitude, startStr, endStr)
-    print("Temperature Data:")
-    print(temp_data)
+    latitude = float(sys.argv[1])
+    longitude = float(sys.argv[2])
+    start_date = sys.argv[3]
+    end_date = sys.argv[4]
+    main(latitude, longitude, start_date, end_date)
