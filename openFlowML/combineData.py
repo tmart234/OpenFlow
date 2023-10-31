@@ -11,12 +11,14 @@ def main():
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
     site_id = "09058000"  # Default, but you can modify as needed
+    
     # TODO: get this from script
     latitude = 39.7392  # Default latitude (for Denver, CO as an example)
     longitude = -104.9903  # Default longitude
 
-    # Call the NOAA script
-    subprocess.run(['python', 'get_noaa_dict.py', str(latitude), str(longitude), start_date, end_date])
+    # Call the NOAA script with the correct path
+    noaa_script_path = '/home/runner/work/OpenFlowColorado/openFlowML/get_noaa_dict.py'
+    subprocess.run(['python', noaa_script_path, str(latitude), str(longitude), start_date, end_date])
     
     # Call the get_flow function directly instead of subprocess
     flow_dict = get_flow_dict.get_daily_flow_data(site_id, start_date, end_date)  # Using the correct function from your get_flow_dict module
