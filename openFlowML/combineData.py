@@ -19,7 +19,7 @@ def main():
     subprocess.run(['python', 'get_noaa_dict.py', str(latitude), str(longitude), start_date, end_date])
 
     # Call the get_flow script
-    subprocess.run(['python', 'get_flow.py', start_date, end_date, site_id])
+    subprocess.run(['python', 'get_flow_dict.py', start_date, end_date, site_id])
 
     # Load both CSVs
     noaa_data = pd.read_csv('path_to_noaa_output.csv')
