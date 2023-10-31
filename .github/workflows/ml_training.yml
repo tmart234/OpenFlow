@@ -26,11 +26,17 @@ jobs:
     - name: Run feature temp scrape
       run: python $GITHUB_WORKSPACE/openFlowML/get_noaa_dict.py
 
-    - name: Normalize Temperature Data
-      run: python $GITHUB_WORKSPACE/openFlowML/normalize_data.py
-      
-    - name: Save CSV features file as artifact
+    # Fetch the flow data
+    - name: Fetch flow data
+      run: python $GITHUB_WORKSPACE/openFlowML/get_flow_dict.py
+
+    # Combine and normalize data
+    - name: Combine and Normalize Data
+      run: python $GITHUB_WORKSPACE/openFlowML/combineData.py
+
+    # Save combined and normalized data as an artifact
+    - name: Save combined normalized data as artifact
       uses: actions/upload-artifact@v2
       with:
-        name: temperature_data_normalized 
+        name: combined_normalized_data
         path: ${{ env.CSV_FILE_PATH }}
