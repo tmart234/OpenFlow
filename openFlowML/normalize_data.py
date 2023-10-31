@@ -2,12 +2,12 @@ import os
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-def normalize_temperature_data(input_file_path, output_file_path):
+def normalize_data(input_file_path, output_file_path):
     # Read the CSV
     data = pd.read_csv(input_file_path)
 
-    # Ensure 'TMIN' and 'TMAX' columns are in your CSV
-    columns_to_normalize = ['TMIN', 'TMAX']
+    # Columns to normalize - temperature and flow data
+    columns_to_normalize = ['TMIN', 'TMAX', 'FlowMin', 'FlowMax']
 
     # Create a scaler for each column
     scalers = {}
