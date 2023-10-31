@@ -7,12 +7,14 @@ def main():
     # Get dates for the last 5 years
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
-    
     site_id = "09058000"  # Default, but you can modify as needed
+    # TODO: get this from script
+    latitude = 39.7392  # Default latitude (for Denver, CO as an example)
+    longitude = -104.9903  # Default longitude
 
     # Call the NOAA script
-    subprocess.run(['python', 'noaa.py', start_date, end_date, site_id])
-    
+    subprocess.run(['python', 'get_noaa_dict.py', str(latitude), str(longitude), start_date, end_date])
+
     # Call the get_flow script
     subprocess.run(['python', 'get_flow.py', start_date, end_date, site_id])
 
