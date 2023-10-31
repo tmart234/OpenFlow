@@ -17,7 +17,7 @@ def main():
     longitude = -104.9903  # Default longitude
 
     # Call the NOAA script with the correct path
-    noaa_script_path = '/home/runner/work/OpenFlowColorado/openFlowML/get_noaa_dict.py'
+    noaa_script_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'openFlowML', 'get_noaa_dict.py')
     subprocess.run(['python', noaa_script_path, str(latitude), str(longitude), start_date, end_date])
     
     # Call the get_flow function directly instead of subprocess
