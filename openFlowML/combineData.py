@@ -1,35 +1,28 @@
-# combineData.py
-
 import os
-import pandas as pd
-from sklearn.preprocessing import StandardScaler
+import sys
+import subprocess
+from datetime import datetime, timedelta
 
-def combine_and_normalize_data(temp_file_path, flow_file_path, output_file_path):
-    # Read the CSVs
-    temp_data = pd.read_csv(temp_file_path)
-    flow_data = pd.read_csv(flow_file_path)
+def main():
+    # Get dates for the last 5 years
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
+    
+    site_id = "09058000"  # Default, but you can modify as needed
 
-    # Merge on the 'Date' column
-    combined_data = pd.merge(temp_data, flow_data, on='Date', how='outer')
+    # Call the NOAA script
+    subprocess.run(['python', 'noaa.py', start_date, end_date, site_id])
+    
+    # Call the get_flow script
+    subprocess.run(['python', 'get_flow.py', start_date, end_date, site_id])
 
-    # Columns to normalize
-    columns_to_normalize = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
+    # Load both CSVs
+    noaa_data = pd.read_csv('path_to_noaa_output.csv')
+    flow_data = pd.read_csv('path_to_flow_output.csv')
 
-    # Normalize the data
-    for column in columns_to_normalize:
-        scaler = StandardScaler()
-        combined_data[column] = scaler.fit_transform(combined_data[column].values.reshape(-1, 1))
-
-    # Save the combined, normalized data
-    combined_data.to_csv(output_file_path, index=False)
+    # Combine and save the data (You might need more advanced merging depending on your data format)
+    combined_data = pd.concat([noaa_data, flow_data], axis=1)
+    combined_data.to_csv('combined_data.csv', index=False)
 
 if __name__ == "__main__":
-    TEMP_INPUT_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE'), 'openFlowML', 'temperature_data.csv')
-    FLOW_INPUT_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE'), 'openFlowML', 'daily_flow_data.csv')
-    OUTPUT_PATH = os.path.join(os.getenv('GITHUB_WORKSPACE'), 'openFlowML', 'combined_normalized_data.csv')
-
-    combine_and_normalize_data(TEMP_INPUT_PATH, FLOW_INPUT_PATH, OUTPUT_PATH)
-    
-    # Update the CSV_FILE_PATH to point to the combined normalized data for the artifact step
-    with open(os.getenv('GITHUB_ENV'), 'a') as env_file:
-        env_file.write(f"CSV_FILE_PATH={OUTPUT_PATH}\n")
+    main()
