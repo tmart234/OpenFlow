@@ -3,7 +3,7 @@ import sys
 import subprocess
 from datetime import datetime, timedelta
 import get_noaa_dict
-import get_flow_dict
+import get_flow_dict  # You might want to import the relevant function from this module
 import pandas as pd
 
 def main():
@@ -19,14 +19,21 @@ def main():
     subprocess.run(['python', 'get_noaa_dict.py', str(latitude), str(longitude), start_date, end_date])
     
     # Call the get_flow function directly instead of subprocess
-    flow_dict = get_flow(start_date, end_date, site_id)
+    flow_dict = get_flow_dict.get_daily_flow_data(site_id, start_date, end_date)  # Using the correct function from your get_flow_dict module
     flow_data = pd.DataFrame.from_dict(flow_dict, orient='index')
+    flow_data.reset_index(inplace=True)
+    flow_data.rename(columns={'index': 'Date'}, inplace=True)
 
     # Load NOAA CSV
     noaa_data = pd.read_csv('noaa_output.csv')  # Assuming this is the filename, adjust as necessary
 
+    # Ensure the dates are the index for both dataframes for proper alignment
+    flow_data.set_index('Date', inplace=True)
+    noaa_data.set_index('Date', inplace=True)
+
     # Combine and save the data
     combined_data = pd.concat([noaa_data, flow_data], axis=1)
+    combined_data.reset_index(inplace=True)  # If you want 'Date' to be a column again and not an index
     combined_data.to_csv('combined_data.csv', index=False)
 
 if __name__ == "__main__":
