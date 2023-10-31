@@ -5,7 +5,6 @@ on:
     - cron: '0 0 * * *' # Run daily at midnight
   workflow_dispatch:
 
-
 jobs:
   train_ml_model:
     runs-on: ubuntu-latest
@@ -27,8 +26,11 @@ jobs:
     - name: Run feature temp scrape
       run: python $GITHUB_WORKSPACE/openFlowML/get_noaa_dict.py
 
+    - name: Normalize Temperature Data
+      run: python $GITHUB_WORKSPACE/openFlowML/normalize_data.py
+      
     - name: Save CSV features file as artifact
       uses: actions/upload-artifact@v2
       with:
-        name: temperature_data  # Set the name of the artifact
+        name: temperature_data_normalized 
         path: ${{ env.CSV_FILE_PATH }}
