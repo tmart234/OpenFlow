@@ -24,7 +24,7 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
     for line in data_lines:
         columns = line.split('\t')
         if len(columns) >= 5:
-            datetime_str = f"{columns[2]} {columns[3]}"
+            datetime_str = columns[2][:16]  # This grabs only the "YYYY-MM-DD HH:MM" part
             try:
                 dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M")
                 formatted_datetime_str = dt.strftime("%Y-%m-%d %H:%M")
