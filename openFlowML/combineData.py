@@ -21,7 +21,7 @@ def main():
     site_id = "09163500"  # Default, but you can modify as needed
     
     # fetch coords
-     subprocess.run(['python', get_coordinates, site_id)
+    subprocess.run(['python', get_coordinates, site_id)
 
     # Call the NOAA script with the correct path
     noaa_script_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'openFlowML', 'get_noaa_dict.py')
