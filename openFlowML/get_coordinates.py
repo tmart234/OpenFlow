@@ -35,5 +35,5 @@ if __name__ == '__main__':
     parser.add_argument('site_number', type=str, help='USGS site number')
     args = parser.parse_args()
     
-    result = get_lat_long(args.site_number)
+    result = get_coordinates(args.site_number)
     print(result)
