@@ -22,7 +22,10 @@ headers = {"token": noaa_api_token}
 fileds = ["TMIN","TMAX"]
 
 def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
-    #print(f"One month ago is: {one_month_ago.month} and current year is {current_year}")
+    # Convert startStr and endStr to datetime objects
+    start_date_obj = datetime.strptime(startStr, "%Y-%m-%d")
+    end_date_obj = datetime.strptime(endStr, "%Y-%m-%d")
+    
     for station_id in sorted_stations:
         metadata = get_station_metadata(station_id)
         if metadata:
@@ -32,9 +35,10 @@ def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
                 mindate_str = metadata.get("mindate")
                 maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
                 mindate = datetime.strptime(mindate_str, "%Y-%m-%d")
-                print(f"Station ID: {station_id} has a end of: {maxdate} and start of {mindate}")
-                # check that the station has valid data for end
-                if maxdate >= endStr and mindate <= startStr:
+                print(f"Station ID: {station_id} has an end of: {maxdate} and start of {mindate}")
+                
+                # Now, you're comparing datetime objects with datetime objects
+                if maxdate >= end_date_obj and mindate <= start_date_obj:
                     bool_value = check_fields(fields, station_id[0], startStr, endStr)
                     if bool_value:
                         return station_id
