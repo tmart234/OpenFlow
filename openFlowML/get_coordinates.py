@@ -1,7 +1,7 @@
 import requests
 import argparse
 
-def get_lat_long(site_number):
+def get_coordinates(site_number):
     base_url = "https://waterdata.usgs.gov/nwis/inventory"
     params = {
         'search_site_no': site_number,
