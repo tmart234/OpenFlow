@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import get_noaa_dict
 import get_flow_dict  # You might want to import the relevant function from this module
 import pandas as pd
+import get_coordinates
 
 def parse_date(x):
     try:
@@ -17,11 +18,10 @@ def main():
     # Get dates for the last 5 years
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
-    site_id = "09058000"  # Default, but you can modify as needed
+    site_id = "09163500"  # Default, but you can modify as needed
     
-    # TODO: get this from script
-    latitude = 39.7392  # Default latitude (for Denver, CO as an example)
-    longitude = -104.9903  # Default longitude
+    # fetch coords
+     subprocess.run(['python', get_coordinates, site_id)
 
     # Call the NOAA script with the correct path
     noaa_script_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'openFlowML', 'get_noaa_dict.py')
