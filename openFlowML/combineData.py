@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import get_noaa_dict
 import get_flow_dict  # You might want to import the relevant function from this module
 import pandas as pd
-import get_coordinates
+from get_coordinates import get_coordinates
 
 def parse_date(x):
     try:
@@ -20,12 +20,14 @@ def main():
     start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
     site_id = "09163500"  # Default, but you can modify as needed
     
-    # fetch coords
-    subprocess.run(['python', get_coordinates, site_id)
+    # Fetch coords
+    coords_dict = get_coordinates(site_id)
+    latitude = coords_dict['latitude']
+    longitude = coords_dict['longitude']
 
     # Call the NOAA script with the correct path
     noaa_script_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'openFlowML', 'get_noaa_dict.py')
-    subprocess.run(['python', noaa_script_path, str(latitude), str(longitude), start_date, end_date])
+    subprocess.run(['python', noaa_script_path, latitude, longitude, start_date, end_date])
     
     # Call the get_flow function directly instead of subprocess
     flow_dict = get_flow_dict.get_daily_flow_data(site_id, start_date, end_date)  # Using the correct function from your get_flow_dict module
