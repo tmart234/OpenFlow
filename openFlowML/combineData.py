@@ -27,7 +27,7 @@ def main():
 
     # Call the NOAA script with the correct path
     noaa_script_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'openFlowML', 'get_noaa_dict.py')
-    subprocess.run(['python', noaa_script_path, latitude, longitude, start_date, end_date])
+    subprocess.run(['python', noaa_script_path, latitude, longitude, start_date, end_date, site_id])
     
     # Call the get_flow function directly instead of subprocess
     flow_dict = get_flow_dict.get_daily_flow_data(site_id, start_date, end_date)  # Using the correct function from your get_flow_dict module
