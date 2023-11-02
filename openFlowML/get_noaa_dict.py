@@ -241,7 +241,7 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y-%m-%d")
     return temperature_df
 
-def main(latitude, longitude, startStr, endStr):
+def main(latitude, longitude, startStr, endStr, statiom):
     nearest_station_id = find_closest_ghcnd_station(latitude, longitude, fileds, startStr, endStr)
 
     if nearest_station_id:
@@ -250,12 +250,16 @@ def main(latitude, longitude, startStr, endStr):
         
         # Save the temperature data to a CSV file by converting PD DataFrame to a CSV file
         script_directory = os.path.dirname(os.path.abspath(__file__))
-        csv_file_path = os.path.join(script_directory, f"{nearest_station_id[0]}_temperature_data.csv")
+        
+        # Change the naming format here
+        csv_file_path = os.path.join(script_directory, f"{station}_noaa_data.csv")
         temperature_data.to_csv(csv_file_path)
+        
         # Set the path as an environment variable file
         env_file = os.getenv('GITHUB_ENV')
         with open(env_file, "a") as myfile:
             myfile.write(f"CSV_FILE_PATH={csv_file_path}")    
+        
         return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
@@ -266,4 +270,5 @@ if __name__ == "__main__":
     longitude = float(sys.argv[2])
     start_date = sys.argv[3]
     end_date = sys.argv[4]
-    main(latitude, longitude, start_date, end_date)
+    usgs_station = sys.argv[5]
+    main(latitude, longitude, start_date, end_date, usgs_station)
