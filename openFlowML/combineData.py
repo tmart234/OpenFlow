@@ -36,7 +36,7 @@ def main():
     flow_data.rename(columns={'index': 'Date'}, inplace=True)
 
     # Load NOAA CSV with custom date parser
-    noaa_data = pd.read_csv('noaa_output.csv', parse_dates=['Date'], date_parser=parse_date)  # Adjust the column name 'Date' if it's different in your CSV
+    noaa_data = pd.read_csv(f"{site_id}_noaa_data.csv", parse_dates=['Date'], date_parser=parse_date)  # Adjust the column name 'Date' if it's different in your CSV
 
     # Ensure the dates are the index for both dataframes for proper alignment
     flow_data.set_index('Date', inplace=True)
