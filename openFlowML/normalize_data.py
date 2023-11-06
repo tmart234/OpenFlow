@@ -35,7 +35,7 @@ def normalize_data(file_path, data):
         scalers[column] = scaler
 
     # Normalize the date column to a fraction of the year
-    data['date_normalized'] = normalize_date_to_year_fraction(data['DATE'])
+    data['date_normalized'] = normalize_date_to_year_fraction(data['Date'])
     
     # Drop the original date column
     data = data.drop(columns=['Date'])
