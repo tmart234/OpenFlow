@@ -13,7 +13,7 @@ def normalize_data(file_path, data):
     numeric_columns = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 
     # Replace empty strings with NaN
-    data.replace({"": np.nan}, inplace=True)
+    data.replace({'': np.nan}, inplace=True)
 
     # Convert columns to numeric values, converting any errors to NaN
     for column in numeric_columns:
