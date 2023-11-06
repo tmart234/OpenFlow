@@ -26,3 +26,10 @@ jobs:
     - name: Train Data
       run: python $GITHUB_WORKSPACE/openFlowML/train.py
 
+    - name: Upload ONNX Model as Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: lstm-model-onnx
+        path: ./lstm_model.onnx
+
+
