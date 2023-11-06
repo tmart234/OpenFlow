@@ -2,12 +2,17 @@ import os
 from datetime import datetime, timedelta
 import get_flow
 import get_noaa
+import normalize_data
 import pandas as pd
 from get_coordinates import get_coordinates
 import sys
+import logging
+import numpy as np
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
+
+scaling/Performance concerns: noaa script, pd.concat
  """
 
 def parse_date(x):
@@ -25,6 +30,17 @@ def get_site_ids(filename=None):
     with open(filename, 'r') as f:
         return [line.strip() for line in f]
 
+# use the past 60 days to make prediction for next 14 days
+def reshape_data_for_lstm(data, timesteps=60, forecast_horizon=14):
+    X, y = [], []
+    for i in range(len(data) - timesteps - forecast_horizon + 1):
+        X.append(data.iloc[i:i+timesteps].values)
+        y.append(data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Your Flow Column Name"].values) 
+    return np.array(X), np.array(y)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 def main():
     all_data = []
     # Extract site ids
@@ -38,27 +54,35 @@ def main():
             else:
                 # Get the directory of the currently executing script
                 base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
             # Get dates for the last 5 years
             end_date = datetime.now().strftime('%Y-%m-%d')
             start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
-            site_id = "09163500"  # Default, but you can modify as needed
             
             # Fetch coords
             coords_dict = get_coordinates(site_id)
             latitude = coords_dict['latitude']
             longitude = coords_dict['longitude']
 
-            # call noaa
+            # Call noaa
             temp_data = {}
             closest_noaa_station, temp_data = get_noaa.main(latitude, longitude, start_date, end_date)
             if not temp_data.empty:
                 noaa_data = pd.DataFrame.from_dict(temp_data)
                 noaa_data.reset_index(inplace=True)
                 noaa_data.rename(columns={'index': 'Date'}, inplace=True)
+            else:
+                logging.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
+                continue
+
+            # Call the get_flow function
+            flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
+            if flow_data.empty:
+                logging.warning(f"No Flow data available for site ID {site_id}. Skipping...")
+                continue
             
-            # Call the get_flow function directly instead of subprocess
-            flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date) 
             flow_data.rename(columns={'index': 'Date'}, inplace=True)
+            
             # Ensure 'Date' columns are in datetime format
             noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
             flow_data['Date'] = pd.to_datetime(flow_data['Date'])
@@ -71,20 +95,23 @@ def main():
             combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
             combined_data.reset_index(inplace=True)
 
-            # Sort by 'Date' (which is the index now) for better readability
-            combined_data.sort_values(by='Date', inplace=True)
             all_data.append(combined_data)
+
         except Exception as e:
              # Log error
-            print(f"An error occurred for site ID {site_id}: {e}")
+            logging.error(f"An error occurred for site ID {site_id}: {e}")
 
     # Combine data from all site ids and save
     if all_data:
         final_data = pd.concat(all_data)
-        combined_data_file_path = os.path.join(base_path, 'combined_data_all_sites.csv')
+        combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
         final_data.to_csv(combined_data_file_path, index=False)
+        # overwrite object with normalized data
+        final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
+        # Reshape the data for LSTM
+        X, y = reshape_data_for_lstm(final_data)
     else:
-        print("no combined data for all sites")
+        logging.error("No combined data for all sites")
         return sys.exit(1)
 
 if __name__ == "__main__":
