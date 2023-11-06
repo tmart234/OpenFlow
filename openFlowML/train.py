@@ -15,23 +15,31 @@ def save_as_onnx(model):
     with open(onnx_model_path, "wb") as f:
         f.write(onnx_model.SerializeToString())
 
-# use the past 60 days to make prediction for next 14 days
-def reshape_data_for_lstm(data, timesteps=60, forecast_horizon=14):
-    X, y_min, y_max = [], [], []
-    
-    for i in range(len(data) - timesteps - forecast_horizon + 1):
-        X.append(data.iloc[i:i+timesteps].values)  # This assumes you're using all columns as features
-        
-        y_min_flow = data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Min Flow"].values
-        y_max_flow = data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Max Flow"].values
-        
-        y_min.append(y_min_flow)
-        y_max.append(y_max_flow)
+# make prediction for next 14 days
+def reshape_data_for_lstm(data, input_flow_timesteps=14, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
+    X, Y = [], []
 
-    # Stacking y_min and y_max to have a shape: [samples, forecast_horizon, 2]
-    y = np.stack([y_min, y_max], axis=-1)
+    # Ensure columns exist in data
+    if "Flow" not in data.columns or "Temperature" not in data.columns:
+        raise ValueError("Expected 'Flow' and 'Temperature' columns in the data.")
     
-    return np.array(X), y
+    total_required_days = input_flow_timesteps + forecast_temperature_timesteps + forecast_flow_timesteps
+
+    for i in range(len(data) - total_required_days + 1):
+        # Extracting previous 14 days of flow data
+        input_flow = data.iloc[i:i+input_flow_timesteps]["Flow"].values
+
+        # Extracting next 14 days of temperature predictions
+        forecast_temp = data.iloc[i+input_flow_timesteps:i+input_flow_timesteps+forecast_temperature_timesteps]["Temperature"].values
+        
+        # Combining the data
+        X.append(np.concatenate((input_flow, forecast_temp)))
+
+        # Extracting the flow data for the next 14 days (the target)
+        output_flow = data.iloc[i+input_flow_timesteps:i+input_flow_timesteps+forecast_flow_timesteps]["Flow"].values
+        Y.append(output_flow)
+
+    return np.array(X), np.array(Y)
 
 
 def build_lstm_model(input_shape, output_shape):
@@ -66,10 +74,13 @@ def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
 
     return model, history
 
+
 if __name__ == '__main__':
     data = combine_data.main()
     if isinstance(data, str):
         print("Error: Data is recognized as string. Expected pandas DataFrame.")
         exit(1)  # Exit the script
+
+    # Assuming columns 'Flow' and 'Temperature' are present in the combined data
     model, history = train_lstm_model(data)
     save_as_onnx(model)
