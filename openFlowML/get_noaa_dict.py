@@ -24,13 +24,14 @@ fileds = ["TMIN","TMAX"]
 def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
     # Convert startStr and endStr to datetime objects
     start_date_obj = datetime.strptime(startStr, "%Y-%m-%d")
+    three_days_ago = start_date_obj - timedelta(days=3)
     end_date_obj = datetime.strptime(endStr, "%Y-%m-%d")
     
     for station_id in sorted_stations:
         metadata = get_station_metadata(station_id)
         if metadata:
             # check for high data coverage
-            if metadata.get("datacoverage") > 0.95:
+            if metadata.get("datacoverage") > 0.87:
                 maxdate_str = metadata.get("maxdate")
                 mindate_str = metadata.get("mindate")
                 maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
@@ -38,7 +39,7 @@ def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
                 print(f"Station ID: {station_id} has an end of: {maxdate} and start of {mindate}")
                 
                 # Now, you're comparing datetime objects with datetime objects
-                if maxdate >= end_date_obj and mindate <= start_date_obj:
+                if (maxdate >= end_date_obj or maxdate >= three_days_ago) and mindate <= start_date_obj:
                     bool_value = check_fields(fields, station_id[0], startStr, endStr)
                     if bool_value:
                         return station_id
@@ -155,10 +156,14 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
         return None
 
     closest_station = None
-    closest_station = find_station_with_recent_data(sorted_stations, startStr, fields, endStr)
-    if closest_station:
-        print(f"The closest station with recent data and valid fields is {closest_station[0]} and it is {closest_station[1]} distance")
-    else:
+    for station, distance in sorted_stations:
+        station_with_data = find_station_with_recent_data([(station, distance)], startStr, fields, endStr)
+        if station_with_data:
+            closest_station = station_with_data
+            print(f"The closest station with recent data and valid fields is {closest_station[0]} and it is {closest_station[1]} distance")
+            break
+
+    if not closest_station:
         print("No station found with recent data and valid fields.")
     return closest_station
 
@@ -241,7 +246,7 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y-%m-%d")
     return temperature_df
 
-def main(latitude, longitude, startStr, endStr, statiom):
+def main(latitude, longitude, startStr, endStr, station):
     nearest_station_id = find_closest_ghcnd_station(latitude, longitude, fileds, startStr, endStr)
 
     if nearest_station_id:
@@ -263,7 +268,7 @@ def main(latitude, longitude, startStr, endStr, statiom):
         return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
-        return None
+        return sys.exit(1)  # Exit with a status of 1, indicating failure
 
 if __name__ == "__main__":
     latitude = float(sys.argv[1])
