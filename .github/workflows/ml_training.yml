@@ -26,13 +26,6 @@ jobs:
     - name: Retrieve and Combine Data
       run: python $GITHUB_WORKSPACE/openFlowML/combineData.py
 
-    - name: Normalize Combined Data
-      run: python $GITHUB_WORKSPACE/openFlowML/normalize_data.py
-
-    - name: Save normalized data as artifact
-      uses: actions/upload-artifact@v2
-      with:
-        name: normalized_data
-        path: ${{ env.CSV_FILE_PATH }}
-
+    - name: Train Data
+      run: python $GITHUB_WORKSPACE/openFlowML/train.py
 
