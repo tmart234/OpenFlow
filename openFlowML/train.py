@@ -58,13 +58,12 @@ def build_lstm_model(input_shape, output_shape):
 
     model.compile(optimizer='adam', loss='mse')
     return model
-
+    
 def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
-    X, Y = reshape_data_for_lstm(data)
+    X, Y, flow_scaler = reshape_data_for_lstm(data)
     X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=validation_split)
 
     # Reshape data for LSTM
-    # LSTM expects input shape as (samples, timesteps, features)
     X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2])
     X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], X_test.shape[2])
 
@@ -72,7 +71,7 @@ def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
 
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_test, y_test), verbose=1)
 
-    return model, history
+    return model, history, flow_scaler  # return the scaler for inverse transform if needed later
 
 
 if __name__ == '__main__':
