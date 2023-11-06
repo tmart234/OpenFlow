@@ -7,7 +7,6 @@ import pandas as pd
 from get_coordinates import get_coordinates
 import sys
 import logging
-import numpy as np
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -29,14 +28,6 @@ def get_site_ids(filename=None):
         
     with open(filename, 'r') as f:
         return [line.strip() for line in f]
-
-# use the past 60 days to make prediction for next 14 days
-def reshape_data_for_lstm(data, timesteps=60, forecast_horizon=14):
-    X, y = [], []
-    for i in range(len(data) - timesteps - forecast_horizon + 1):
-        X.append(data.iloc[i:i+timesteps].values)
-        y.append(data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Your Flow Column Name"].values) 
-    return np.array(X), np.array(y)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -108,8 +99,7 @@ def main():
         final_data.to_csv(combined_data_file_path, index=False)
         # overwrite object with normalized data
         final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
-        # Reshape the data for LSTM
-        X, y = reshape_data_for_lstm(final_data)
+        return final_data
     else:
         logging.error("No combined data for all sites")
         return sys.exit(1)
