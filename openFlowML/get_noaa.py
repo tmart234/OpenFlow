@@ -70,7 +70,6 @@ def check_fields(fields, station_id, start_str, end_str):
     data_types = search_response_json.get("dataTypes", {}).get("buckets", [])
     # Check if the desired fields are in the response
     response_fields = {data_type["key"] for data_type in data_types}
-    print(response_fields)
     if all(field in response_fields for field in fields):
         return True
     print("bad fields... checking next ID")
@@ -197,8 +196,8 @@ def get_station_metadata(noaa_station_id):
 def fetch_temperature_data(nearest_station_id, startStr, endStr):
     temperature_data = {}
     # Convert datetime objects to strings with the desired format
-    start_str = startStr.strftime("%Y-%m-%d")
-    end_str = endStr.strftime("%Y-%m-%d")
+    start_str = startStr
+    end_str = endStr
     # Get station metadata
     metadata = get_station_metadata(nearest_station_id)
     print(metadata)
@@ -238,7 +237,9 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
                 max_temp = (float(int(row["TMAX"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
                 temperature_data[date_str] = {"TMIN": min_temp, "TMAX": max_temp}
             except ValueError:
-                print(f"Skipping row with non-numeric temperature data: {row}")
+                # Provide blank or "no data" for non-numeric temperature data
+                temperature_data[date_str] = {"TMIN": "", "TMAX": ""}
+                print(f"Non-numeric temperature data for date {date_str}: {row}")
     else:
         print("Could not get temperature data!!")
 
@@ -247,25 +248,12 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
     temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y-%m-%d")
     return temperature_df
 
-def main(latitude, longitude, startStr, endStr, station):
-    nearest_station_id = find_closest_ghcnd_station(latitude, longitude, fileds, startStr, endStr)
+def main(latitude, longitude, startStr, endStr):
+    nearest_station_id = find_closest_ghcnd_station(float(latitude), float(longitude), fileds, startStr, endStr)
 
     if nearest_station_id:
         print(f"Nearest station ID with good data: {nearest_station_id[0]}")
         temperature_data = fetch_temperature_data(nearest_station_id[0], startStr, endStr)
-        
-        # Save the temperature data to a CSV file by converting PD DataFrame to a CSV file
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-        
-        # Change the naming format here
-        csv_file_path = os.path.join(script_directory, f"{station}_noaa_data.csv")
-        temperature_data.to_csv(csv_file_path)
-        
-        # Set the path as an environment variable file
-        env_file = os.getenv('GITHUB_ENV')
-        with open(env_file, "a") as myfile:
-            myfile.write(f"CSV_FILE_PATH={csv_file_path}")    
-        
         return nearest_station_id[0], temperature_data
     else:
         print("No station found near the specified location.")
@@ -276,5 +264,4 @@ if __name__ == "__main__":
     longitude = float(sys.argv[2])
     start_date = sys.argv[3]
     end_date = sys.argv[4]
-    usgs_station = sys.argv[5]
-    main(latitude, longitude, start_date, end_date, usgs_station)
+    main(latitude, longitude, start_date, end_date)

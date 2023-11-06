@@ -1,9 +1,10 @@
 import os
-import subprocess
 from datetime import datetime, timedelta
-import get_flow_dict  # You might want to import the relevant function from this module
+import get_flow
+import get_noaa
 import pandas as pd
 from get_coordinates import get_coordinates
+import sys
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -47,35 +48,44 @@ def main():
             latitude = coords_dict['latitude']
             longitude = coords_dict['longitude']
 
-            # Call the NOAA script with the correct path
-            noaa_script_path = os.path.join(base_path, 'openFlowML', 'get_noaa_dict.py')
-            subprocess.run(['python', noaa_script_path, latitude, longitude, start_date, end_date, site_id], check=True)
+            # call noaa
+            temp_data = {}
+            closest_noaa_station, temp_data = get_noaa.main(latitude, longitude, start_date, end_date)
+            if not temp_data.empty:
+                noaa_data = pd.DataFrame.from_dict(temp_data)
+                noaa_data.reset_index(inplace=True)
+                noaa_data.rename(columns={'index': 'Date'}, inplace=True)
             
             # Call the get_flow function directly instead of subprocess
-            flow_dict = get_flow_dict.get_daily_flow_data(site_id, start_date, end_date)  # Using the correct function from your get_flow_dict module
-            flow_data = pd.DataFrame.from_dict(flow_dict, orient='index')
-            flow_data.reset_index(inplace=True)
+            flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date) 
             flow_data.rename(columns={'index': 'Date'}, inplace=True)
-
-            # Load NOAA CSV with custom date parser
-            noaa_data = pd.read_csv(f"{site_id}_noaa_data.csv", parse_dates=['Date'], date_parser=parse_date)  # Adjust the column name 'Date' if it's different in your CSV
+            # Ensure 'Date' columns are in datetime format
+            noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
+            flow_data['Date'] = pd.to_datetime(flow_data['Date'])
 
             # Ensure the dates are the index for both dataframes for proper alignment
             flow_data.set_index('Date', inplace=True)
             noaa_data.set_index('Date', inplace=True)
 
-            # Combine and save the data for the current site_id
-            combined_data = pd.concat([noaa_data, flow_data], axis=1)
-            combined_data.reset_index(inplace=True)  # If you want 'Date' to be a column again and not an index
+            # Merge the two dataframes on the index (which is 'Date' for both)
+            combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
+            combined_data.reset_index(inplace=True)
+
+            # Sort by 'Date' (which is the index now) for better readability
+            combined_data.sort_values(by='Date', inplace=True)
             all_data.append(combined_data)
         except Exception as e:
-            # Log error
+             # Log error
             print(f"An error occurred for site ID {site_id}: {e}")
 
     # Combine data from all site ids and save
     if all_data:
         final_data = pd.concat(all_data)
-        final_data.to_csv('combined_data_all_sites.csv', index=False)
+        combined_data_file_path = os.path.join(base_path, 'combined_data_all_sites.csv')
+        final_data.to_csv(combined_data_file_path, index=False)
+    else:
+        print("no combined data for all sites")
+        return sys.exit(1)
 
 if __name__ == "__main__":
     main()
