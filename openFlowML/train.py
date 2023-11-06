@@ -16,33 +16,39 @@ def save_as_onnx(model):
         f.write(onnx_model.SerializeToString())
 
 # make prediction for next 14 days
-def reshape_data_for_lstm(data, input_flow_timesteps=14, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
-    X, Y = [], []
+def reshape_data_for_lstm(data, 
+                          historical_flow_timesteps=60, 
+                          forecast_temperature_timesteps=14, 
+                          forecast_flow_timesteps=14):
+    X, Y_min, Y_max = [], [], []
 
     # Ensure columns exist in data
-    if "Flow" not in data.columns or "Temperature" not in data.columns:
-        raise ValueError("Expected 'Flow' and 'Temperature' columns in the data.")
+    required_columns = ["Min Flow", "Max Flow", "Min Temperature", "Max Temperature"]
+    for col in required_columns:
+        if col not in data.columns:
+            raise ValueError(f"Expected '{col}' column in the data.")
     
-    total_required_days = input_flow_timesteps + forecast_temperature_timesteps + forecast_flow_timesteps
+    total_required_days = historical_flow_timesteps + forecast_temperature_timesteps + forecast_flow_timesteps
 
     for i in range(len(data) - total_required_days + 1):
-        # Extracting previous 14 days of flow data
-        input_flow = data.iloc[i:i+input_flow_timesteps]["Flow"].values
+        # Extracting historical flow data and future temperature data
+        input_features = data.iloc[i:i+total_required_days][required_columns].values
+        X.append(input_features)
 
-        # Extracting next 14 days of temperature predictions
-        forecast_temp = data.iloc[i+input_flow_timesteps:i+input_flow_timesteps+forecast_temperature_timesteps]["Temperature"].values
+        # Extracting the flow data (both Min and Max) for the next 14 days (the target)
+        future_min_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Min Flow"].values
+        future_max_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Max Flow"].values
         
-        # Combining the data
-        X.append(np.concatenate((input_flow, forecast_temp)))
+        Y_min.append(future_min_flow)
+        Y_max.append(future_max_flow)
 
-        # Extracting the flow data for the next 14 days (the target)
-        output_flow = data.iloc[i+input_flow_timesteps:i+input_flow_timesteps+forecast_flow_timesteps]["Flow"].values
-        Y.append(output_flow)
+    # Stacking Y_min and Y_max to have a shape: [samples, forecast_horizon, 2]
+    Y = np.stack([Y_min, Y_max], axis=-1)
+    
+    return np.array(X), Y
 
-    return np.array(X), np.array(Y)
 
-
-def build_lstm_model(input_shape, output_shape):
+def build_lstm_model(input_shape):
     model = Sequential()
 
     # Add the first LSTM layer
@@ -53,25 +59,21 @@ def build_lstm_model(input_shape, output_shape):
     model.add(LSTM(50, activation='relu'))
     model.add(Dropout(0.2))
 
-    # Add Dense layer for prediction
-    model.add(Dense(output_shape))
+    # Add Dense layer for prediction of Min and Max flow
+    model.add(Dense(input_shape[0], activation="linear"))
 
     model.compile(optimizer='adam', loss='mse')
     return model
     
 def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
-    X, Y, flow_scaler = reshape_data_for_lstm(data)
+    X, Y = reshape_data_for_lstm(data)
     X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=validation_split)
 
-    # Reshape data for LSTM
-    X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2])
-    X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], X_test.shape[2])
-
-    model = build_lstm_model((X_train.shape[1], X_train.shape[2]), y_train.shape[1])
+    model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
 
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_test, y_test), verbose=1)
 
-    return model, history, flow_scaler  # return the scaler for inverse transform if needed later
+    return model, history 
 
 
 if __name__ == '__main__':
