@@ -103,7 +103,7 @@ def main():
         final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
         final_data.to_csv(normalized_data_path, index=False)
 
-        return normalized_data_path  # Return the path to the normalized data
+        return final_data  # Return the path to the normalized data
 
     else:
         logging.error("No combined data for all sites")
