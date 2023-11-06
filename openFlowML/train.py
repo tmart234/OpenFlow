@@ -25,7 +25,7 @@ def reshape_data_for_lstm(data,
     X, Y_min, Y_max = [], [], []
 
     # Ensure columns exist in data
-    required_columns = ["Min Flow", "Max Flow", "Min Temperature", "Max Temperature"]
+    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]
     for col in required_columns:
         if col not in data.columns:
             raise ValueError(f"Expected '{col}' column in the data.")
