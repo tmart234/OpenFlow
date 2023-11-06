@@ -38,7 +38,7 @@ def normalize_data(file_path, data):
     data['date_normalized'] = normalize_date_to_year_fraction(data['DATE'])
     
     # Drop the original date column
-    data = data.drop(columns=['DATE'])
+    data = data.drop(columns=['Date'])
 
     return data
 
