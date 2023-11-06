@@ -15,7 +15,9 @@ def save_as_onnx(model):
     with open(onnx_model_path, "wb") as f:
         f.write(onnx_model.SerializeToString())
 
-# make prediction for next 14 days
+# make mix/max flow prediction for next 14 days, 
+# take in a window of 14 day future temps, 
+# and take in window of 60 days of past flow data
 def reshape_data_for_lstm(data, 
                           historical_flow_timesteps=60, 
                           forecast_temperature_timesteps=14, 
