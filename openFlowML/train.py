@@ -22,7 +22,7 @@ def reshape_data_for_lstm(data,
                           historical_flow_timesteps=60, 
                           forecast_temperature_timesteps=14, 
                           forecast_flow_timesteps=14):
-    X, Y_min, Y_max = [], [], []
+    X, Y = [], []
 
     # Ensure columns exist in data
     required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]
@@ -41,16 +41,13 @@ def reshape_data_for_lstm(data,
         future_min_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Min Flow"].values
         future_max_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Max Flow"].values
         
-        Y_min.append(future_min_flow)
-        Y_max.append(future_max_flow)
+        Y.append(np.stack([future_min_flow, future_max_flow], axis=-1))
 
-    # Stacking Y_min and Y_max to have a shape: [samples, forecast_horizon, 2]
-    Y = np.stack([Y_min, Y_max], axis=-1)
-    
-    return np.array(X), Y
+    return np.array(X), np.array(Y)
 
-
-def build_lstm_model(input_shape):
+# output a flattened prediction of shape [?, forecast_horizon * 2]
+# then immediately reshaped it to the desired [?, forecast_horizon, 2].
+def build_lstm_model(input_shape, forecast_horizon=14):
     model = Sequential()
 
     # Add the first LSTM layer
@@ -61,8 +58,9 @@ def build_lstm_model(input_shape):
     model.add(LSTM(50, activation='relu'))
     model.add(Dropout(0.2))
 
-    # Add Dense layer for prediction of Min and Max flow
-    model.add(Dense(input_shape[0], activation="linear"))
+    # Add Dense layer for prediction of Min and Max flow for the forecast horizon
+    model.add(Dense(forecast_horizon * 2, activation="linear"))
+    model.add(tf.keras.layers.Reshape((forecast_horizon, 2)))  # Reshape to [batch_size, forecast_horizon, 2]
 
     model.compile(optimizer='adam', loss='mse')
     return model
