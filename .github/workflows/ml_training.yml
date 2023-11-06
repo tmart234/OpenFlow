@@ -23,9 +23,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
 
-    - name: Retrieve and Combine Data
-      run: python $GITHUB_WORKSPACE/openFlowML/combine_data.py
-
     - name: Train Data
       run: python $GITHUB_WORKSPACE/openFlowML/train.py
 
