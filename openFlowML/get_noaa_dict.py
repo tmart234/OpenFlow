@@ -45,14 +45,14 @@ def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
                         return station_id
     return None
 
-def check_fields(fields, id, start_str, end_str):
+def check_fields(fields, station_id, start_str, end_str):
     url = "https://www.ncei.noaa.gov/access/services/search/v1/data"
     ncei_search_params = {
         "dataset": "daily-summaries",
-        "startDate": start_str.strftime("%Y-%m-%d") + "T00:00:00",
-        "endDate": end_str.strftime("%Y-%m-%d") + "T00:00:00",
+        "startDate": start_str + "T00:00:00",
+        "endDate": end_str + "T00:00:00", 
         "dataTypes": ",".join(fields),
-        "stations": id,
+        "stations": station_id,
     }
 
     # Encode the parameters without encoding the colons in the datetime strings
@@ -70,6 +70,7 @@ def check_fields(fields, id, start_str, end_str):
     data_types = search_response_json.get("dataTypes", {}).get("buckets", [])
     # Check if the desired fields are in the response
     response_fields = {data_type["key"] for data_type in data_types}
+    print(response_fields)
     if all(field in response_fields for field in fields):
         return True
     print("bad fields... checking next ID")
