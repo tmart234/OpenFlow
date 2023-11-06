@@ -17,11 +17,22 @@ def save_as_onnx(model):
 
 # use the past 60 days to make prediction for next 14 days
 def reshape_data_for_lstm(data, timesteps=60, forecast_horizon=14):
-    X, y = [], []
+    X, y_min, y_max = [], [], []
+    
     for i in range(len(data) - timesteps - forecast_horizon + 1):
-        X.append(data.iloc[i:i+timesteps].values)
-        y.append(data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Your Flow Column Name"].values) 
-    return np.array(X), np.array(y)
+        X.append(data.iloc[i:i+timesteps].values)  # This assumes you're using all columns as features
+        
+        y_min_flow = data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Min Flow"].values
+        y_max_flow = data.iloc[i+timesteps:i+timesteps+forecast_horizon]["Max Flow"].values
+        
+        y_min.append(y_min_flow)
+        y_max.append(y_max_flow)
+
+    # Stacking y_min and y_max to have a shape: [samples, forecast_horizon, 2]
+    y = np.stack([y_min, y_max], axis=-1)
+    
+    return np.array(X), y
+
 
 def build_lstm_model(input_shape, output_shape):
     model = Sequential()
@@ -57,5 +68,8 @@ def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
 
 if __name__ == '__main__':
     data = combine_data.main()
+    if isinstance(data, str):
+        print("Error: Data is recognized as string. Expected pandas DataFrame.")
+        exit(1)  # Exit the script
     model, history = train_lstm_model(data)
     save_as_onnx(model)
