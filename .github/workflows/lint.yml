@@ -1,0 +1,16 @@
+name: Lint
+
+on: [push]
+
+jobs:
+  lint:
+    runs-on: macOS-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Lint with SwiftLint
+      run: |
+        brew install swiftlint
+        swiftlint
