@@ -1,4 +1,4 @@
-name: Release ONNX Model
+name: Release Core ML Model
 
 on:
   workflow_run:
@@ -17,9 +17,15 @@ jobs:
       with:
         fetch-depth: 0 # This fetches all history for all branches and tags
 
+    - name: Setup Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x' # Choose the Python version you need for coremltools
+
     - name: Install Dependencies
-      run: pip install onnx bump2version
-    
+      run: |
+        pip install onnx coremltools bump2version
+
     - name: Download artifact
       uses: dawidd6/action-download-artifact@v2
       with:
@@ -38,9 +44,9 @@ jobs:
         echo "New version: $NEW_TAG"
         echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
 
-    - name: Set ONNX Model Version
+    - name: Convert ONNX Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/.github/onnx_utils.py set ./model/lstm_model.onnx ${{ env.NEW_TAG }}
+        python -m coremltools convert ./model/lstm_model.onnx --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-names 'input' --output-names 'output'
 
     - name: Create Release
       id: create_release
@@ -59,6 +65,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./model/lstm_model.onnx
-        asset_name: lstm_model_${{ env.NEW_TAG }}.onnx
+        asset_path: ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel
+        asset_name: lstm_model_${{ env.NEW_TAG }}.mlmodel
         asset_content_type: application/octet-stream
