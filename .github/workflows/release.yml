@@ -40,6 +40,10 @@ jobs:
         echo "New version: $NEW_TAG"
         echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
 
+    - name: Set ONNX Model Version
+      run: |
+        python $GITHUB_WORKSPACE/.github/onnx_utils.py set ./model/lstm_model.onnx ${{ env.NEW_TAG }}
+
     - name: Create Release
       id: create_release
       uses: actions/create-release@v1
