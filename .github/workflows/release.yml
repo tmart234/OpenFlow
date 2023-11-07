@@ -23,10 +23,11 @@ jobs:
         name: lstm_model_onnx_release
         path: ./model
 
-    - name: Get current ONNX model version
+    - name: Get latest release version tag
+      id: latest_release
       run: |
-        MODEL_VERSION=$(python $GITHUB_WORKSPACE/.github/onnx_utils.py get ./model/lstm_model.onnx)
-        echo "MODEL_VERSION=$MODEL_VERSION" >> $GITHUB_ENV
+        LATEST_RELEASE_TAG=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName)
+        echo "LATEST_RELEASE_TAG=$LATEST_RELEASE_TAG" >> $GITHUB_ENV
 
     - name: Bump ONNX Model Version
       run: |
