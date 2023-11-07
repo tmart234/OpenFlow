@@ -19,7 +19,7 @@ jobs:
       uses: actions/download-artifact@v2
       with:
         name: lstm-model-onnx
-        path: ./model
+        path: ./
 
     - name: Semantic Release
       id: semantic_release
