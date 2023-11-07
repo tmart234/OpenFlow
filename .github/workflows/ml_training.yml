@@ -29,5 +29,5 @@ jobs:
     - name: Upload ONNX Model as Artifact
       uses: actions/upload-artifact@v2
       with:
-        name: lstm-model-onnx
+        name: lstm_model_onnx_release
         path: ./lstm_model.onnx
