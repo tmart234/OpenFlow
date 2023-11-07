@@ -1,10 +1,6 @@
 name: Create Release
 
 on:
-  workflow_run:
-    workflows: ["Nightly ML Training"]
-    types:
-      - completed
   workflow_dispatch:
 
 jobs:
