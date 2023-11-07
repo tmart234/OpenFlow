@@ -12,7 +12,7 @@ jobs:
       uses: actions/checkout@v2
       
     - name: Install ONNX and bump
-      run: pip install onnx bump-my-version
+      run: pip install onnx bumpversion
 
     - name: Download artifact
       uses: dawidd6/action-download-artifact@v2
