@@ -11,7 +11,7 @@ func fetchLatestModel() {
         guard let data = data else { return }
         do {
             let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-            if let asset = release.assets.first(where: { $0.name.contains(".onnx") }) {
+            if let asset = release.assets.first(where: { $0.name.contains(".mlmodel") }) {
                 print("Latest model URL: \(asset.browser_download_url)")
                 
                 // Now download the model using the URL
