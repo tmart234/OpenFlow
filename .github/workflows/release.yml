@@ -12,8 +12,8 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
       
-    - name: Install ONNX
-      run: pip install onnx
+    - name: Install ONNX and bump
+      run: pip install onnx bump-my-version
 
     - name: Download artifact
       uses: dawidd6/action-download-artifact@v2
