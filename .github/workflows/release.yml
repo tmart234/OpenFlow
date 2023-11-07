@@ -34,7 +34,7 @@ jobs:
     - name: Bump ONNX Model Version
       run: |
         CURRENT_VERSION=$MODEL_VERSION
-        NEW_VERSION=$(bump-my-version bump --current-version "$CURRENT_VERSION" patch --dry-run | grep 'new_version=' | sed -n 's/.*new_version=\([^&]*\).*/\1/p')
+        NEW_VERSION=$(bump-my-version bump --current-version "$CURRENT_VERSION" patch)
         echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
 
     - name: Set ONNX Model Version
