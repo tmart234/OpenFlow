@@ -1,55 +1,47 @@
-name: Create Release
+name: Release ONNX Model
 
 on:
   workflow_dispatch:
+  # You can also trigger this on the completion of your ML training workflow
+  # workflow_run:
+  #   workflows: ["ML Training Workflow"]
+  #   types:
+  #     - completed
+  #   branches:
+  #     - main
 
 jobs:
   create_release:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
-      
-    - name: Install ONNX and bump
-      run: pip install onnx bumpversion
 
+    - name: Install Dependencies
+      run: pip install onnx bump2version
+    
     - name: Download artifact
-      uses: dawidd6/action-download-artifact@v2
+      uses: actions/download-artifact@v2
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        workflow: ml_training.yml
-        workflow_conclusion: success
         name: lstm_model_onnx_release
-        path: ./model
 
-    - name: Get latest release version tag
-      id: latest_release
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Determine new version tag
+      id: new_version
       run: |
-        LATEST_RELEASE_TAG=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName)
-        echo "LATEST_RELEASE_TAG=$LATEST_RELEASE_TAG" >> $GITHUB_ENV
+        LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+        echo "Current version: $LATEST_TAG"
+        NEW_TAG=$(bump2version --current-version $LATEST_TAG patch --dry-run --list | grep 'new_version=' | cut -d= -f2)
+        echo "New version: $NEW_TAG"
+        echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
 
-    - name: Bump ONNX Model Version
-      id: version_bump
-      run: |
-        # Capture the new version by using bump-my-version's show subcommand
-        NEW_VERSION=$(bump-my-version show new_version --increment patch)
-        echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-
-    - name: Set ONNX Model Version
-      run: |
-        python $GITHUB_WORKSPACE/.github/onnx_utils.py set ./model/lstm_model.onnx ${{ env.NEW_VERSION }}
-   
     - name: Create Release
       id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ env.NEW_VERSION }}
-        release_name: Release ${{ env.NEW_VERSION }}
+        tag_name: ${{ env.NEW_TAG }}
+        release_name: Release ${{ env.NEW_TAG }}
         draft: false
         prerelease: false
 
@@ -60,5 +52,5 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./model/lstm_model.onnx
-        asset_name: lstm_model_release_${{ env.NEW_VERSION }}.onnx
+        asset_name: lstm_model_${{ env.NEW_TAG }}.onnx
         asset_content_type: application/octet-stream
