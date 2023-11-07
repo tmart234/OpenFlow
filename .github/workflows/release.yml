@@ -5,6 +5,7 @@ on:
     workflows: ["Nightly ML Training"]
     types:
       - completed
+  workflow_dispatch:
 
 jobs:
   create_release:
