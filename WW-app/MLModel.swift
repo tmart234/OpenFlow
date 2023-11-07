@@ -1,5 +1,5 @@
 func fetchLatestModel() {
-    let urlString = "https://api.github.com/repos/username/repo/releases/latest"
+    let urlString = "https://api.github.com/repos/tmart234/OpenFlowColorado/releases/latest"
     guard let url = URL(string: urlString) else { return }
 
     let task = URLSession.shared.dataTask(with: url) { data, response, error in
