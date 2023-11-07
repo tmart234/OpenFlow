@@ -2,7 +2,7 @@ name: Nightly ML Training
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Run daily at midnight
+    - cron: '0 0 * * 1' # Run weekly at midnight on Monday
   workflow_dispatch:
 
 jobs:
