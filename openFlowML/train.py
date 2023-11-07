@@ -5,12 +5,17 @@ from sklearn.model_selection import train_test_split
 import numpy as np
 import combine_data
 import tf2onnx
+import os
 
-def save_as_onnx(model):
+def save_as_onnx(model, output_filename="lstm_model.onnx"):
+    # Define the input signature for the model
+    input_signature = (tf.TensorSpec((None, model.input_shape[1], model.input_shape[2]), tf.float32, name="input"),)
+    
     # Convert the Keras model to ONNX format using tf2onnx
-    onnx_model, _ = tf2onnx.convert.from_keras(model)
-    onnx_model_path = 'lstm_model.onnx'
-    with open(onnx_model_path, "wb") as f:
+    onnx_model, _ = tf2onnx.convert.from_keras(model, input_signature=input_signature, opset=13)
+    
+    # Save the ONNX model to a file
+    with open(output_filename, "wb") as f:
         f.write(onnx_model.SerializeToString())
 
 # make mix/max flow prediction for next 14 days, 
@@ -83,3 +88,7 @@ if __name__ == '__main__':
     # Assuming columns 'Flow' and 'Temperature' are present in the combined data
     model, history = train_lstm_model(data)
     save_as_onnx(model)
+
+
+
+
