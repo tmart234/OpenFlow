@@ -16,6 +16,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+      with:
+        fetch-depth: 0 # This fetches all history for all branches and tags
 
     - name: Install Dependencies
       run: pip install onnx bump2version
