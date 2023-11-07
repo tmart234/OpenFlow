@@ -18,12 +18,12 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         workflow: ml_training.yml
         workflow_conclusion: success
-        name: lstm-model-onnx
+        name: lstm_model_onnx_release
         path: ./model
 
     - name: Get current ONNX model version
       id: get_version
-      run: echo "::set-output name=MODEL_VERSION::$(python onnx_utils.py get ./model/lstm-model.onnx)"
+      run: echo "::set-output name=MODEL_VERSION::$(python $GITHUB_WORKSPACE/.github/onnx_utils.py get ./model/lstm-model.onnx)"
 
     - name: Bump ONNX Model Version
       id: version_bump
@@ -33,7 +33,7 @@ jobs:
         echo "::set-output name=NEW_VERSION::$NEW_VERSION"
 
     - name: Set ONNX Model Version
-      run: python onnx_utils.py set ./model/lstm-model.onnx ${{ steps.version_bump.outputs.NEW_VERSION }}
+      run: python $GITHUB_WORKSPACE/.github/onnx_utils.py set ./model/lstm-model.onnx ${{ steps.version_bump.outputs.NEW_VERSION }}
    
     - name: Create Release
       id: create_release
