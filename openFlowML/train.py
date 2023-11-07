@@ -4,10 +4,11 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.model_selection import train_test_split
 import numpy as np
 import combine_data
-import keras2onnx
+import tf2onnx
 
 def save_as_onnx(model):
-    onnx_model = keras2onnx.convert_keras(model, model.name)
+    # Convert the Keras model to ONNX format using tf2onnx
+    onnx_model, _ = tf2onnx.convert.from_keras(model)
     onnx_model_path = 'lstm_model.onnx'
     with open(onnx_model_path, "wb") as f:
         f.write(onnx_model.SerializeToString())
