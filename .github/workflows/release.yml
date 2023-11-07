@@ -32,13 +32,15 @@ jobs:
         echo "LATEST_RELEASE_TAG=$LATEST_RELEASE_TAG" >> $GITHUB_ENV
 
     - name: Bump ONNX Model Version
+      id: version_bump
       run: |
-        CURRENT_VERSION=$MODEL_VERSION
-        NEW_VERSION=$(bump-my-version bump --current-version "$CURRENT_VERSION" patch)
+        # Capture the new version by using bump-my-version's show subcommand
+        NEW_VERSION=$(bump-my-version show new_version --increment patch)
         echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
 
     - name: Set ONNX Model Version
-      run: python $GITHUB_WORKSPACE/.github/onnx_utils.py set ./model/lstm_model.onnx $NEW_VERSION
+      run: |
+        python $GITHUB_WORKSPACE/.github/onnx_utils.py set ./model/lstm_model.onnx ${{ env.NEW_VERSION }}
    
     - name: Create Release
       id: create_release
