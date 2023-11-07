@@ -1,14 +1,13 @@
 name: Release ONNX Model
 
 on:
-  workflow_dispatch:
   # You can also trigger this on the completion of your ML training workflow
-  # workflow_run:
-  #   workflows: ["ML Training Workflow"]
-  #   types:
-  #     - completed
-  #   branches:
-  #     - main
+  workflow_run:
+    workflows: ["ML Training Workflow"]
+    types:
+      - completed
+    branches:
+      - main
 
 jobs:
   create_release:
