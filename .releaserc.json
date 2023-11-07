@@ -1,5 +1,5 @@
 {
-  "branches": ["master", "next", { "name": "beta", "prerelease": true }, { "name": "alpha", "prerelease": true }],
+  "branches": ["master", "next", "next-major", { "name": "beta", "prerelease": true }, { "name": "alpha", "prerelease": true }],
   "repositoryUrl": "https://github.com/tmart234/OpenFlowColorado.git",
   "tagFormat": "v${version}",
   "plugins": [
