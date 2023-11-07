@@ -26,6 +26,7 @@ jobs:
       uses: cycjimmy/semantic-release-action@v4
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
