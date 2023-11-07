@@ -21,11 +21,30 @@ jobs:
         name: lstm-model-onnx
         path: ./model
 
-    - name: Semantic Release
-      id: semantic_release
-      uses: cycjimmy/semantic-release-action@v4
+    - name: Get current ONNX model version
+      id: get_version
+      run: echo "::set-output name=MODEL_VERSION::$(python onnx_utils.py get ./model/lstm-model.onnx)"
+
+    - name: Bump ONNX Model Version
+      id: version_bump
+      run: |
+        CURRENT_VERSION=${{ steps.get_version.outputs.MODEL_VERSION }}
+        NEW_VERSION=$(bump-my-version bump --current-version "$CURRENT_VERSION" patch --dry-run | grep 'new_version=' | sed -n 's/.*new_version=\([^&]*\).*/\1/p')
+        echo "::set-output name=NEW_VERSION::$NEW_VERSION"
+
+    - name: Set ONNX Model Version
+      run: python onnx_utils.py set ./model/lstm-model.onnx ${{ steps.version_bump.outputs.NEW_VERSION }}
+   
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
       env:
-        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version_bump.outputs.NEW_VERSION }}
+        release_name: Release ${{ steps.version_bump.outputs.NEW_VERSION }}
+        draft: false
+        prerelease: false
 
     - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
