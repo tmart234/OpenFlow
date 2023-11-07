@@ -15,11 +15,14 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v2
 
-    - name: Download ONNX Model Artifact
-      uses: actions/download-artifact@v2
+    - name: Download artifact
+      uses: dawidd6/action-download-artifact@v2
       with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        workflow: ml_training.yml
+        workflow_conclusion: success
         name: lstm-model-onnx
-        path: ./
+        path: ./model
 
     - name: Semantic Release
       id: semantic_release
