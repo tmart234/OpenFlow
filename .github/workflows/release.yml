@@ -1,7 +1,6 @@
 name: Release ONNX Model
 
 on:
-  # You can also trigger this on the completion of your ML training workflow
   workflow_run:
     workflows: ["ML Training Workflow"]
     types:
