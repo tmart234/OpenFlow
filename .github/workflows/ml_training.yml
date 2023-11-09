@@ -29,5 +29,5 @@ jobs:
     - name: Upload Model as Artifact
       uses: actions/upload-artifact@v2
       with:
-        name: lstm_model_onnx_release
+        name: lstm_model_h5_release
         path: ./lstm_model.h5
