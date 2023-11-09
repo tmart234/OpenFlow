@@ -7,6 +7,10 @@ import combine_data
 import tf2onnx
 import os
 
+def save_as_h5(model, output_filename="lstm_model.h5"):
+    # Save the Keras model to HDF5 format
+    model.save(output_filename)
+    
 def save_as_onnx(model, output_filename="lstm_model.onnx"):
     # Define the input signature for the model
     input_signature = (tf.TensorSpec((None, model.input_shape[1], model.input_shape[2]), tf.float32, name="input"),)
@@ -87,7 +91,7 @@ if __name__ == '__main__':
 
     # Assuming columns 'Flow' and 'Temperature' are present in the combined data
     model, history = train_lstm_model(data)
-    save_as_onnx(model)
+    save_as_h5(model)
 
 
 
