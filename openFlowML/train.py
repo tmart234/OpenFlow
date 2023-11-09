@@ -1,7 +1,8 @@
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Embedding, Input, Concatenate, LSTM, Dropout, Dense
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import combine_data
 import tf2onnx
@@ -54,44 +55,83 @@ def reshape_data_for_lstm(data,
 
 # output a flattened prediction of shape [?, forecast_horizon * 2]
 # then immediately reshaped it to the desired [?, forecast_horizon, 2].
-def build_lstm_model(input_shape, forecast_horizon=14):
-    model = Sequential()
-
-    # Add the first LSTM layer
-    model.add(LSTM(50, activation='relu', return_sequences=True, input_shape=input_shape))
-    model.add(Dropout(0.2))
-
-    # Add a second LSTM layer
-    model.add(LSTM(50, activation='relu'))
-    model.add(Dropout(0.2))
-
-    # Add Dense layer for prediction of Min and Max flow for the forecast horizon
-    model.add(Dense(forecast_horizon * 2, activation="linear"))
-    model.add(tf.keras.layers.Reshape((forecast_horizon, 2)))  # Reshape to [batch_size, forecast_horizon, 2]
-
+def build_lstm_model_with_embedding(input_shape, forecast_horizon=14, num_stations=1000, embedding_dim=5):
+    # Input layers for historical data and station IDs
+    historical_input = Input(shape=input_shape, name='historical_input')
+    station_input = Input(shape=(1,), name='station_input')
+    
+    # Embedding for station IDs
+    station_embedding = Embedding(input_dim=num_stations, output_dim=embedding_dim, input_length=1)(station_input)
+    station_embedding = tf.keras.layers.Reshape((embedding_dim,))(station_embedding)
+    
+    # Repeat embedding for each timestep and concatenate with historical data
+    station_embedding_repeated = tf.keras.layers.RepeatVector(input_shape[0])(station_embedding)
+    combined_input = Concatenate()([historical_input, station_embedding_repeated])
+    
+    # LSTM layers to process combined input
+    lstm_out = LSTM(50, activation='relu', return_sequences=True)(combined_input)
+    lstm_out = Dropout(0.2)(lstm_out)
+    lstm_out = LSTM(50, activation='relu')(lstm_out)
+    lstm_out = Dropout(0.2)(lstm_out)
+    
+    # Dense layer to predict flow, reshaped to forecast horizon
+    dense_out = Dense(forecast_horizon * 2, activation="linear")(lstm_out)
+    output = tf.keras.layers.Reshape((forecast_horizon, 2))(dense_out)
+    
+    # Create and compile the model
+    model = Model(inputs=[historical_input, station_input], outputs=output)
     model.compile(optimizer='adam', loss='mse')
+    
     return model
     
 def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
+    # Extract station IDs and map them to integers
+    station_ids = data['Station ID'].values
+    label_encoder = LabelEncoder()
+    station_ids_encoded = label_encoder.fit_transform(station_ids)
+    num_stations = num_stations or len(label_encoder.classes_)
+
+    # Process the data for the LSTM
     X, Y = reshape_data_for_lstm(data)
-    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=validation_split)
+    
+    # The input for the model will now be a tuple consisting of the data and the station IDs
+    X_train, X_test, y_train, y_test, station_ids_train, station_ids_test = train_test_split(
+        X, Y, station_ids_encoded, test_size=validation_split)
 
-    model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
+    # Build the LSTM model with embedding for station IDs
+    model = build_lstm_model_with_embedding(input_shape=(X_train.shape[1], X_train.shape[2]), 
+                                            forecast_horizon=14, 
+                                            num_stations=num_stations,  # Dynamically set
+                                            embedding_dim=5)
 
-    history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_test, y_test), verbose=1)
+    # Fit the model with the station IDs as additional input
+    history = model.fit([X_train, station_ids_train], y_train, epochs=epochs, batch_size=batch_size,
+                        validation_data=([X_test, station_ids_test], y_test), verbose=1)
 
-    return model, history 
+    return model, history
 
-
-if __name__ == '__main__':
-    data = combine_data.main()
+def main():
+    data = combine_data.main()  # Your function to read and combine data
     if isinstance(data, str):
         print("Error: Data is recognized as string. Expected pandas DataFrame.")
-        exit(1)  # Exit the script
+        exit(1)
 
-    # Assuming columns 'Flow' and 'Temperature' are present in the combined data
-    model, history = train_lstm_model(data)
+    # Extract unique station IDs from the data
+    station_ids = data['Station ID'].unique()
+    num_stations = len(station_ids)
+    
+    # Convert station IDs to integer indices
+    label_encoder = LabelEncoder()
+    data['Station ID'] = label_encoder.fit_transform(data['Station ID'])
+
+    # Now 'data' contains a 'Station ID' column with integer indices
+    # and you have the number of unique stations
+    model, history = train_lstm_model(data, num_stations=num_stations)
     save_as_h5(model)
+
+# Call main
+if __name__ == '__main__':
+    main()
 
 
 
