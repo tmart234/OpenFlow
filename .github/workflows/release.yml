@@ -44,9 +44,15 @@ jobs:
         echo "New version: $NEW_TAG"
         echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
 
-    - name: Convert ONNX Model to Core ML
-      run: |
-        python -m coremltools convert ./model/lstm_model.onnx --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-names 'input' --output-names 'output'
+   # - name: Convert ONNX Model to Core ML
+   #   run: |
+   #     python -m coremltools convert ./model/lstm_model.onnx --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-names 'input' --output-names 'output'
+
+    #  number of timesteps per sample = (historical_flow_timesteps + forecast_temperature_timesteps) = (60+14)=74
+    #  4 features per time step: (Min Flow, Max Flow, TMIN, TMAX)
+    -  name: Convert H5 Model to Core ML
+       run: |
+        python -m coremltools convert ./model/lstm_model.h5 --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 74, 4]}
 
     - name: Create Release
       id: create_release
