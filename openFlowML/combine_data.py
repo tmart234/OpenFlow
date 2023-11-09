@@ -85,16 +85,23 @@ def main():
             # Merge the two dataframes on the index (which is 'Date' for both)
             combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
             combined_data.reset_index(inplace=True)
-
-            all_data.append(combined_data)
-
+            
+            # After creating combined_data, store it with its associated site_id
+            all_data[site_id] = combined_data
+         
         except Exception as e:
              # Log error
             logging.error(f"An error occurred for site ID {site_id}: {e}")
 
     # Combine data from all site ids and save
     if all_data:
-        final_data = pd.concat(all_data)
+        # Now we need to combine all the dataframes into one.
+        # When combining, we can add the 'Station ID' back as a column.
+        final_data = pd.DataFrame()
+        for site_id, data in all_data.items():
+            data['Station ID'] = site_id  # Add the 'Station ID' column
+            final_data = pd.concat([final_data, data])
+
         combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
         final_data.to_csv(combined_data_file_path, index=False)
 
@@ -103,11 +110,11 @@ def main():
         final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
         final_data.to_csv(normalized_data_path, index=False)
 
-        return final_data  # Return the path to the normalized data
+        return final_data  # Return the path to the normalized data with 'Station ID' column
 
     else:
         logging.error("No combined data for all sites")
         return None
-
+     
 if __name__ == "__main__":
     main()
