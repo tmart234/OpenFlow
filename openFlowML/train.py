@@ -33,17 +33,21 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
     X, Y = [], []
     required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX", "date_normalized"]
 
+    # Check for required columns in the data
     for col in required_columns:
         if col not in data.columns:
             raise ValueError(f"Expected '{col}' column in the data.")
 
     total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
 
-    for i in range(len(data) - total_required_days + 1):
+    # Loop through the data to create input and output sets
+    for i in range(len(data) - total_required_days - forecast_flow_timesteps + 1):
+        # Extract input features based on total required days
         input_features = data.iloc[i:i+total_required_days][required_columns].values
         X.append(input_features)
 
-        future_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values
+        # Extract future flow data for forecast_flow_timesteps days
+        future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values.flatten()
         Y.append(future_flow)
 
     return np.array(X), np.array(Y)
