@@ -13,6 +13,61 @@ Takes multiuple individual data components and combindes into a dataset
 
 scaling/Performance concerns: noaa script, pd.concat
  """
+# This function will merge NOAA and flow data.
+def merge_dataframes(noaa_data, flow_data):
+    # Ensure 'Date' columns are in datetime format
+    noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
+    flow_data['Date'] = pd.to_datetime(flow_data['Date'])
+
+    # Set 'Date' as the index
+    noaa_data.set_index('Date', inplace=True)
+    flow_data.set_index('Date', inplace=True)
+
+    # Merge the dataframes
+    combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
+    combined_data.reset_index(inplace=True)
+
+    return combined_data
+ 
+# This function will handle fetching and processing data for a single site ID.
+def fetch_and_process_data(site_id, start_date, end_date):
+    coords_dict = get_coordinates(site_id)
+    latitude = coords_dict['latitude']
+    longitude = coords_dict['longitude']
+
+    # Fetch NOAA data
+    closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
+
+    # Fetch flow data
+    flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
+
+    if noaa_data.empty or flow_data.empty:
+        logging.warning(f"No data available for site ID {site_id}. Skipping...")
+        return None, None
+
+    return noaa_data, flow_data
+
+# This function will save the combined data from all site IDs.
+def save_combined_data(all_data, base_path):
+    final_data = pd.DataFrame()
+    for site_id, data in all_data.items():
+        final_data = pd.concat([final_data, data])
+
+    combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
+    final_data.to_csv(combined_data_file_path, index=False)
+
+    # Save normalized data as a separate CSV
+    normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')
+    final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
+    final_data.to_csv(normalized_data_path, index=False)
+
+    return final_data
+# usable for for GH actions or local testing workflow
+def get_base_path():
+    if 'GITHUB_WORKSPACE' in os.environ:
+        return os.environ['GITHUB_WORKSPACE']
+    else:
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def parse_date(x):
     try:
@@ -29,89 +84,40 @@ def get_site_ids(filename=None):
     with open(filename, 'r') as f:
         return [line.strip() for line in f]
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def main():
+def main(training_num_years = 7):
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     all_data = []
     # Extract site ids
     site_ids = get_site_ids()
+    base_path = get_base_path()
+
+    # Get dates for the last n years
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=training_num_years*365)).strftime('%Y-%m-%d')
+
     for site_id in site_ids:
         try:
-            # Check if 'GITHUB_WORKSPACE' is in the environment variables
-            if 'GITHUB_WORKSPACE' in os.environ:
-                base_path = os.environ['GITHUB_WORKSPACE']
-            # if not use script's current executing directory
-            else:
-                # Get the directory of the currently executing script
-                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            
-            # Get dates for the last 5 years
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
-            
-            # Fetch coords
             coords_dict = get_coordinates(site_id)
             latitude = coords_dict['latitude']
             longitude = coords_dict['longitude']
 
-            # Call noaa
-            temp_data = {}
-            closest_noaa_station, temp_data = get_noaa.main(latitude, longitude, start_date, end_date)
-            if not temp_data.empty:
-                noaa_data = pd.DataFrame.from_dict(temp_data)
-                noaa_data.reset_index(inplace=True)
-                noaa_data.rename(columns={'index': 'Date'}, inplace=True)
-            else:
-                logging.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
-                continue
-
-            # Call the get_flow function
+            # Call noaa and get_flow
+            closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
             flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
-            if flow_data.empty:
-                logging.warning(f"No Flow data available for site ID {site_id}. Skipping...")
+
+            if noaa_data.empty or flow_data.empty:
+                logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue
-            
-            flow_data.rename(columns={'index': 'Date'}, inplace=True)
-            
-            # Ensure 'Date' columns are in datetime format
-            noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
-            flow_data['Date'] = pd.to_datetime(flow_data['Date'])
 
-            # Ensure the dates are the index for both dataframes for proper alignment
-            flow_data.set_index('Date', inplace=True)
-            noaa_data.set_index('Date', inplace=True)
-
-            # Merge the two dataframes on the index (which is 'Date' for both)
-            combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
-            combined_data.reset_index(inplace=True)
-            
-            # After creating combined_data, store it with its associated site_id
+            combined_data = merge_dataframes(noaa_data, flow_data)
             all_data[site_id] = combined_data
-         
         except Exception as e:
-             # Log error
             logging.error(f"An error occurred for site ID {site_id}: {e}")
 
-    # Combine data from all site ids and save
     if all_data:
-        # Now we need to combine all the dataframes into one.
-        # When combining, we can add the 'Station ID' back as a column.
-        final_data = pd.DataFrame()
-        for site_id, data in all_data.items():
-            data['Station ID'] = site_id  # Add the 'Station ID' column
-            final_data = pd.concat([final_data, data])
-
-        combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
-        final_data.to_csv(combined_data_file_path, index=False)
-
-        # Save normalized data as a separate CSV
-        normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')
-        final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
-        final_data.to_csv(normalized_data_path, index=False)
-
-        return final_data  # Return the path to the normalized data with 'Station ID' column
-
+        final_data = save_combined_data(all_data, base_path)
+        return final_data
     else:
         logging.error("No combined data for all sites")
         return None
