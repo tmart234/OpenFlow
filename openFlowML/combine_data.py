@@ -46,12 +46,22 @@ def fetch_and_process_data(site_id, start_date, end_date):
         return None, None
 
     return noaa_data, flow_data
+ 
+ # Additional function to display the beginning and ending of the dataframe
+def preview_data(df, num_rows=4):
+    print("First few rows:")
+    print(df.head(num_rows))
+    print("\nLast few rows:")
+    print(df.tail(num_rows))
 
 # This function will save the combined data from all site IDs.
 def save_combined_data(all_data, base_path):
     final_data = pd.DataFrame()
     for site_id, data in all_data.items():
         final_data = pd.concat([final_data, data])
+
+    # Preview the combined data
+    preview_data(final_data)
 
     combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
     final_data.to_csv(combined_data_file_path, index=False)
@@ -62,6 +72,7 @@ def save_combined_data(all_data, base_path):
     final_data.to_csv(normalized_data_path, index=False)
 
     return final_data
+
 # usable for for GH actions or local testing workflow
 def get_base_path():
     if 'GITHUB_WORKSPACE' in os.environ:
