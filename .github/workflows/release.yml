@@ -52,7 +52,7 @@ jobs:
     #  4 features per time step: (Min Flow, Max Flow, TMIN, TMAX)
     -  name: Convert H5 Model to Core ML
        run: |
-        python -m coremltools convert ./model/lstm_model.h5 --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 74, 4]}
+        python -m coremltools convert ./model/lstm_model.h5 --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 88, 5]}
 
     - name: Create Release
       id: create_release
