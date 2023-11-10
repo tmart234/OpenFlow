@@ -55,79 +55,77 @@ def reshape_data_for_lstm(data,
 
 # output a flattened prediction of shape [?, forecast_horizon * 2]
 # then immediately reshaped it to the desired [?, forecast_horizon, 2].
-def build_lstm_model_with_embedding(input_shape, forecast_horizon=14, num_stations=1000, embedding_dim=5):
-    # Input layers for historical data and station IDs
+# Reshape the data to be suitable for LSTM training
+def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
+    X, Y = [], []
+    # Define required columns
+    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]
+
+    # Check if required columns exist
+    for col in required_columns:
+        if col not in data.columns:
+            raise ValueError(f"Expected '{col}' column in the data.")
+
+    # Calculate the total required days for the input window
+    total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
+
+    # Loop over the dataset and prepare input-output pairs
+    for i in range(len(data) - total_required_days + 1):
+        # Extract input features based on required columns
+        input_features = data.iloc[i:i+total_required_days][required_columns].values
+        X.append(input_features)
+
+        # Extract future flow data for target output
+        future_min_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Min Flow"].values
+        future_max_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Max Flow"].values
+        Y.append(np.stack([future_min_flow, future_max_flow], axis=-1))
+
+    return np.array(X), np.array(Y)
+
+# Build LSTM model
+def build_lstm_model(input_shape, forecast_horizon=14):
+    # Define input layer for historical data
     historical_input = Input(shape=input_shape, name='historical_input')
-    station_input = Input(shape=(1,), name='station_input')
-    
-    # Embedding for station IDs
-    station_embedding = Embedding(input_dim=num_stations, output_dim=embedding_dim, input_length=1)(station_input)
-    station_embedding = tf.keras.layers.Reshape((embedding_dim,))(station_embedding)
-    
-    # Repeat embedding for each timestep and concatenate with historical data
-    station_embedding_repeated = tf.keras.layers.RepeatVector(input_shape[0])(station_embedding)
-    combined_input = Concatenate()([historical_input, station_embedding_repeated])
-    
-    # LSTM layers to process combined input
-    lstm_out = LSTM(50, activation='relu', return_sequences=True)(combined_input)
+
+    # Define LSTM layers with dropout for regularization
+    lstm_out = LSTM(50, activation='relu', return_sequences=True)(historical_input)
     lstm_out = Dropout(0.2)(lstm_out)
     lstm_out = LSTM(50, activation='relu')(lstm_out)
     lstm_out = Dropout(0.2)(lstm_out)
-    
-    # Dense layer to predict flow, reshaped to forecast horizon
+
+    # Dense output layer to predict future flow data
     dense_out = Dense(forecast_horizon * 2, activation="linear")(lstm_out)
     output = tf.keras.layers.Reshape((forecast_horizon, 2))(dense_out)
-    
-    # Create and compile the model
-    model = Model(inputs=[historical_input, station_input], outputs=output)
+
+    # Compile the model
+    model = Sequential(inputs=historical_input, outputs=output)
     model.compile(optimizer='adam', loss='mse')
     
     return model
-    
-def train_lstm_model(data, epochs=10, batch_size=32, validation_split=0.2):
-    # Extract station IDs and map them to integers
-    station_ids = data['Station ID'].values
-    label_encoder = LabelEncoder()
-    station_ids_encoded = label_encoder.fit_transform(station_ids)
-    num_stations = num_stations or len(label_encoder.classes_)
 
-    # Process the data for the LSTM
-    X, Y = reshape_data_for_lstm(data)
-    
-    # The input for the model will now be a tuple consisting of the data and the station IDs
-    X_train, X_test, y_train, y_test, station_ids_train, station_ids_test = train_test_split(
-        X, Y, station_ids_encoded, test_size=validation_split)
-
-    # Build the LSTM model with embedding for station IDs
-    model = build_lstm_model_with_embedding(input_shape=(X_train.shape[1], X_train.shape[2]), 
-                                            forecast_horizon=14, 
-                                            num_stations=num_stations,  # Dynamically set
-                                            embedding_dim=5)
-
-    # Fit the model with the station IDs as additional input
-    history = model.fit([X_train, station_ids_train], y_train, epochs=epochs, batch_size=batch_size,
-                        validation_data=([X_test, station_ids_test], y_test), verbose=1)
-
-    return model, history
-
+# Main function to execute the training process
 def main():
-    data = combine_data.main()  # Your function to read and combine data
+    # Load and combine data (assuming this function returns a pandas DataFrame)
+    data = combine_data.main()
     if isinstance(data, str):
         print("Error: Data is recognized as string. Expected pandas DataFrame.")
         exit(1)
 
-    # Extract unique station IDs from the data
-    station_ids = data['Station ID'].unique()
-    num_stations = len(station_ids)
-    
-    # Convert station IDs to integer indices
-    label_encoder = LabelEncoder()
-    data['Station ID'] = label_encoder.fit_transform(data['Station ID'])
+    # Reshape data for LSTM training
+    X, Y = reshape_data_for_lstm(data)
 
-    # Now 'data' contains a 'Station ID' column with integer indices
-    # and you have the number of unique stations
-    model, history = train_lstm_model(data, num_stations=num_stations)
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2)
+
+    # Build LSTM model
+    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]), forecast_horizon=14)
+
+    # Train the model
+    model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test))
+
+    # Save the trained model
     save_as_h5(model)
+
 
 # Call main
 if __name__ == '__main__':
