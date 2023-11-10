@@ -58,24 +58,23 @@ def reshape_data_for_lstm(data,
 # Reshape the data to be suitable for LSTM training
 def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
     X, Y = [], []
-    # Define required columns
-    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]
+
+    # Include the date_normalized column in the required features
+    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX", "date_normalized"]
 
     # Check if required columns exist
     for col in required_columns:
         if col not in data.columns:
             raise ValueError(f"Expected '{col}' column in the data.")
 
-    # Calculate the total required days for the input window
     total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
 
-    # Loop over the dataset and prepare input-output pairs
     for i in range(len(data) - total_required_days + 1):
-        # Extract input features based on required columns
+        # Extract features including the normalized date
         input_features = data.iloc[i:i+total_required_days][required_columns].values
         X.append(input_features)
 
-        # Extract future flow data for target output
+        # Extract future flow data for the target
         future_min_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Min Flow"].values
         future_max_flow = data.iloc[i+historical_flow_timesteps:i+historical_flow_timesteps+forecast_flow_timesteps]["Max Flow"].values
         Y.append(np.stack([future_min_flow, future_max_flow], axis=-1))
