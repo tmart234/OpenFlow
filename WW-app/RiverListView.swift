@@ -69,43 +69,33 @@ struct RiverListView: View {
     // Helper function to split the station name.
     func splitStationName(_ stationName: String) -> (String, String, String) {
         let splitKeywords = [" NEAR ", " AT ", " ABOVE ", " ABV ", " BELOW ", " BLW ", " NR ", " AB ", " BL "]
-        var part1 = ""
-        var part2 = ""
-        var part3 = ""
+        var parts = [String]()
 
-        // Define a mutable copy of the station name to work with.
-        var mutableStationName = stationName.uppercased() // Convert to uppercase for case-insensitive comparison
-
-        // Attempt to split the station name by each keyword.
-        for keyword in splitKeywords {
-            let components = mutableStationName.components(separatedBy: keyword.uppercased())
-            if components.count > 1 {
-                part1 = components.first!.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                // If any of the remaining components contain another keyword, split again.
-                let remainingComponents = components.dropFirst().joined(separator: " ")
-                for secondKeyword in splitKeywords {
-                    let secondComponents = remainingComponents.components(separatedBy: secondKeyword.uppercased())
-                    if secondComponents.count > 1 {
-                        part2 = secondComponents.first!.trimmingCharacters(in: .whitespacesAndNewlines)
-                        part3 = secondComponents.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-                        break
-                    }
+        // Helper function to split the string by the first occurrence of any keyword and remove it.
+        func splitByKeyword(_ string: String) -> [String] {
+            for keyword in splitKeywords {
+                if let range = string.range(of: keyword) {
+                    let partBeforeKeyword = String(string[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let partAfterKeyword = String(string[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    return [partBeforeKeyword, partAfterKeyword]
                 }
-                
-                // If no further keywords are found in the remaining components, assign to part2.
-                if part2.isEmpty {
-                    part2 = remainingComponents.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                break
             }
+            return [string]
         }
 
-        // If no keywords are found, assign the entire name to part1.
-        if part1.isEmpty {
-            part1 = stationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // First split to determine the parts.
+        parts = splitByKeyword(stationName)
+
+        // If the first part contains any keyword, split it again.
+        if parts.count > 1 && splitKeywords.contains(where: parts[0].contains) {
+            parts = splitByKeyword(parts[0]) + [parts[1]]
         }
-        
+
+        // Assign parts to variables, filling in empty strings if there are less than 3 parts.
+        let part1 = parts.count > 0 ? parts[0] : ""
+        let part2 = parts.count > 1 ? parts[1] : ""
+        let part3 = parts.count > 2 ? parts[2] : ""
+
         return (part1, part2, part3)
     }
 }
