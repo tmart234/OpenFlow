@@ -38,6 +38,7 @@
 		99CFC19829D56F800069F04E /* SwiftyJSON in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19729D56F800069F04E /* SwiftyJSON */; };
 		99CFC19A29D570030069F04E /* ReservoirData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19929D570030069F04E /* ReservoirData.swift */; };
 		99CFC19D29D76AD30069F04E /* AnyCodable in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19C29D76AD30069F04E /* AnyCodable */; };
+		99D41CFB2AFFEA6800F842CF /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D41CFA2AFFEA6800F842CF /* ProfileView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +64,7 @@
 		99CFC19229D53DF80069F04E /* NRCSResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NRCSResponse.swift; sourceTree = "<group>"; };
 		99CFC19429D55FCF0069F04E /* WeatherResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherResponse.swift; sourceTree = "<group>"; };
 		99CFC19929D570030069F04E /* ReservoirData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservoirData.swift; sourceTree = "<group>"; };
+		99D41CFA2AFFEA6800F842CF /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +127,7 @@
 				99CFC17929D52DDD0069F04E /* Preview Content */,
 				99CFC18129D52EE80069F04E /* River.swift */,
 				99CFC18729D531780069F04E /* RiverListView.swift */,
+				99D41CFA2AFFEA6800F842CF /* ProfileView.swift */,
 				99CFC18929D531950069F04E /* RiverDetailView.swift */,
 				99CFC18D29D53A360069F04E /* APIManager.swift */,
 				99CFC19229D53DF80069F04E /* NRCSResponse.swift */,
@@ -249,6 +252,7 @@
 				99CFC19529D55FCF0069F04E /* WeatherResponse.swift in Sources */,
 				99CFC17029D52DDD0069F04E /* Persistence.swift in Sources */,
 				99CFC19A29D570030069F04E /* ReservoirData.swift in Sources */,
+				99D41CFB2AFFEA6800F842CF /* ProfileView.swift in Sources */,
 				99CFC18E29D53A360069F04E /* APIManager.swift in Sources */,
 				99CFC18229D52EE80069F04E /* River.swift in Sources */,
 				99CFC18C29D539EA0069F04E /* SnowpackData.swift in Sources */,

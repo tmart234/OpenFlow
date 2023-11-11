@@ -31,13 +31,23 @@ struct RiverListView: View {
 
                 List {
                     ForEach(filteredRivers.indices, id: \.self) { index in
+                        let splitName = splitStationName(filteredRivers[index].stationName)
                         NavigationLink(destination: RiverDetailView(river: filteredRivers[index])) {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text(filteredRivers[index].stationName)
+                                    Text(splitName.0) // Part 1 of the title
                                         .font(.headline)
-                                    Text("\(filteredRivers[index].siteNumber)")
-                                        .font(.subheadline)
+                                    // Conditionally display part 2 and part 3
+                                    if !splitName.2.isEmpty {
+                                        Text(splitName.1) // Part 2 of the title
+                                            .font(.subheadline)
+                                        Text(splitName.2) // Part 3 of the title, if it exists
+                                            .font(.subheadline)
+                                    } else {
+                                        // If part 3 is empty, display part 2 in its place
+                                        Text(splitName.1)
+                                            .font(.subheadline)
+                                    }
                                 }
                                 Spacer()
                             }
@@ -56,8 +66,47 @@ struct RiverListView: View {
             .navigationBarTitle("Rivers")
         }
     }
+    // Helper function to split the station name.
+    func splitStationName(_ stationName: String) -> (String, String, String) {
+        let splitKeywords = [" NEAR ", " AT ", " ABOVE ", " ABV ", " BELOW ", " BLW ", " NR ", " AB ", " BL "]
+        var part1 = ""
+        var part2 = ""
+        var part3 = ""
+
+        // Define a mutable copy of the station name to work with.
+        var mutableStationName = stationName.uppercased() // Convert to uppercase for case-insensitive comparison
+
+        // Attempt to split the station name by each keyword.
+        for keyword in splitKeywords {
+            let components = mutableStationName.components(separatedBy: keyword.uppercased())
+            if components.count > 1 {
+                part1 = components.first!.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                // If any of the remaining components contain another keyword, split again.
+                let remainingComponents = components.dropFirst().joined(separator: " ")
+                for secondKeyword in splitKeywords {
+                    let secondComponents = remainingComponents.components(separatedBy: secondKeyword.uppercased())
+                    if secondComponents.count > 1 {
+                        part2 = secondComponents.first!.trimmingCharacters(in: .whitespacesAndNewlines)
+                        part3 = secondComponents.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                        break
+                    }
+                }
+                
+                // If no further keywords are found in the remaining components, assign to part2.
+                if part2.isEmpty {
+                    part2 = remainingComponents.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                break
+            }
+        }
+
+        // If no keywords are found, assign the entire name to part1.
+        if part1.isEmpty {
+            part1 = stationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        return (part1, part2, part3)
+    }
 }
-
-
-
 

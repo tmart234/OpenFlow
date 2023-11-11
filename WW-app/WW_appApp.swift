@@ -13,19 +13,30 @@ import AWSAPIPlugin
 
 @main
 struct WW_appApp: App {
+    // Initialize your model once here
+    let riverDataModel = RiverDataModel()
+    
+    init() {
+        // Configure Amplify here if needed
+    }
+
     var body: some Scene {
         WindowGroup {
             TabView {
                 RiverListView()
-                    .environmentObject(RiverDataModel())
+                    .environmentObject(riverDataModel) // Pass the same instance to both views
                     .tabItem {
                         Label("Rivers", systemImage: "waveform.path.ecg")
                     }
                 FavoriteView()
-                    .environmentObject(RiverDataModel())
+                    .environmentObject(riverDataModel) // Pass the same instance to both views
                     .tabItem {
                         Label("Favorites", systemImage: "star.fill")
                     }
+                ProfileView() // Add the ProfileView as a new tab
+                      .tabItem {
+                          Label("Profile", systemImage: "person.crop.circle")
+                      }
             }
         }
     }
