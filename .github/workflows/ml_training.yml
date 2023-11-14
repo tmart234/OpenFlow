@@ -23,6 +23,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
 
+    - uses: Jimver/cuda-toolkit@v0.2.11
+      id: cuda-toolkit
+      with:
+        cuda: '12.1.0'
+        
     - name: Train Data
       run: python $GITHUB_WORKSPACE/openFlowML/train.py
 
