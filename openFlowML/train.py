@@ -1,12 +1,11 @@
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Embedding, Input, Concatenate, LSTM, Dropout, Dense
+from tensorflow.keras.preprocessing.text import Tokenizer
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-import numpy as np
 import combine_data
-import tf2onnx
 import os
+#import tf2onnx
 
 def save_as_h5(model, output_filename="lstm_model.h5"):
     # Save the Keras model to HDF5 format
@@ -53,10 +52,18 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
     return np.array(X), np.array(Y)
 
 # Build LSTM model
-def build_lstm_model(input_shape, forecast_horizon=14):
+def build_lstm_model(input_shape, num_site_ids, forecast_horizon=14):
     historical_input = Input(shape=input_shape, name='historical_input')
+    site_id_input = Input(shape=(1,), name='site_id_input')
 
-    lstm_out = LSTM(50, activation='relu', return_sequences=True)(historical_input)
+    # Embedding for site IDs
+    site_id_embedding = Embedding(input_dim=num_site_ids, output_dim=50, input_length=1)(site_id_input)
+    site_id_embedding = tf.keras.layers.Reshape((50,))(site_id_embedding)
+
+    # Combine historical data with site ID embedding
+    combined_input = Concatenate()([historical_input, site_id_embedding])
+
+    lstm_out = LSTM(50, activation='relu', return_sequences=True)(combined_input)
     lstm_out = Dropout(0.2)(lstm_out)
     lstm_out = LSTM(50, activation='relu')(lstm_out)
     lstm_out = Dropout(0.2)(lstm_out)
@@ -64,7 +71,7 @@ def build_lstm_model(input_shape, forecast_horizon=14):
     dense_out = Dense(forecast_horizon * 2, activation="linear")(lstm_out)
     output = tf.keras.layers.Reshape((forecast_horizon, 2))(dense_out)
 
-    model = Sequential(inputs=historical_input, outputs=output)
+    model = Sequential(inputs=[historical_input, site_id_input], outputs=output)
     model.compile(optimizer='adam', loss='mse')
     
     return model
@@ -76,20 +83,23 @@ def main():
         print("Error: Data is recognized as string. Expected pandas DataFrame.")
         exit(1)
 
-    X, Y = reshape_data_for_lstm(data)
+    # Retrieve and encode site IDs
+    tokenizer, _ = combine_data.get_site_ids_with_embedding()
+    num_site_ids = len(tokenizer.word_index) + 1  # Include one extra for padding
 
-    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2)
+    X, Y, site_id_data = reshape_data_for_lstm(data)
+    
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test, site_id_train, site_id_test = train_test_split(X, Y, site_id_data, test_size=0.2)
 
-    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]), forecast_horizon=14)
+    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]), num_site_ids=num_site_ids, forecast_horizon=14)
 
-    model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test))
+    model.fit([X_train, site_id_train], y_train, epochs=10, batch_size=32, validation_data=([X_test, site_id_test], y_test))
 
     save_as_h5(model)
 
-# Call main
 if __name__ == '__main__':
     main()
-
 
 
 
