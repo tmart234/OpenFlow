@@ -12,12 +12,18 @@ def normalize_data(file_path, data):
     output_file = file_path.replace('.csv', '_normalized.csv')
     numeric_columns = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 
+    # Check if required columns exist
+    missing_columns = [col for col in numeric_columns if col not in data.columns]
+    if missing_columns:
+        raise ValueError(f"Missing columns in the data: {missing_columns}")
+
     # Replace empty strings with NaN
     data.replace({'': np.nan}, inplace=True)
 
     # Convert columns to numeric values, converting any errors to NaN
     for column in numeric_columns:
         data[column] = pd.to_numeric(data[column], errors='coerce')
+
 
     # Use 7-day rolling average to fill NaN values for specific columns
     data[numeric_columns] = data[numeric_columns].fillna(data[numeric_columns].rolling(7, min_periods=1).mean())
