@@ -7,6 +7,7 @@ import pandas as pd
 from get_coordinates import get_coordinates
 import sys
 import logging
+import re
 from tensorflow.keras.preprocessing.text import Tokenizer
 
 """ 
@@ -104,12 +105,20 @@ def get_base_path():
     else:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def parse_date(x):
-    try:
-        return datetime.strptime(x, "%Y-%m-%d %H:%M")
-    except ValueError:
-        # Handle other date formats or raise the exception if necessary
-        return x
+def parse_datetime(datetime_str):
+    # Use regular expressions to extract the datetime part
+    match = re.search(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', datetime_str)
+    if match:
+        datetime_str = match.group(0)
+        try:
+            # Try parsing the datetime
+            return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError as e:
+            print(f"Error parsing datetime: {e}")
+            return None
+    else:
+        print(f"No valid datetime found in string: {datetime_str}")
+        return None
     
 def get_site_ids(filename=None):
     if filename is None:
