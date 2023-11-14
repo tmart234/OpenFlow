@@ -16,19 +16,23 @@ scaling/Performance concerns: noaa script, pd.concat
  """
 # This function will merge NOAA and flow data.
 def merge_dataframes(noaa_data, flow_data):
-    # Ensure 'Date' columns are in datetime format
-    noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
-    flow_data['Date'] = pd.to_datetime(flow_data['Date'])
+    try:
+        # Ensure 'Date' columns are in datetime format
+        noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
+        flow_data['Date'] = pd.to_datetime(flow_data['Date'])
 
-    # Set 'Date' as the index
-    noaa_data.set_index('Date', inplace=True)
-    flow_data.set_index('Date', inplace=True)
+        # Set 'Date' as the index
+        noaa_data.set_index('Date', inplace=True)
+        flow_data.set_index('Date', inplace=True)
 
-    # Merge the dataframes
-    combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
-    combined_data.reset_index(inplace=True)
+        # Merge the dataframes
+        combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
+        combined_data.reset_index(inplace=True)
 
-    return combined_data
+        return combined_data
+    except Exception as e:
+        logging.error(f"Error merging dataframes: {e}")
+        return None
  
 # This function will handle fetching and processing data for a single site ID.
 def fetch_and_process_data(site_id, start_date, end_date):
@@ -41,6 +45,14 @@ def fetch_and_process_data(site_id, start_date, end_date):
 
     # Fetch flow data
     flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
+
+    # Check if 'Date' column exists in both dataframes
+    if 'Date' not in noaa_data.columns:
+        logging.error(f"'Date' column missing in NOAA data for site ID {site_id}")
+        return None, None
+    if 'Date' not in flow_data.columns:
+        logging.error(f"'Date' column missing in flow data for site ID {site_id}")
+        return None, None
 
     if noaa_data.empty or flow_data.empty:
         logging.warning(f"No data available for site ID {site_id}. Skipping...")
