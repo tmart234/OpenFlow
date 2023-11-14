@@ -7,6 +7,7 @@ import pandas as pd
 from get_coordinates import get_coordinates
 import sys
 import logging
+from tensorflow.keras.preprocessing.text import Tokenizer
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -54,6 +55,17 @@ def preview_data(df, num_rows=4):
     print("\nLast few rows:")
     print(df.tail(num_rows))
 
+def get_site_ids_with_embedding(filename=None):
+    if filename is None:
+        filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.github', 'site_ids.txt')
+        
+    with open(filename, 'r') as f:
+        site_ids = [line.strip() for line in f]
+        
+    tokenizer = Tokenizer(char_level=False)
+    tokenizer.fit_on_texts(site_ids)
+    return tokenizer, [tokenizer.texts_to_sequences([site_id])[0][0] for site_id in site_ids]
+
 # This function will save the combined data from all site IDs.
 def save_combined_data(all_data, base_path):
     final_data = pd.DataFrame()
@@ -98,16 +110,19 @@ def get_site_ids(filename=None):
 def main(training_num_years = 7):
     # Configure logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    all_data = []
-    # Extract site ids
+    all_data = {}
+    
+    # Extract and encode site ids
+    tokenizer, encoded_site_ids = get_site_ids_with_embedding()
     site_ids = get_site_ids()
+    
     base_path = get_base_path()
 
     # Get dates for the last n years
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=training_num_years*365)).strftime('%Y-%m-%d')
 
-    for site_id in site_ids:
+    for site_id, encoded_site_id in zip(site_ids, encoded_site_ids):
         try:
             coords_dict = get_coordinates(site_id)
             latitude = coords_dict['latitude']
@@ -121,6 +136,10 @@ def main(training_num_years = 7):
                 logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue
 
+            # Embedding the site_id for later use in the model
+            noaa_data['site_id_encoded'] = encoded_site_id
+            flow_data['site_id_encoded'] = encoded_site_id
+
             combined_data = merge_dataframes(noaa_data, flow_data)
             all_data[site_id] = combined_data
         except Exception as e:
@@ -132,6 +151,6 @@ def main(training_num_years = 7):
     else:
         logging.error("No combined data for all sites")
         return None
-     
+
 if __name__ == "__main__":
     main()
