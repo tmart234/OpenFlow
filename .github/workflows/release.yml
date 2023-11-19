@@ -27,7 +27,7 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         workflow: ml_training.yml
         workflow_conclusion: success
-        name: lstm_model_onnx_release
+        name: lstm_model_keras_release
         path: ./model
 
     - name: Determine new version tag
