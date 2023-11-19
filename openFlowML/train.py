@@ -10,7 +10,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def save_as_h5(model, output_filename="lstm_model.h5"):
+def save_as_h5(model, output_filename="lstm_model.keras"):
     # Save the Keras model to HDF5 format
     model.save(output_filename)
     
@@ -45,39 +45,38 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
 
     # Assuming station columns are already one-hot encoded
     station_columns = [col for col in data.columns if col.startswith('station_')]
-    feature_columns = required_columns + station_columns
+    feature_columns = required_columns + station_columns + ['date_normalized']
 
     total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
-
 
     # Loop through the data to create input and output sets
     for i in range(len(data) - total_required_days - forecast_flow_timesteps + 1):
         input_features = data.iloc[i:i+total_required_days][feature_columns].values
         X.append(input_features)
 
-        future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values.flatten()
-        Y.append(future_flow)
+        future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values
+        # Reshape future_flow to match the output shape of the model
+        future_flow = future_flow.reshape(-1, forecast_flow_timesteps, 2)
+        Y.append(future_flow[0])  # Assuming future_flow is not empty
 
     return np.array(X), np.array(Y)
 
-
 # Build LSTM model
 def build_lstm_model(input_shape, forecast_horizon=14):
-    # Only a single input as the station IDs are already included in the input shape
-    historical_input = Input(shape=input_shape, name='historical_input')
+    # Define the model
+    model = Sequential()
 
-    # LSTM layers
-    lstm_out = LSTM(50, activation='relu', return_sequences=True)(historical_input)
-    lstm_out = Dropout(0.2)(lstm_out)
-    lstm_out = LSTM(50, activation='relu')(lstm_out)
-    lstm_out = Dropout(0.2)(lstm_out)
+    # Add LSTM layers
+    model.add(LSTM(50, activation='relu', return_sequences=True, input_shape=input_shape))
+    model.add(Dropout(0.2))
+    model.add(LSTM(50, activation='relu'))
+    model.add(Dropout(0.2))
 
-    # Dense output layer
-    dense_out = Dense(forecast_horizon * 2, activation="linear")(lstm_out)
-    output = tf.keras.layers.Reshape((forecast_horizon, 2))(dense_out)
+    # Add Dense output layer
+    model.add(Dense(forecast_horizon * 2, activation="linear"))
+    model.add(tf.keras.layers.Reshape((forecast_horizon, 2)))
 
-    # Building the model
-    model = Sequential(inputs=[historical_input], outputs=output)
+    # Compile the model
     model.compile(optimizer='adam', loss='mse')
     
     return model
@@ -96,6 +95,10 @@ def main():
 
     # Split data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2)
+    X_train = X_train.astype('float32')
+    X_test = X_test.astype('float32')
+    y_train = y_train.astype('float32')
+    y_test = y_test.astype('float32')
 
     # Adjust the input_shape to match the LSTM input requirements
     # The number of site IDs is determined by the count of one-hot encoded station columns
