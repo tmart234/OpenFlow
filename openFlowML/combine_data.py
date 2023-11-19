@@ -15,16 +15,20 @@ Takes multiuple individual data components and combindes into a dataset
 
 scaling/Performance concerns: noaa script, pd.concat
  """
+
 # This function will merge NOAA and flow data.
 def merge_dataframes(noaa_data, flow_data, station_id):
+     # Check if 'Date' column is in both dataframes
+    if 'Date' not in noaa_data or 'Date' not in flow_data:
+        raise ValueError("'Date' column missing in one of the dataframes")
     try:
         # Convert 'Date' columns to datetime format
         noaa_data['Date'] = pd.to_datetime(noaa_data['Date'], errors='coerce')
         flow_data['Date'] = pd.to_datetime(flow_data['Date'], errors='coerce')
 
-        # Drop rows with NaN in 'Date' column
-        noaa_data = noaa_data.dropna(subset=['Date'])
-        flow_data = flow_data.dropna(subset=['Date'])
+        # Check for NaN values after conversion
+        if noaa_data['Date'].isnull().any() or flow_data['Date'].isnull().any():
+            raise ValueError("NaN values found in 'Date' column after conversion to datetime")
 
         # Add station_id to both dataframes
         noaa_data['stationID'] = station_id
