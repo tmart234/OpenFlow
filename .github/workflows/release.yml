@@ -56,7 +56,7 @@ jobs:
 
     #  number of timesteps per sample = (historical_flow_timesteps + forecast_temperature_timesteps) = (60+14)=74
     #  4 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
-    -  name: Convert H5 Model to Core ML
+    -  name: Convert Model to Core ML
        run: |
         python -m coremltools convert ./model/lstm_model.keras --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 74, ${{ env.UNIQUE_STATION_IDS }} + 5]}'
 
