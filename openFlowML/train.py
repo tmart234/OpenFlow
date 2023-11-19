@@ -29,12 +29,16 @@ def save_as_onnx(model, output_filename="lstm_model.onnx"):
 # then immediately reshaped it to the desired [?, forecast_horizon, 2].
 # Reshape the data to be suitable for LSTM training
 def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
-    X, Y = [], []
-    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX", "date_normalized"]
+    X, Y, site_ids = [], [], []
+    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX", "Date"]
 
     # Validate required columns in the data
     if not all(col in data.columns for col in required_columns):
         raise ValueError(f"Data missing required columns. Available columns: {data.columns}")
+
+    # Ensure 'stationID' is also required
+    if 'stationID' not in data.columns:
+        raise ValueError("'stationID' column missing from data")
 
     total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
 
@@ -43,10 +47,14 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
         input_features = data.iloc[i:i+total_required_days][required_columns].values
         X.append(input_features)
 
+        # Keep track of the stationID for each entry
+        site_ids.append(data.iloc[i+total_required_days]['stationID'])
+
         future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values.flatten()
         Y.append(future_flow)
 
-    return np.array(X), np.array(Y)
+    return np.array(X), np.array(Y), np.array(site_ids)
+
 
 # Build LSTM model
 def build_lstm_model(input_shape, num_site_ids, forecast_horizon=14):
@@ -76,21 +84,23 @@ def build_lstm_model(input_shape, num_site_ids, forecast_horizon=14):
 # Main function to execute the training process
 def main():
     data = combine_data.main()
-    if data is None or not isinstance(data, pd.DataFrame):
-        logging.error("Error: Data is not available or not in expected format.")
-        return
+    if data is None or data.empty:
+        raise ValueError("Error: Data is not available or not in expected format.")
 
     # Retrieve and encode site IDs
     tokenizer, _ = combine_data.get_site_ids_with_embedding()
     num_site_ids = len(tokenizer.word_index) + 1  # Include one extra for padding
 
+    # Ensure that site_id_data is also received from reshape_data_for_lstm
     X, Y, site_id_data = reshape_data_for_lstm(data)
-    
+
     # Split data into training and testing sets
     X_train, X_test, y_train, y_test, site_id_train, site_id_test = train_test_split(X, Y, site_id_data, test_size=0.2)
 
-    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]), num_site_ids=num_site_ids, forecast_horizon=14)
+    # Adjust the input_shape to match the LSTM input requirements
+    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]), num_site_ids=num_site_ids)
 
+    # Modify the fit call to include site_id_train and site_id_test
     model.fit([X_train, site_id_train], y_train, epochs=10, batch_size=32, validation_data=([X_test, site_id_test], y_test))
 
     save_as_h5(model)
