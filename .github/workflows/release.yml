@@ -2,7 +2,7 @@ name: Release Core ML Model
 
 on:
   workflow_run:
-    workflows: ["ML Training Workflow"]
+    workflows: ["Weekly ML Training"]
     types:
       - completed
     branches:
