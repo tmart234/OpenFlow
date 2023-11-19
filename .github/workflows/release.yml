@@ -50,14 +50,10 @@ jobs:
    #     python -m coremltools convert ./model/lstm_model.onnx --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-names 'input' --output-names 'output'
 
     #  number of timesteps per sample = (historical_flow_timesteps + forecast_temperature_timesteps) = (60+14)=74
-    #  4 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
-    -  name: Convert Model to Core ML
-       run: |
-        python -m coremltools convert ./model/lstm_model.keras --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 74, (${{ env.UNIQUE_STATION_IDS }} + 5)]}'
-
+    #  5 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
     - name: Convert H5 Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.keras ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel "[None, 74, ${UNIQUE_STATION_IDS} + 5]"
+        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.keras ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel "[None, 74, (${UNIQUE_STATION_IDS} + 5)]"
 
     - name: Create Release
       id: create_release
