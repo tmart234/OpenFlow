@@ -53,9 +53,8 @@ def merge_dataframes(noaa_data, flow_data, station_id):
 
         return combined_data
     except Exception as e:
-        logging.error(f"Error merging dataframes: {e}")
-        # Return None or consider returning empty dataframes with the correct columns instead
-        return pd.DataFrame(columns=['Date', 'stationID', 'TMAX', 'TMIN', 'Min Flow', 'Max Flow'])
+        logging.error(f"Error merging dataframes for station ID {station_id}: {e}")
+        return pd.DataFrame()  # Return an empty DataFrame on error
  
 # This function will handle fetching and processing data for a single site ID.
 def fetch_and_process_data(site_id, start_date, end_date):
