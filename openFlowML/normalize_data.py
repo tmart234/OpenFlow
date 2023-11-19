@@ -24,7 +24,6 @@ def normalize_data(file_path, data):
     for column in numeric_columns:
         data[column] = pd.to_numeric(data[column], errors='coerce')
 
-
     # Use 7-day rolling average to fill NaN values for specific columns
     data[numeric_columns] = data[numeric_columns].fillna(data[numeric_columns].rolling(7, min_periods=1).mean())
 
@@ -36,9 +35,15 @@ def normalize_data(file_path, data):
     # Normalize numeric columns
     scalers = {}
     for column in numeric_columns:
-        scaler = StandardScaler()
-        data[column] = scaler.fit_transform(data[column].values.reshape(-1, 1))
-        scalers[column] = scaler
+        # Check for columns with all NaN values or no variance and handle accordingly
+        if data[column].isnull().all() or data[column].nunique() == 1:
+            # Here we fill the NaNs with 0, assuming that NaN corresponds to the absence of variation
+            data[column].fillna(0, inplace=True)
+        else:
+            scaler = StandardScaler()
+            # Reshape data for scaling
+            data[column] = scaler.fit_transform(data[column].values.reshape(-1, 1))
+            scalers[column] = scaler
 
     # Normalize the date column to a fraction of the year
     data['date_normalized'] = normalize_date_to_year_fraction(data['Date'])
@@ -46,9 +51,14 @@ def normalize_data(file_path, data):
     # Drop the original date column
     data = data.drop(columns=['Date'])
 
+    # Save the normalized data to a new file
+    data.to_csv(output_file, index=False)
+
     return data
 
 if __name__ == "__main__":
     file_path = 'combined_data_all_sites.csv'
     data = pd.read_csv(file_path)
-    normalize_data(file_path, data)
+    normalized_data = normalize_data(file_path, data)
+    # Optionally, save the normalized data if not already saved within the function
+    normalized_data.to_csv(file_path.replace('.csv', '_normalized.csv'), index=False)
