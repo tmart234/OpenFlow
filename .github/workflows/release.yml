@@ -1,7 +1,6 @@
 name: Release Core ML Model
 
 on:
-  workflow_run:
   workflow_dispatch:
 
 jobs:
