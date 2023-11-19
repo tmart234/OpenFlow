@@ -16,29 +16,42 @@ Takes multiuple individual data components and combindes into a dataset
 scaling/Performance concerns: noaa script, pd.concat
  """
 # This function will merge NOAA and flow data.
-def merge_dataframes(noaa_data, flow_data):
+def merge_dataframes(noaa_data, flow_data, station_id):
     try:
-        # Ensure 'Date' columns are in datetime format
+        # Convert 'Date' columns to datetime format
         noaa_data['Date'] = pd.to_datetime(noaa_data['Date'], errors='coerce')
         flow_data['Date'] = pd.to_datetime(flow_data['Date'], errors='coerce')
 
-        # Drop rows with invalid dates
-        noaa_data.dropna(subset=['Date'], inplace=True)
-        flow_data.dropna(subset=['Date'], inplace=True)
+        # Drop rows with NaN in 'Date' column
+        noaa_data = noaa_data.dropna(subset=['Date'])
+        flow_data = flow_data.dropna(subset=['Date'])
+
+        # Add station_id to both dataframes
+        noaa_data['stationID'] = station_id
+        flow_data['stationID'] = station_id
 
         # Set 'Date' as the index
-        noaa_data.set_index('Date', inplace=True)
-        flow_data.set_index('Date', inplace=True)
+        noaa_data.set_index(['Date', 'stationID'], inplace=True)
+        flow_data.set_index(['Date', 'stationID'], inplace=True)
 
-        # Merge the dataframes
+        # Use an outer join to merge so we keep all dates and station IDs, filling missing values with NaN
         combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
+
+        # After merging, handle missing data for key columns.
+        # You can choose to fill with mean, median, or a placeholder like -9999
+        for col in ['TMAX', 'TMIN', 'Min Flow', 'Max Flow']:
+            if col in combined_data.columns:
+                # Filling missing values with the mean of the column
+                combined_data[col].fillna(combined_data[col].mean(), inplace=True)
+
+        # Reset index to bring 'Date' and 'stationID' back as columns
         combined_data.reset_index(inplace=True)
 
         return combined_data
     except Exception as e:
         logging.error(f"Error merging dataframes: {e}")
-        return None
-
+        # Return None or consider returning empty dataframes with the correct columns instead
+        return pd.DataFrame(columns=['Date', 'stationID', 'TMAX', 'TMIN', 'Min Flow', 'Max Flow'])
  
 # This function will handle fetching and processing data for a single site ID.
 def fetch_and_process_data(site_id, start_date, end_date):
@@ -171,7 +184,7 @@ def main(training_num_years = 7):
             noaa_data['site_id_encoded'] = encoded_site_id
             flow_data['site_id_encoded'] = encoded_site_id
 
-            combined_data = merge_dataframes(noaa_data, flow_data)
+            combined_data = merge_dataframes(noaa_data, flow_data, site_id)
             all_data[site_id] = combined_data
         except Exception as e:
             logging.error(f"An error occurred for site ID {site_id}: {e}")
