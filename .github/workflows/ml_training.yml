@@ -30,4 +30,4 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: lstm_model_h5_release
-        path: ./lstm_model.h5
+        path: ./lstm_model.keras
