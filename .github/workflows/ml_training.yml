@@ -1,4 +1,4 @@
-name: Nightly ML Training
+name: Weekly ML Training
 
 on:
   schedule:
