@@ -44,6 +44,12 @@ jobs:
         echo "New version: $NEW_TAG"
         echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
 
+    - name: Count unique station IDs
+      id: count_station_ids
+      run: |
+        UNIQUE_STATION_IDS=$(wc -l < .github/site_ids.txt)
+        echo "UNIQUE_STATION_IDS=$UNIQUE_STATION_IDS" >> $GITHUB_ENV
+
    # - name: Convert ONNX Model to Core ML
    #   run: |
    #     python -m coremltools convert ./model/lstm_model.onnx --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-names 'input' --output-names 'output'
@@ -52,7 +58,7 @@ jobs:
     #  4 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
     -  name: Convert H5 Model to Core ML
        run: |
-        python -m coremltools convert ./model/lstm_model.keras --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 74, 5]}
+        python -m coremltools convert ./model/lstm_model.keras --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-shape '{input: [None, 74, ${{ env.UNIQUE_STATION_IDS }} + 5]}'
 
     - name: Create Release
       id: create_release
