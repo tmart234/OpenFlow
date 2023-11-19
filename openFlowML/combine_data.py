@@ -19,8 +19,12 @@ scaling/Performance concerns: noaa script, pd.concat
 def merge_dataframes(noaa_data, flow_data):
     try:
         # Ensure 'Date' columns are in datetime format
-        noaa_data['Date'] = pd.to_datetime(noaa_data['Date'])
-        flow_data['Date'] = pd.to_datetime(flow_data['Date'])
+        noaa_data['Date'] = pd.to_datetime(noaa_data['Date'], errors='coerce')
+        flow_data['Date'] = pd.to_datetime(flow_data['Date'], errors='coerce')
+
+        # Drop rows with invalid dates
+        noaa_data.dropna(subset=['Date'], inplace=True)
+        flow_data.dropna(subset=['Date'], inplace=True)
 
         # Set 'Date' as the index
         noaa_data.set_index('Date', inplace=True)
@@ -34,6 +38,7 @@ def merge_dataframes(noaa_data, flow_data):
     except Exception as e:
         logging.error(f"Error merging dataframes: {e}")
         return None
+
  
 # This function will handle fetching and processing data for a single site ID.
 def fetch_and_process_data(site_id, start_date, end_date):
@@ -48,18 +53,23 @@ def fetch_and_process_data(site_id, start_date, end_date):
     flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
 
     # Check if 'Date' column exists in both dataframes
-    if 'Date' not in noaa_data.columns:
-        logging.error(f"'Date' column missing in NOAA data for site ID {site_id}")
-        return None, None
-    if 'Date' not in flow_data.columns:
-        logging.error(f"'Date' column missing in flow data for site ID {site_id}")
+    if 'Date' not in noaa_data.columns or 'Date' not in flow_data.columns:
+        logging.error(f"'Date' column missing in data for site ID {site_id}")
         return None, None
 
     if noaa_data.empty or flow_data.empty:
         logging.warning(f"No data available for site ID {site_id}. Skipping...")
         return None, None
 
+    # Check for and handle missing or non-numeric values in key columns
+    for df in [noaa_data, flow_data]:
+        for col in ['TMAX', 'TMIN', 'Min Flow', 'Max Flow']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col].fillna(df[col].mean(), inplace=True)  # Fill missing values with mean
+
     return noaa_data, flow_data
+
  
  # Additional function to display the beginning and ending of the dataframe
 def preview_data(df, num_rows=4):
