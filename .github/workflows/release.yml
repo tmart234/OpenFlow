@@ -20,11 +20,11 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.x' # Choose the Python version you need for coremltools
+        python-version: '3.9'
 
     - name: Install Dependencies
       run: |
-        pip install onnx coremltools bump2version
+        pip install coremltools bump2version
 
     - name: Download artifact
       uses: dawidd6/action-download-artifact@v2
