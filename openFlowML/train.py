@@ -32,20 +32,17 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
     X, Y = [], []
     required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX", "date_normalized"]
 
-    # Check for required columns in the data
-    for col in required_columns:
-        if col not in data.columns:
-            raise ValueError(f"Expected '{col}' column in the data.")
+    # Validate required columns in the data
+    if not all(col in data.columns for col in required_columns):
+        raise ValueError(f"Data missing required columns. Available columns: {data.columns}")
 
     total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
 
     # Loop through the data to create input and output sets
     for i in range(len(data) - total_required_days - forecast_flow_timesteps + 1):
-        # Extract input features based on total required days
         input_features = data.iloc[i:i+total_required_days][required_columns].values
         X.append(input_features)
 
-        # Extract future flow data for forecast_flow_timesteps days
         future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values.flatten()
         Y.append(future_flow)
 
@@ -79,9 +76,9 @@ def build_lstm_model(input_shape, num_site_ids, forecast_horizon=14):
 # Main function to execute the training process
 def main():
     data = combine_data.main()
-    if isinstance(data, str):
-        print("Error: Data is recognized as string. Expected pandas DataFrame.")
-        exit(1)
+    if data is None or not isinstance(data, pd.DataFrame):
+        logging.error("Error: Data is not available or not in expected format.")
+        return
 
     # Retrieve and encode site IDs
     tokenizer, _ = combine_data.get_site_ids_with_embedding()
