@@ -64,9 +64,11 @@ def fetch_and_process_data(site_id, start_date, end_date):
     # Fetch NOAA data
     closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
 
-        # Clean NOAA data
+    # Add the USGS site ID to the NOAA data
     if not noaa_data.empty:
-        # Directly convert 'TMAX' and 'TMIN' columns to numeric, with non-numeric values turned into NaNs
+        noaa_data['USGS_site_ID'] = site_id  # Add the site ID as a new column
+
+        # Clean NOAA data
         noaa_data['TMAX'] = pd.to_numeric(noaa_data['TMAX'], errors='coerce')
         noaa_data['TMIN'] = pd.to_numeric(noaa_data['TMIN'], errors='coerce')
 
@@ -116,6 +118,7 @@ def get_site_ids(filename=None):
 def save_combined_data(all_data, base_path):
     final_data = pd.DataFrame()
     for site_id, data in all_data.items():
+        # Ensure data alignment; might need additional checks or preprocessing here
         final_data = pd.concat([final_data, data])
 
     # Preview the combined data
@@ -126,7 +129,7 @@ def save_combined_data(all_data, base_path):
     final_data.to_csv(combined_data_file_path, index=False)
 
     # Apply normalization which includes one-hot encoding within the normalization function
-    normalized_data = normalize_data(combined_data_file_path, final_data)
+    normalized_data = normalize_data.normalize_data(combined_data_file_path, final_data)
 
     # Save the normalized data to a separate CSV file
     normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')

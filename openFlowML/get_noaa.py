@@ -56,6 +56,7 @@ def check_fields(fields, station_id, start_str, end_str):
         "endDate": end_str + "T00:00:00", 
         "dataTypes": ",".join(fields),
         "stations": station_id,
+        "url": url
     }
 
     # Encode the parameters without encoding the colons in the datetime strings
@@ -227,6 +228,9 @@ def fetch_temperature_data(nearest_station_id, start_str, end_str):
         # Convert reader output to a list of dictionaries and then to a DataFrame
         temperature_data_list = list(reader)
         temperature_df = pd.DataFrame(temperature_data_list)
+
+        # Rename 'STATION' column to 'NOAA_station'
+        temperature_df.rename(columns={'STATION': 'NOAA_station'}, inplace=True)
 
         # Replace empty strings with NaN and convert to numeric for TMAX and TMIN
         temperature_df['TMAX'].replace('', np.nan, inplace=True)

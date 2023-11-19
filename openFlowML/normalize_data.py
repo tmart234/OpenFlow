@@ -22,10 +22,11 @@ def fill_with_rolling_mean(data, temperature_column, window_size=7):
     data[temperature_column] = data[temperature_column].rolling(window=window_size, min_periods=1, center=True).mean()
 
     # If there are still NaN values at the start or end of the series, fill them with the first or last valid value
-    data[temperature_column].fillna(method='bfill', inplace=True)  # Backward fill
-    data[temperature_column].fillna(method='ffill', inplace=True)  # Forward fill
+    data[temperature_column] = data[temperature_column].bfill()  # Backward fill
+    data[temperature_column] = data[temperature_column].ffill()  # Forward fill
 
     return data
+
 
 def interpolate_temperatures(data):
     # Applies rolling mean interpolation to temperature columns
