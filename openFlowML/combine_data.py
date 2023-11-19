@@ -5,10 +5,9 @@ import get_noaa
 import normalize_data
 import pandas as pd
 from get_coordinates import get_coordinates
-import sys
 import logging
 import re
-from tensorflow.keras.preprocessing.text import Tokenizer
+import numpy as np
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -65,13 +64,27 @@ def fetch_and_process_data(site_id, start_date, end_date):
     # Fetch NOAA data
     closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
 
+        # Clean NOAA data
+    if not noaa_data.empty:
+        # Directly convert 'TMAX' and 'TMIN' columns to numeric, with non-numeric values turned into NaNs
+        noaa_data['TMAX'] = pd.to_numeric(noaa_data['TMAX'], errors='coerce')
+        noaa_data['TMIN'] = pd.to_numeric(noaa_data['TMIN'], errors='coerce')
+
     # Fetch flow data
     flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
 
-    # Check if 'Date' column exists in both dataframes
-    if 'Date' not in noaa_data.columns or 'Date' not in flow_data.columns:
-        logging.error(f"'Date' column missing in data for site ID {site_id}")
-        return None, None
+    # Diagnostic logging to check 'Date' column in NOAA data
+    if 'Date' in noaa_data.columns:
+        logging.info(f"'Date' column present in NOAA data for site ID {site_id}")
+    else:
+        logging.error(f"'Date' column missing in NOAA data for site ID {site_id}")
+
+    # Diagnostic logging to check 'Date' column in flow data
+    if 'Date' in flow_data.columns:
+        logging.info(f"'Date' column present in flow data for site ID {site_id}")
+    else:
+        logging.error(f"'Date' column missing in flow data for site ID {site_id}")
+
 
     if noaa_data.empty or flow_data.empty:
         logging.warning(f"No data available for site ID {site_id}. Skipping...")
@@ -85,25 +98,19 @@ def fetch_and_process_data(site_id, start_date, end_date):
                 df[col].fillna(df[col].mean(), inplace=True)  # Fill missing values with mean
 
     return noaa_data, flow_data
-
  
  # Additional function to display the beginning and ending of the dataframe
 def preview_data(df, num_rows=4):
-    print("First few rows:")
-    print(df.head(num_rows))
-    print("\nLast few rows:")
-    print(df.tail(num_rows))
+    logging.info("First few rows:")
+    logging.info(df.head(num_rows))
+    logging.info("\nLast few rows:")
+    logging.info(df.tail(num_rows))
 
-def get_site_ids_with_embedding(filename=None):
+def get_site_ids(filename=None):
     if filename is None:
         filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.github', 'site_ids.txt')
-        
     with open(filename, 'r') as f:
-        site_ids = [line.strip() for line in f]
-        
-    tokenizer = Tokenizer(char_level=False)
-    tokenizer.fit_on_texts(site_ids)
-    return tokenizer, [tokenizer.texts_to_sequences([site_id])[0][0] for site_id in site_ids]
+        return [line.strip() for line in f]
 
 # This function will save the combined data from all site IDs.
 def save_combined_data(all_data, base_path):
@@ -114,15 +121,18 @@ def save_combined_data(all_data, base_path):
     # Preview the combined data
     preview_data(final_data)
 
+    # Save the combined raw data to a CSV file
     combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
     final_data.to_csv(combined_data_file_path, index=False)
 
-    # Save normalized data as a separate CSV
-    normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')
-    final_data = normalize_data.normalize_data(combined_data_file_path, final_data)
-    final_data.to_csv(normalized_data_path, index=False)
+    # Apply normalization which includes one-hot encoding within the normalization function
+    normalized_data = normalize_data(combined_data_file_path, final_data)
 
-    return final_data
+    # Save the normalized data to a separate CSV file
+    normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')
+    normalized_data.to_csv(normalized_data_path, index=False)
+
+    return normalized_data
 
 # usable for for GH actions or local testing workflow
 def get_base_path():
@@ -160,7 +170,6 @@ def main(training_num_years = 7):
     all_data = {}
     
     # Extract and encode site ids
-    tokenizer, encoded_site_ids = get_site_ids_with_embedding()
     site_ids = get_site_ids()
     
     base_path = get_base_path()
@@ -169,29 +178,29 @@ def main(training_num_years = 7):
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=training_num_years*365)).strftime('%Y-%m-%d')
 
-    for site_id, encoded_site_id in zip(site_ids, encoded_site_ids):
+    # Iterate over each site ID
+    for site_id in site_ids:
         try:
             coords_dict = get_coordinates(site_id)
             latitude = coords_dict['latitude']
             longitude = coords_dict['longitude']
 
-            # Call noaa and get_flow
+            # Call NOAA and get_flow
             closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
             flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
 
+            # Skip if no data is available
             if noaa_data.empty or flow_data.empty:
                 logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue
 
-            # Embedding the site_id for later use in the model
-            noaa_data['site_id_encoded'] = encoded_site_id
-            flow_data['site_id_encoded'] = encoded_site_id
-
+            # Merge NOAA and flow data
             combined_data = merge_dataframes(noaa_data, flow_data, site_id)
             all_data[site_id] = combined_data
         except Exception as e:
             logging.error(f"An error occurred for site ID {site_id}: {e}")
 
+    # Save combined data if available
     if all_data:
         final_data = save_combined_data(all_data, base_path)
         return final_data

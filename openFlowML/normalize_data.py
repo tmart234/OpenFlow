@@ -2,6 +2,37 @@ from sklearn.preprocessing import StandardScaler
 import pandas as pd
 import numpy as np
 
+'''
+Normalize and interpolate data
+'''
+
+def get_mean_temperature(station_id, date):
+    # TODO: Construct URL for fetching mean temperature
+    url = f"http://example.com/mean_temperature?station_id={station_id}&date={date}"
+
+    # Parse the response to extract the mean temperature
+    # Return the mean temperature for that date
+    mean_temperature = -999
+
+    return mean_temperature
+
+def fill_with_rolling_mean(data, temperature_column, window_size=7):
+    # Fills missing temperature values with a rolling mean.
+    # First replace NaN values with a rolling mean
+    data[temperature_column] = data[temperature_column].rolling(window=window_size, min_periods=1, center=True).mean()
+
+    # If there are still NaN values at the start or end of the series, fill them with the first or last valid value
+    data[temperature_column].fillna(method='bfill', inplace=True)  # Backward fill
+    data[temperature_column].fillna(method='ffill', inplace=True)  # Forward fill
+
+    return data
+
+def interpolate_temperatures(data):
+    # Applies rolling mean interpolation to temperature columns
+    data = fill_with_rolling_mean(data, 'TMIN')
+    data = fill_with_rolling_mean(data, 'TMAX')
+    return data
+
 def normalize_date_to_year_fraction(date_series):
     date_series = pd.to_datetime(date_series)
     day_of_year = date_series.dt.dayofyear
@@ -9,56 +40,53 @@ def normalize_date_to_year_fraction(date_series):
     return year_fraction
 
 def normalize_data(file_path, data):
-    output_file = file_path.replace('.csv', '_normalized.csv')
-    numeric_columns = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
+    try:
+        data = pd.read_csv(file_path)
 
-    # Check if required columns exist
-    missing_columns = [col for col in numeric_columns if col not in data.columns]
-    if missing_columns:
-        raise ValueError(f"Missing columns in the data: {missing_columns}")
+        # Interpolate temperatures first
+        data = interpolate_temperatures(data)
 
-    # Replace empty strings with NaN
-    data.replace({'': np.nan}, inplace=True)
+        numeric_columns = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 
-    # Convert columns to numeric values, converting any errors to NaN
-    for column in numeric_columns:
-        data[column] = pd.to_numeric(data[column], errors='coerce')
+        # Check if required columns exist
+        missing_columns = [col for col in numeric_columns if col not in data.columns]
+        if missing_columns:
+            raise ValueError(f"Missing columns in the data: {missing_columns}")
 
-    # Use 7-day rolling average to fill NaN values for specific columns
-    data[numeric_columns] = data[numeric_columns].fillna(data[numeric_columns].rolling(7, min_periods=1).mean())
+        # Replace empty strings with NaN
+        data.replace({'': np.nan}, inplace=True)
 
-    # If after rolling average fill, there are still NaN values, fill with column mean
-    for column in numeric_columns:
-        if data[column].isnull().any():
-            data[column].fillna(data[column].mean(), inplace=True)
+        # One-hot encoding for stationID
+        if 'stationID' in data.columns:
+            data = pd.get_dummies(data, columns=['stationID'], prefix=['station'])
 
-    # Normalize numeric columns
-    scalers = {}
-    for column in numeric_columns:
-        # Check for columns with all NaN values or no variance and handle accordingly
-        if data[column].isnull().all() or data[column].nunique() == 1:
-            # Here we fill the NaNs with 0, assuming that NaN corresponds to the absence of variation
-            data[column].fillna(0, inplace=True)
-        else:
+        # Convert columns to numeric values
+        for column in numeric_columns:
+            data[column] = pd.to_numeric(data[column], errors='coerce')
+
+        # Fill remaining NaN values with column mean
+        for column in numeric_columns:
+            if data[column].isnull().any():
+                data[column].fillna(data[column].mean(), inplace=True)
+
+        # Normalize numeric columns
+        scalers = {}
+        for column in numeric_columns:
             scaler = StandardScaler()
-            # Reshape data for scaling
             data[column] = scaler.fit_transform(data[column].values.reshape(-1, 1))
             scalers[column] = scaler
 
-    # Normalize the date column to a fraction of the year
-    data['date_normalized'] = normalize_date_to_year_fraction(data['Date'])
-    
-    # Drop the original date column
-    data = data.drop(columns=['Date'])
+        # Normalize the date column
+        data['date_normalized'] = normalize_date_to_year_fraction(data['Date'])
 
-    # Save the normalized data to a new file
-    data.to_csv(output_file, index=False)
+        # Drop the original date column
+        data.drop(columns=['Date'], inplace=True)
 
-    return data
+        return data
+    except Exception as e:
+        print(f"Error processing file {file_path}: {e}")
+        return None
 
 if __name__ == "__main__":
     file_path = 'combined_data_all_sites.csv'
-    data = pd.read_csv(file_path)
-    normalized_data = normalize_data(file_path, data)
-    # Optionally, save the normalized data if not already saved within the function
-    normalized_data.to_csv(file_path.replace('.csv', '_normalized.csv'), index=False)
+    normalized_data = normalize_data(file_path)

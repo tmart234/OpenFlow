@@ -7,8 +7,9 @@ import csv
 import math
 import re
 import json
-import os
+import numpy as np
 import sys
+import logging
 
 # given a coordinate, find closest NOAA station
 # tests a single NOAA station to get historical temperature data
@@ -20,6 +21,8 @@ Country = 'US'
 noaa_api_token = "ensQWPauKcbtSOmsAvlwRVfWyQjJpbHa" # not sensitive or currently used
 headers = {"token": noaa_api_token}
 fileds = ["TMIN","TMAX"]
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
     # Convert startStr and endStr to datetime objects
@@ -36,7 +39,7 @@ def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
                 mindate_str = metadata.get("mindate")
                 maxdate = datetime.strptime(maxdate_str, "%Y-%m-%d")
                 mindate = datetime.strptime(mindate_str, "%Y-%m-%d")
-                print(f"Station ID: {station_id} has an end of: {maxdate} and start of {mindate}")
+                logging.debug(f"Station ID: {station_id} has an end of: {maxdate} and start of {mindate}")
                 
                 # Now, you're comparing datetime objects with datetime objects
                 if (maxdate >= end_date_obj or maxdate >= three_days_ago) and mindate <= start_date_obj:
@@ -62,7 +65,7 @@ def check_fields(fields, station_id, start_str, end_str):
 
     # Join the encoded parameters with '&' and add them to the URL
     request_url = url + "?" + "&".join(encoded_params)
-    print(f"checking fields for: {request_url}")
+    logging.debug(f"checking fields for: %s", request_url)
 
     search_response = get_data(request_url)
     # Assuming search_response is a JSON string
@@ -72,7 +75,7 @@ def check_fields(fields, station_id, start_str, end_str):
     response_fields = {data_type["key"] for data_type in data_types}
     if all(field in response_fields for field in fields):
         return True
-    print("bad fields... checking next ID")
+    logging.info("bad fields... checking next ID")
     return False
 
 def get_data(url, headers=None, max_retries=3):
@@ -84,19 +87,19 @@ def get_data(url, headers=None, max_retries=3):
                 if response.text:
                     return response.text
                 else:
-                    print("Response status code is 200, but no data received.")
+                    logging.info("Response status code is 200, but no data received.")
                     return None
             elif response.status_code == 503:  # Retry on 503 errors
                 retries += 1
-                print(f"Received a 503 error. Retrying... ({retries}/{max_retries})")
+                logging.info(f"Received a 503 error. Retrying... ({retries}/{max_retries})")
                 time.sleep(0.3)  # Sleep for 0.3 seconds before retrying
             else:
-                print(f"Request failed with status code {response.status_code}.")
+                logging.error(f"Request failed with status code {response.status_code}.")
                 return None
         except requests.exceptions.RequestException as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             return None
-    print(f"Exceeded maximum retries ({max_retries}) for URL {url}.")
+    logging.error(f"Exceeded maximum retries ({max_retries}) for URL {url}.")
     return None
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -118,14 +121,14 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
             if line.startswith(Country):
                 us_stations.append(line)
     else:
-        print("Failed to fetch GHCND stations.")
+        logging.error("Failed to fetch GHCND stations.")
         us_stations = None
 
     if us_stations is not None:
-        print("US stations found!!")
-        #print(us_stations)
+        logging.debug("US stations found!:")
+        logging.debug(us_stations)
     else:
-        print("No US stations found. Exiting....")
+        logging.error("No US stations found. Exiting....")
         exit()
 
     closest_station = None
@@ -139,7 +142,7 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
         station_id, lat, lon, *_ = line.split()
 
         if not pattern.match(station_id):
-            #print(f"bad match for: {station_id}")
+            logging.debug(f"bad match for: {station_id}")
             continue
 
         lat, lon = float(lat), float(lon)
@@ -149,10 +152,10 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
     # Sort stations by distance and limit the list to 50 items
     # increase size if this part is failing
     sorted_stations = sorted(stations_with_distances, key=lambda x: x[1])[:50]
-    print(f"Close station list: {sorted_stations}")
+    logging.info(f"Close station list: {sorted_stations}")
 
     if not sorted_stations:
-        print("No stations found within the distance limit. Exiting...")
+        logging.error("No stations found within the distance limit. Exiting...")
         return None
 
     closest_station = None
@@ -160,11 +163,11 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
         station_with_data = find_station_with_recent_data([(station, distance)], startStr, fields, endStr)
         if station_with_data:
             closest_station = station_with_data
-            print(f"The closest station with recent data and valid fields is {closest_station[0]} and it is {closest_station[1]} distance")
+            logging.info(f"The closest station with recent data and valid fields is {closest_station[0]} and it is {closest_station[1]} distance")
             break
 
     if not closest_station:
-        print("No station found with recent data and valid fields.")
+        logging.error("No station found with recent data and valid fields.")
     return closest_station
 
 def get_station_metadata(noaa_station_id):
@@ -184,26 +187,21 @@ def get_station_metadata(noaa_station_id):
     if metadata_response:
         metadata = json.loads(metadata_response)
         if not metadata:
-            print(f"No metadata found for URL: {metadata}")
+            logging.info(f"No metadata found for URL: {metadata}")
             return None
-        #print(f"{noaa_station_id} metadata: {metadata}")
+        logging.debug(f"{noaa_station_id} metadata: {metadata}")
         return metadata
     else:
-        print("No metadata received.")
+        logging.error("No metadata received.")
         return None
 
-
-def fetch_temperature_data(nearest_station_id, startStr, endStr):
+def fetch_temperature_data(nearest_station_id, start_str, end_str):
     temperature_data = {}
-    # Convert datetime objects to strings with the desired format
-    start_str = startStr
-    end_str = endStr
-    # Get station metadata
     metadata = get_station_metadata(nearest_station_id)
-    print(metadata)
+    logging.debug(metadata)
     
     if not metadata:
-        print("Failed to fetch station metadata.")
+        logging.error("Failed to fetch station metadata.")
         return temperature_data
 
     ncei_search_url = "https://www.ncei.noaa.gov/access/services/data/v1"
@@ -215,53 +213,63 @@ def fetch_temperature_data(nearest_station_id, startStr, endStr):
         "stations": nearest_station_id,
     }
 
-    # Encode the parameters without encoding the colons in the datetime strings
-    encoded_params = [
-        f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()
-    ]
-    # Join the encoded parameters with '&' and add them to the URL
-    request_url = ncei_search_url + "?" + "&".join(encoded_params)
-    print("Temperature data URL:", request_url)
+    # Construct the request URL
+    encoded_params = "&".join([f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in ncei_search_params.items()])
+    request_url = ncei_search_url + "?" + encoded_params
+    logging.info("Temperature data URL: %s", request_url)
+
 
     response_text = get_data(request_url, headers=headers)
     if response_text:
-        # Preprocess the response text to remove extra spaces
         response_text = "\n".join([line.strip().replace('"', '') for line in response_text.splitlines()])
-        # Use csv.DictReader to read the response data
         reader = csv.DictReader(io.StringIO(response_text))
-        for row in reader:
-            date_str = row["DATE"]
-            try:
-                # temperature values are given in tenths of degrees Celsius.
-                min_temp = (float(int(row["TMIN"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-                max_temp = (float(int(row["TMAX"].strip())) / 10) * (9 / 5) + 32  # Convert from Celsius to Fahrenheit
-                temperature_data[date_str] = {"TMIN": min_temp, "TMAX": max_temp}
-            except ValueError:
-                # Provide blank or "no data" for non-numeric temperature data
-                temperature_data[date_str] = {"TMIN": "", "TMAX": ""}
-                print(f"Non-numeric temperature data for date {date_str}: {row}")
+        
+        # Convert reader output to a list of dictionaries and then to a DataFrame
+        temperature_data_list = list(reader)
+        temperature_df = pd.DataFrame(temperature_data_list)
+
+        # Replace empty strings with NaN and convert to numeric for TMAX and TMIN
+        temperature_df['TMAX'].replace('', np.nan, inplace=True)
+        temperature_df['TMIN'].replace('', np.nan, inplace=True)
+        temperature_df['TMAX'] = pd.to_numeric(temperature_df['TMAX'], errors='coerce')
+        temperature_df['TMIN'] = pd.to_numeric(temperature_df['TMIN'], errors='coerce')
+
+        # Convert the 'DATE' column to datetime but do not set it as index
+        temperature_df['Date'] = pd.to_datetime(temperature_df['DATE'], format="%Y-%m-%d")
+
+        # Drop the old 'DATE' column
+        temperature_df.drop(columns=['DATE'], inplace=True)
+
+        return temperature_df
     else:
-        print("Could not get temperature data!!")
+        logging.error("Could not get temperature data!")
+        return pd.DataFrame()  # Return an empty DataFrame on error
+    
+def main(latitude=38.52, longitude=-106.96, startStr=None, endStr=None):
+    if startStr is None:
+        startStr = (datetime.now() - timedelta(days=7*365 + 7)).strftime('%Y-%m-%d')
+    if endStr is None:
+        endStr = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
-    # Convert temperature_data to a pandas DataFrame
-    temperature_df = pd.DataFrame.from_dict(temperature_data, orient="index", columns=["TMIN", "TMAX"])
-    temperature_df.index = pd.to_datetime(temperature_df.index, format="%Y-%m-%d")
-    return temperature_df
-
-def main(latitude, longitude, startStr, endStr):
     nearest_station_id = find_closest_ghcnd_station(float(latitude), float(longitude), fileds, startStr, endStr)
 
     if nearest_station_id:
-        print(f"Nearest station ID with good data: {nearest_station_id[0]}")
+        logging.info(f"Nearest station ID with good data: {nearest_station_id[0]}")
         temperature_data = fetch_temperature_data(nearest_station_id[0], startStr, endStr)
+        logging.info(temperature_data)
         return nearest_station_id[0], temperature_data
     else:
-        print("No station found near the specified location.")
+        logging.error("No station found near the specified location!")
         return sys.exit(1)  # Exit with a status of 1, indicating failure
 
 if __name__ == "__main__":
-    latitude = float(sys.argv[1])
-    longitude = float(sys.argv[2])
-    start_date = sys.argv[3]
-    end_date = sys.argv[4]
+    if len(sys.argv) > 4:  # Check if enough arguments are passed
+        latitude = float(sys.argv[1])
+        longitude = float(sys.argv[2])
+        start_date = sys.argv[3]
+        end_date = sys.argv[4]
+    else:
+        # Defaults will be used if not enough arguments are passed
+        latitude, longitude, start_date, end_date = 38.52, -106.96, None, None
+
     main(latitude, longitude, start_date, end_date)
