@@ -29,7 +29,7 @@ jobs:
         workflow: ml_training.yml
         workflow_conclusion: success
         name: lstm_model_keras_release
-        path: $GITHUB_WORKSPACE/model
+        path: ./model
 
     - name: Determine new version tag
       id: new_version
@@ -54,7 +54,7 @@ jobs:
     #  5 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
     - name: Convert Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py $GITHUB_WORKSPACE/model/lstm_model.keras $GITHUB_WORKSPACE/model/lstm_model_${{ env.NEW_TAG }}.mlmodel "[None, 74, (${UNIQUE_STATION_IDS} + 5)]"
+        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.keras ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel "[None, 74, (${UNIQUE_STATION_IDS} + 5)]"
 
     - name: Create Release
       id: create_release
