@@ -66,6 +66,9 @@ jobs:
         release_name: Release ${{ env.NEW_TAG }}
         draft: false
         prerelease: false
+        
+    - name: Archive Model Package
+      run: zip -r lstm_model_${{ env.NEW_TAG }}.mlpackage.zip ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage
 
     - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
@@ -73,6 +76,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage
-        asset_name: lstm_model_${{ env.NEW_TAG }}.mlpackage
-        asset_content_type: application/octet-stream
+        asset_path: ./lstm_model_${{ env.NEW_TAG }}.mlpackage.zip
+        asset_name: lstm_model_${{ env.NEW_TAG }}.mlpackage.zip
+        asset_content_type: application/zip
