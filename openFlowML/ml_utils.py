@@ -4,7 +4,7 @@ import sys
 
 def convert_model(model_path, mlmodel_output_path, input_shape):
     # Load the Keras model using TensorFlow
-    model = tf.keras.saving.load_model(model_path)
+    model = tf.keras.models.load_model(model_path)
 
     # Convert the model to Core ML format
     mlmodel = ct.convert(model, inputs=[ct.TensorType(shape=input_shape)])
