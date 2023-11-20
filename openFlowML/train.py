@@ -10,7 +10,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def save_as_h5(model, output_filename="lstm_model.keras"):
+def save_as_h5(model, output_filename="lstm_model.h5"):
     # Save the Keras model to HDF5 format
     model.save(output_filename)
     
