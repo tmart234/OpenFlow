@@ -16,11 +16,11 @@ jobs:
       uses: actions/setup-python@v2
       with:
         # need this version to work w coremltools :(
-        python-version: '3.7'
+        python-version: '3.8'
 
     - name: Install Dependencies
       run: |
-        pip install bump2version tensorflow==2.6.2 keras coremltools
+        pip install bump2version tensorflow==2.7 keras coremltools
 
     - name: Download artifact
       uses: dawidd6/action-download-artifact@v2
