@@ -19,7 +19,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        pip install coremltools bump2version keras
+        pip install coremltools bump2version keras tensorflow
 
     - name: Download artifact
       uses: dawidd6/action-download-artifact@v2
