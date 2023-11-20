@@ -1,10 +1,10 @@
-# convert_to_coreml.py
 import coremltools as ct
+import tensorflow as tf
 import sys
 
 def convert_model(model_path, mlmodel_output_path, input_shape):
-    # Load the Keras model
-    model = ct.models.keras.load_model(model_path)
+    # Load the Keras model using TensorFlow
+    model = tf.keras.models.load_model(model_path)
 
     # Convert the model to Core ML format
     mlmodel = ct.convert(model, inputs=[ct.TensorType(shape=input_shape)])
