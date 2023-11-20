@@ -19,4 +19,4 @@ if __name__ == "__main__":
         model_path = sys.argv[1]
         mlmodel_output_path = sys.argv[2]
         input_shape = eval(sys.argv[3])  # Convert string input to tuple
-        convert_model(h5_model_path, mlmodel_output_path, input_shape)
+        convert_model(model_path, mlmodel_output_path, input_shape)
