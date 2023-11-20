@@ -31,6 +31,12 @@ jobs:
         name: lstm_model_keras_release
         path: ./model
 
+    - name: Set Model Path Output
+      id: set_model_path
+      run: |
+        echo "model_path=./model/lstm_model.keras" >> $GITHUB_ENV
+        echo "::set-output name=model_path::./model/lstm_model.keras"
+
     - name: Determine new version tag
       id: new_version
       run: |
@@ -54,7 +60,7 @@ jobs:
     #  5 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
     - name: Convert Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.keras ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel "[None, 74, (${UNIQUE_STATION_IDS} + 5)]"
+        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ${{ steps.set_model_path.outputs.model_path }} ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel "[None, 74, (${UNIQUE_STATION_IDS} + 5)]"
 
     - name: Create Release
       id: create_release
