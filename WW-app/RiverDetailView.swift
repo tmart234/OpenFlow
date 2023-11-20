@@ -8,7 +8,7 @@
 import SwiftUI
 import Foundation
 import Amplify
-
+import CoreML
 
 
 struct RiverDetailView: View {
@@ -26,6 +26,7 @@ struct RiverDetailView: View {
     @State private var flowData: String = ""
     @State private var latitude: Double? = nil
     @State private var longitude: Double? = nil
+    @State private var mlModel: MLModel?
 
     func calculatePercentageFilled(current: Double, reservoirID: Int) -> Double {
         if let reservoir = ReservoirInfo.reservoirDetails[reservoirID] {
@@ -77,7 +78,29 @@ struct RiverDetailView: View {
         }.resume()
     }
 
+    private func loadAndCompileModel() {
+        let modelURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("mlmodel/lstm_model_0.1.6.mlmodel") // Update with the actual path
 
+        do {
+            let compiledModelURL = try MLModel.compileModel(at: modelURL)
+            let model = try MLModel(contentsOf: compiledModelURL)
+            self.mlModel = model
+            print("Model loaded successfully")
+        } catch {
+            print("Error during model loading/compilation: \(error)")
+        }
+    }
+
+    private func makePredictions() {
+        guard let model = mlModel else {
+            print("ML Model is not loaded.")
+            return
+        }
+
+        // Use the `model` to make predictions based on the river data
+        // The specifics of this depend on your model's input and output formats
+    }
+    
     private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
         return reservoirData.data.sorted { $0.date > $1.date }.first
     }
@@ -223,20 +246,19 @@ struct RiverDetailView: View {
         .navigationTitle(river.stationName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            self.loadAndCompileModel()
             fetchWeatherData()
             fetchSnowpackData()
             fetchReservoirData(siteIDs: river.reservoirSiteIDs)
             fetchFlowData(for: self.river.siteNumber)
             fetchCoordinates(for: self.river.siteNumber) { result in
-                    switch result {
-                    case .success(let (lat, lon)):
-                        self.latitude = lat
-                        self.longitude = lon
-                        
-                        // Now fetch the weather data using the retrieved coordinates
-                        fetchWeatherData()
-                    case .failure(let error):
-                        print("Error fetching coordinates: \(error)")
+                switch result {
+                case .success(let (lat, lon)):
+                    self.latitude = lat
+                    self.longitude = lon
+                    fetchWeatherData()
+                case .failure(let error):
+                    print("Error fetching coordinates: \(error)")
                     }
                 }
             }
@@ -249,7 +271,3 @@ struct RiverDetailView: View {
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
-
-
-
-

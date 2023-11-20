@@ -23,13 +23,18 @@ struct WW_appApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
+                MLListView()
+                    .environmentObject(riverDataModel)
+                    .tabItem {
+                        Label("Forecast", systemImage: "waveform.path.ecg")
+                    }
                 RiverListView()
-                    .environmentObject(riverDataModel) // Pass the same instance to both views
+                    .environmentObject(riverDataModel)
                     .tabItem {
                         Label("Rivers", systemImage: "waveform.path.ecg")
                     }
                 FavoriteView()
-                    .environmentObject(riverDataModel) // Pass the same instance to both views
+                    .environmentObject(riverDataModel)
                     .tabItem {
                         Label("Favorites", systemImage: "star.fill")
                     }

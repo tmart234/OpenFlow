@@ -48,7 +48,21 @@ class RiverDataModel: ObservableObject {
         }
         fetchAndParseData()
     }
-    
+    func fetchMLStationIDs(completion: @escaping ([String]) -> Void) {
+        guard let url = URL(string: "https://raw.githubusercontent.com/tmart234/OpenFlowColorado/main/.github/site_ids.txt") else { return }
+
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data = data, let content = String(data: data, encoding: .utf8) else {
+                completion([])
+                return
+            }
+
+            let stationIDs = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
+            DispatchQueue.main.async {
+                completion(stationIDs)
+            }
+        }.resume()
+    }
     func fetchAndParseData() {
         if let dataURL = URL(string: "https://waterdata.usgs.gov/co/nwis/current?index_pmcode_STATION_NM=1&index_pmcode_DATETIME=2&index_pmcode_00060=3&group_key=NONE&sitefile_output_format=html_table&column_name=agency_cd&column_name=site_no&column_name=station_nm&sort_key_2=site_no&html_table_group_key=NONE&format=rdb&rdb_compression=value&list_of_search_criteria=realtime_parameter_selection") {
             let task = URLSession.shared.dataTask(with: dataURL) { data, response, error in
