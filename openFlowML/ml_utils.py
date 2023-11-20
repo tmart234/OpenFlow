@@ -14,7 +14,7 @@ def convert_model(model_path, mlmodel_output_path, input_shape):
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
-        print("Usage: python convert_to_coreml.py <h5_model_path> <mlmodel_output_path> <input_shape>")
+        print("Usage: python ml_utils.py <model_path> <mlmodel_output_path> <input_shape>")
     else:
         model_path = sys.argv[1]
         mlmodel_output_path = sys.argv[2]
