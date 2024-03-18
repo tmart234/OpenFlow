@@ -8,7 +8,7 @@
 import Foundation
 
 struct USGSRiverData: Identifiable, Codable {
-    let id = UUID()
+    var id = UUID()
     let agency: String
     let siteNumber: String
     let stationName: String

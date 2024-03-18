@@ -9,10 +9,13 @@ import SwiftUI
 import Foundation
 import Amplify
 import CoreML
+import Zip
 
 
 struct RiverDetailView: View {
     let river: USGSRiverData
+    let isMLRiver: Bool
+    @EnvironmentObject var sharedModelData: SharedModelData
 
     @State private var selectedDate = Date()
     @State private var snowpackData: SnowpackData?
@@ -78,21 +81,55 @@ struct RiverDetailView: View {
         }.resume()
     }
 
-    private func loadAndCompileModel() {
-        let modelURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("mlmodel/lstm_model_0.1.6.mlmodel") // Update with the actual path
+    // Function to load the Core ML model
+    private func loadMLModel() {
+        let fileManager = FileManager.default
+        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let mlPackageURL = documentsDirectory.appendingPathComponent("mlmodel").appendingPathComponent("model").appendingPathComponent("lstm_model_0.1.6.mlpackage")
+
+        let destinationURL = documentsDirectory.appendingPathComponent("unzippedModel")
 
         do {
-            let compiledModelURL = try MLModel.compileModel(at: modelURL)
-            let model = try MLModel(contentsOf: compiledModelURL)
-            self.mlModel = model
+            // Unzip the mlpackage file
+            try Zip.unzipFile(mlPackageURL, destination: destinationURL, overwrite: true, password: nil)
+            print("Unzipped mlpackage successfully.")
+            // Print the contents of the unzipped directory
+            do {
+                let contents = try fileManager.contentsOfDirectory(atPath: destinationURL.path)
+                print("Unzipped directory contents: \(contents)")
+            } catch {
+                print("Error getting unzipped directory contents: \(error)")
+            }
+
+            // Load the model from the specific path within the unzipped directory
+            let actualModelURL = destinationURL.appendingPathComponent("model.mlmodel")
+
+            // Check if the file exists and is a directory
+            var isDir: ObjCBool = false
+            if fileManager.fileExists(atPath: actualModelURL.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    // If it's a directory, compile and load the model
+                    let compiledModelURL = try MLModel.compileModel(at: actualModelURL)
+                    let model = try MLModel(contentsOf: compiledModelURL)
+                    self.mlModel = model
+                } else {
+                    // If it's not a directory, attempt to load it directly
+                    let model = try MLModel(contentsOf: actualModelURL)
+                    self.mlModel = model
+                }
+            } else {
+                print("Model file not found at \(actualModelURL)")
+            }
+
             print("Model loaded successfully")
         } catch {
-            print("Error during model loading/compilation: \(error)")
+            print("Error handling the mlpackage: \(error)")
         }
     }
 
+
     private func makePredictions() {
-        guard let model = mlModel else {
+        guard mlModel != nil else {
             print("ML Model is not loaded.")
             return
         }
@@ -223,7 +260,7 @@ struct RiverDetailView: View {
                             Text(info.reservoirName)
                                 .font(.headline)
                             
-                            if let latestStorageData = info.reservoirData.data.sorted(by: { $0.date > $1.date }).first {
+                            if info.reservoirData.data.sorted(by: { $0.date > $1.date }).first != nil {
                                 Text("Percentage filled: \(info.percentageFilled, specifier: "%.1f")%")
                             }
                         }
@@ -246,7 +283,13 @@ struct RiverDetailView: View {
         .navigationTitle(river.stationName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            self.loadAndCompileModel()
+            if isMLRiver {
+                if sharedModelData.compiledModel != nil && sharedModelData.isModelLoaded {
+                    print("Model loaded successfully")
+                } else {
+                    print("Model not loaded")
+                }
+            }
             fetchWeatherData()
             fetchSnowpackData()
             fetchReservoirData(siteIDs: river.reservoirSiteIDs)

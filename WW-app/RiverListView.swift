@@ -33,7 +33,7 @@ struct RiverListView: View {
                 List {
                     ForEach(filteredRivers.indices, id: \.self) { index in
                         let splitName = Utility.splitStationName(filteredRivers[index].stationName) // Updated to use Utility class
-                            NavigationLink(destination: RiverDetailView(river: filteredRivers[index])) {
+                            NavigationLink(destination: RiverDetailView(river: filteredRivers[index], isMLRiver: false)) {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(splitName.0) // Part 1 of the title
