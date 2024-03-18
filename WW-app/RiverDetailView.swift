@@ -80,63 +80,6 @@ struct RiverDetailView: View {
 
         }.resume()
     }
-
-    // Function to load the Core ML model
-    private func loadMLModel() {
-        let fileManager = FileManager.default
-        let documentsDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let mlPackageURL = documentsDirectory.appendingPathComponent("mlmodel").appendingPathComponent("model").appendingPathComponent("lstm_model_0.1.6.mlpackage")
-
-        let destinationURL = documentsDirectory.appendingPathComponent("unzippedModel")
-
-        do {
-            // Unzip the mlpackage file
-            try Zip.unzipFile(mlPackageURL, destination: destinationURL, overwrite: true, password: nil)
-            print("Unzipped mlpackage successfully.")
-            // Print the contents of the unzipped directory
-            do {
-                let contents = try fileManager.contentsOfDirectory(atPath: destinationURL.path)
-                print("Unzipped directory contents: \(contents)")
-            } catch {
-                print("Error getting unzipped directory contents: \(error)")
-            }
-
-            // Load the model from the specific path within the unzipped directory
-            let actualModelURL = destinationURL.appendingPathComponent("model.mlmodel")
-
-            // Check if the file exists and is a directory
-            var isDir: ObjCBool = false
-            if fileManager.fileExists(atPath: actualModelURL.path, isDirectory: &isDir) {
-                if isDir.boolValue {
-                    // If it's a directory, compile and load the model
-                    let compiledModelURL = try MLModel.compileModel(at: actualModelURL)
-                    let model = try MLModel(contentsOf: compiledModelURL)
-                    self.mlModel = model
-                } else {
-                    // If it's not a directory, attempt to load it directly
-                    let model = try MLModel(contentsOf: actualModelURL)
-                    self.mlModel = model
-                }
-            } else {
-                print("Model file not found at \(actualModelURL)")
-            }
-
-            print("Model loaded successfully")
-        } catch {
-            print("Error handling the mlpackage: \(error)")
-        }
-    }
-
-
-    private func makePredictions() {
-        guard mlModel != nil else {
-            print("ML Model is not loaded.")
-            return
-        }
-
-        // Use the `model` to make predictions based on the river data
-        // The specifics of this depend on your model's input and output formats
-    }
     
     private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
         return reservoirData.data.sorted { $0.date > $1.date }.first
@@ -222,28 +165,22 @@ struct RiverDetailView: View {
 
     var body: some View {
         VStack {
-            
-            Text("Flow: \(flowData)")
-                .font(.title2)
-                .padding(.top)
-            
+            if isMLRiver {
+                FlowGraphView(river: river)
+            }
             if let snowpackData = snowpackData {
                 Text("Nearest SWE: \(snowpackData.snowWaterEquivalent, specifier: "%.1f")in (or \(snowpackData.percentOfAverage, specifier: "%.1f")% of avg)")
             } else {
                 Text("Fetching SWE data...")
             }
-            if let lat = latitude, let lon = longitude {
-                Text("Latitude: \(lat, specifier: "%.4f")")
-                Text("Longitude: \(lon, specifier: "%.4f")")
-            } else {
-                Text("Fetching coordinates...")
-            }
-        
-            Text("High Temperature: \(highTemperature)")
+            Text("Current Flow: \(flowData)")
+                .font(.title2)
+                .padding(.top)
+            Text("Daily High Temperature: \(highTemperature)")
                 .font(.title2)
                 .padding(.top)
 
-            Text("Low Temperature: \(lowTemperature)")
+            Text("Daily Low Temperature: \(lowTemperature)")
                 .font(.title2)
                 .padding(.top)
             

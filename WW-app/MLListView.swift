@@ -10,16 +10,11 @@ struct MLListView: View {
     
     var body: some View {
         VStack {
-            if sharedModelData.isModelLoaded {
-                Text("Model loaded and ready")
-                    .font(.headline)
-                    .padding()
-            } else {
+            if !sharedModelData.isModelLoaded {
                 Text("Loading ML model...")
                     .font(.headline)
                     .padding()
             }
-            
             NavigationView {
                 VStack {
                     TextField("Search by station name...", text: $searchTerm)
