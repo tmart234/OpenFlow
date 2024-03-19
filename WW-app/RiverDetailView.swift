@@ -16,13 +16,12 @@ struct RiverDetailView: View {
     let river: USGSRiverData
     let isMLRiver: Bool
     @EnvironmentObject var sharedModelData: SharedModelData
-
+    @State private var reservoirData: [ReservoirInfo] = []
     @State private var selectedDate = Date()
     @State private var snowpackData: SnowpackData?
     @State private var errorMessage: String?
     @State private var highTemperature: String = ""
     @State private var lowTemperature: String = ""
-    @State private var reservoirData: [ReservoirInfo] = []
     @State private var _showAlert = false
     @State private var alertTitle: String = ""
     @State private var alertMessage: String = ""
@@ -31,13 +30,6 @@ struct RiverDetailView: View {
     @State private var longitude: Double? = nil
     @State private var mlModel: MLModel?
 
-    func calculatePercentageFilled(current: Double, reservoirID: Int) -> Double {
-        if let reservoir = ReservoirInfo.reservoirDetails[reservoirID] {
-            return (current / reservoir.capacity) * 100
-        } else {
-            return 0.0
-        }
-    }
     func fetchCoordinates(for siteID: String, completion: @escaping (Result<(Double, Double), Error>) -> Void) {
         let urlString = "https://waterdata.usgs.gov/nwis/inventory?search_site_no=\(siteID)&search_site_no_match_type=exact&group_key=NONE&format=sitefile_output&sitefile_output_format=rdb&column_name=dec_lat_va&column_name=dec_long_va&list_of_search_criteria=search_site_no"
         print("USGS metadata URL: ", urlString)
@@ -80,38 +72,7 @@ struct RiverDetailView: View {
 
         }.resume()
     }
-    
-    private func latestReservoirStorageData(reservoirData: ReservoirData) -> StorageData? {
-        return reservoirData.data.sorted { $0.date > $1.date }.first
-    }
-    
-    private func fetchReservoirData(siteIDs: [Int]) {
-        for siteID in river.reservoirSiteIDs {
-            APIManager.shared.getReservoirDetails(for: siteID) { result in
-                switch result {
-                case .success(let info):
-                    DispatchQueue.main.async {
-                        // Find the most recent storage value
-                        var currentStorage: Double = 0.0
-                        var mostRecentDate: Date? = nil
-                        for storageData in info.reservoirData.data {
-                            if mostRecentDate == nil || storageData.date > mostRecentDate! {
-                                mostRecentDate = storageData.date
-                                currentStorage = storageData.storage
-                            }
-                        }
-                        
-                        let percentageFilled = calculatePercentageFilled(current: currentStorage, reservoirID: siteID)
-                        
-                        let reservoirInfo = ReservoirInfo(reservoirName: info.reservoirName, reservoirData: info.reservoirData, percentageFilled: percentageFilled)
-                        self.reservoirData.append(reservoirInfo)
-                    }
-                case .failure(let error):
-                    print("Error fetching reservoir details:", error)
-                }
-            }
-        }
-    }
+
     func fetchSnowpackData() {
         print("Calling fetchSnowpackData() for station ID: \(river.snotelStationID)")
         APIManager.shared.getSnowpackDataFromCSV(stationID: river.snotelStationID) { result in
@@ -192,14 +153,12 @@ struct RiverDetailView: View {
             } else {
                 VStack {
                     Text("Reservoir Data:")
-                    ForEach(reservoirData, id: \.reservoirName) { info in
+                    ForEach(reservoirData) { info in
                         VStack(alignment: .leading) {
                             Text(info.reservoirName)
                                 .font(.headline)
                             
-                            if info.reservoirData.data.sorted(by: { $0.date > $1.date }).first != nil {
-                                Text("Percentage filled: \(info.percentageFilled, specifier: "%.1f")%")
-                            }
+                            Text("Percentage filled: \(info.percentageFilled, specifier: "%.1f")%")
                         }
                     }
                 }
@@ -227,9 +186,17 @@ struct RiverDetailView: View {
                     print("Model not loaded")
                 }
             }
+            ReservoirManager.shared.fetchReservoirData(siteIDs: river.reservoirSiteIDs) { result in
+                 switch result {
+                 case .success(let reservoirData):
+                     self.reservoirData = reservoirData
+                 case .failure(let error):
+                     print("Error fetching reservoir data:", error)
+                 }
+             }
+
             fetchWeatherData()
             fetchSnowpackData()
-            fetchReservoirData(siteIDs: river.reservoirSiteIDs)
             fetchFlowData(for: self.river.siteNumber)
             fetchCoordinates(for: self.river.siteNumber) { result in
                 switch result {

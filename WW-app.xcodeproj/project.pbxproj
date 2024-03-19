@@ -39,10 +39,11 @@
 		99CFC19329D53DF80069F04E /* NRCSResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19229D53DF80069F04E /* NRCSResponse.swift */; };
 		99CFC19529D55FCF0069F04E /* WeatherResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19429D55FCF0069F04E /* WeatherResponse.swift */; };
 		99CFC19829D56F800069F04E /* SwiftyJSON in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19729D56F800069F04E /* SwiftyJSON */; };
-		99CFC19A29D570030069F04E /* ReservoirData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC19929D570030069F04E /* ReservoirData.swift */; };
 		99CFC19D29D76AD30069F04E /* AnyCodable in Frameworks */ = {isa = PBXBuildFile; productRef = 99CFC19C29D76AD30069F04E /* AnyCodable */; };
 		99D41CFB2AFFEA6800F842CF /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D41CFA2AFFEA6800F842CF /* ProfileView.swift */; };
 		99D968702BA9014F00261E95 /* FlowGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D9686F2BA9014F00261E95 /* FlowGraphView.swift */; };
+		99D968722BA908AA00261E95 /* ReservoirManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D968712BA908AA00261E95 /* ReservoirManager.swift */; };
+		99D968742BA9116200261E95 /* CoordinatesFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D968732BA9116200261E95 /* CoordinatesFetcher.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -69,9 +70,10 @@
 		99CFC18D29D53A360069F04E /* APIManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIManager.swift; sourceTree = "<group>"; };
 		99CFC19229D53DF80069F04E /* NRCSResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NRCSResponse.swift; sourceTree = "<group>"; };
 		99CFC19429D55FCF0069F04E /* WeatherResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherResponse.swift; sourceTree = "<group>"; };
-		99CFC19929D570030069F04E /* ReservoirData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservoirData.swift; sourceTree = "<group>"; };
 		99D41CFA2AFFEA6800F842CF /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		99D9686F2BA9014F00261E95 /* FlowGraphView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FlowGraphView.swift; sourceTree = "<group>"; };
+		99D968712BA908AA00261E95 /* ReservoirManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ReservoirManager.swift; sourceTree = "<group>"; };
+		99D968732BA9116200261E95 /* CoordinatesFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatesFetcher.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -126,6 +128,7 @@
 		99CFC16C29D52DDD0069F04E /* WW-app */ = {
 			isa = PBXGroup;
 			children = (
+				99D968732BA9116200261E95 /* CoordinatesFetcher.swift */,
 				99B07C6E2B0B170000AF2687 /* MLListView.swift */,
 				99CFC18B29D539EA0069F04E /* SnowpackData.swift */,
 				99CFC16D29D52DDD0069F04E /* WW_appApp.swift */,
@@ -135,6 +138,7 @@
 				99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */,
 				99CFC17929D52DDD0069F04E /* Preview Content */,
 				99CFC18129D52EE80069F04E /* River.swift */,
+				99D968712BA908AA00261E95 /* ReservoirManager.swift */,
 				99CFC18729D531780069F04E /* RiverListView.swift */,
 				99D41CFA2AFFEA6800F842CF /* ProfileView.swift */,
 				99CFC18929D531950069F04E /* RiverDetailView.swift */,
@@ -142,7 +146,6 @@
 				99D9686F2BA9014F00261E95 /* FlowGraphView.swift */,
 				99CFC19229D53DF80069F04E /* NRCSResponse.swift */,
 				99CFC19429D55FCF0069F04E /* WeatherResponse.swift */,
-				99CFC19929D570030069F04E /* ReservoirData.swift */,
 				990722BB29D8BAEA00C18065 /* Backend.swift */,
 				9907231129D9316000C18065 /* amplifyconfiguration.json */,
 				9907231229D9316000C18065 /* awsconfiguration.json */,
@@ -264,7 +267,6 @@
 				99CFC19329D53DF80069F04E /* NRCSResponse.swift in Sources */,
 				99CFC19529D55FCF0069F04E /* WeatherResponse.swift in Sources */,
 				99CFC17029D52DDD0069F04E /* Persistence.swift in Sources */,
-				99CFC19A29D570030069F04E /* ReservoirData.swift in Sources */,
 				99D968702BA9014F00261E95 /* FlowGraphView.swift in Sources */,
 				99D41CFB2AFFEA6800F842CF /* ProfileView.swift in Sources */,
 				99CFC18E29D53A360069F04E /* APIManager.swift in Sources */,
@@ -274,8 +276,10 @@
 				99B07C6F2B0B170000AF2687 /* MLListView.swift in Sources */,
 				99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */,
 				997623B82AEF21960004185E /* AuthButtons.swift in Sources */,
+				99D968742BA9116200261E95 /* CoordinatesFetcher.swift in Sources */,
 				990722BC29D8BAEA00C18065 /* Backend.swift in Sources */,
 				99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */,
+				99D968722BA908AA00261E95 /* ReservoirManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
