@@ -46,6 +46,12 @@ jobs:
         UNIQUE_STATION_IDS=$(wc -l < .github/site_ids.txt)
         echo "UNIQUE_STATION_IDS=$UNIQUE_STATION_IDS" >> $GITHUB_ENV
 
+    - name: Count features per timestep
+      id: count_features
+      run: |
+        NUM_FEATURES=5  # Min Flow, Max Flow, TMIN, TMAX, date_normalized
+        NUM_FEATURES=$((NUM_FEATURES + UNIQUE_STATION_IDS))
+        echo "NUM_FEATURES=$NUM_FEATURES" >> $GITHUB_ENV
    # - name: Convert ONNX Model to Core ML
    #   run: |
    #     python -m coremltools convert ./model/lstm_model.onnx --output-path ./model/lstm_model_${{ env.NEW_TAG }}.mlmodel --input-names 'input' --output-names 'output'
@@ -54,7 +60,7 @@ jobs:
     #  5 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
     - name: Convert Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.h5 ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage "[1, 74, (${UNIQUE_STATION_IDS} + 5)]"
+        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.h5 ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage "[None, 74, ${{ env.NUM_FEATURES }}]"
 
     - name: Create Release
       id: create_release
