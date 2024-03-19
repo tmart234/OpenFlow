@@ -74,8 +74,8 @@ jobs:
         prerelease: false
         
     - name: Archive Model Package
-      run: zip -r lstm_model_${{ env.NEW_TAG }}.mlpackage.zip ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage
-
+      run: zip -r lstm_model_${{ env.NEW_TAG }}.mlpackage.zip . -i ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage
+      
     - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
       env:
