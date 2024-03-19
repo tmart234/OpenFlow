@@ -105,14 +105,14 @@ struct FlowGraphView: View {
         // Set the values for future temperature data
         for (rowIndex, tempData) in futureTempData.enumerated() {
             for (colIndex, value) in tempData.enumerated() {
-                futureTempMultiArray[[rowIndex, colIndex] as [NSNumber]] = value
+                futureTempMultiArray[[rowIndex, colIndex] as [NSNumber]] = NSNumber(value: value)
             }
         }
 
         // Set the values for historical flow data
         for (rowIndex, flowData) in historicalFlowData.enumerated() {
             for (colIndex, value) in flowData.enumerated() {
-                historicalFlowMultiArray[[rowIndex, colIndex] as [NSNumber]] = value
+                historicalFlowMultiArray[[rowIndex, colIndex] as [NSNumber]] = NSNumber(value: value)
             }
         }
         
@@ -120,10 +120,10 @@ struct FlowGraphView: View {
         let inputFeatures: [String: Any] = [
             "future_temp_data": futureTempMultiArray,
             "historical_flow_data": historicalFlowMultiArray,
-            "station_id": stationIDMultiArray,
+            "station_id": stationID,
             "date_normalized": normalizedDate
         ]
-        
+                
         // Create an MLDictionaryFeatureProvider with the input features
         return try? MLDictionaryFeatureProvider(dictionary: inputFeatures)
     }
@@ -140,7 +140,7 @@ struct FlowGraphView: View {
                 
                 let apiKey = "74e6dd2bb94e19344d2ce618bdb33147" // Replace with your actual OpenWeatherMap API key
                 
-                APIManager().getWeatherData(latitude: lat, longitude: lon, apiKey: apiKey) { result in
+                APIManager.shared.getWeatherData(latitude: lat, longitude: lon, apiKey: apiKey) { result in
                     switch result {
                     case .success(let weatherData):
                         futureTempData = weatherData.futureTempData

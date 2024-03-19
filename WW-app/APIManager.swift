@@ -18,10 +18,7 @@ struct StorageData: Codable {
 class APIManager {
     static let shared = APIManager()
     private let nrcsBaseURL = "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customSingleStationReport/daily/start_of_period/"
-    struct WeatherData {
-        let highTemperature: Double
-        let lowTemperature: Double
-    }
+
     enum APIError: Error {
         case invalidURL
         case requestFailed
@@ -31,24 +28,49 @@ class APIManager {
     }
 
     func getWeatherData(latitude: Double, longitude: Double, apiKey: String, completionHandler: @escaping (Result<WeatherData, Error>) -> Void) {
-        let url = "https://api.openweathermap.org/data/2.5/forecast?lat=\(latitude)&lon=\(longitude)&units=imperial&appid=\(apiKey)"
-        
-        AF.request(url).validate().responseDecodable(of: WeatherResponse.self) { response in
-            switch response.result {
-            case .success(let weatherResponse):
-                let highTemperature = weatherResponse.main.temp_max
-                let lowTemperature = weatherResponse.main.temp_min
-                let forecastData = weatherResponse.forecast.list
-                
-                var futureTempData: [[Double]] = []
-                for forecastItem in forecastData {
-                    let maxTemp = forecastItem.main.temp_max
-                    let minTemp = forecastItem.main.temp_min
-                    futureTempData.append([maxTemp, minTemp])
+        getCurrentWeatherData(latitude: latitude, longitude: longitude, apiKey: apiKey) { currentWeatherResult in
+            switch currentWeatherResult {
+            case .success(let currentWeatherData):
+                self.getFutureTempData(latitude: latitude, longitude: longitude, apiKey: apiKey) { futureWeatherResult in
+                    switch futureWeatherResult {
+                    case .success(let futureTempData):
+                        let weatherData = WeatherData(currentHighTemperature: currentWeatherData.highTemperature,
+                                                      currentLowTemperature: currentWeatherData.lowTemperature,
+                                                      futureTempData: futureTempData)
+                        completionHandler(.success(weatherData))
+                    case .failure(let error):
+                        completionHandler(.failure(error))
+                    }
                 }
-                
-                let weatherData = WeatherData(highTemperature: highTemperature, lowTemperature: lowTemperature, futureTempData: futureTempData)
-                completionHandler(.success(weatherData))
+            case .failure(let error):
+                completionHandler(.failure(error))
+            }
+        }
+    }
+    
+    private func getCurrentWeatherData(latitude: Double, longitude: Double, apiKey: String, completionHandler: @escaping (Result<(highTemperature: Double, lowTemperature: Double), Error>) -> Void) {
+        let currentWeatherUrl = "https://api.openweathermap.org/data/2.5/weather?lat=\(latitude)&lon=\(longitude)&units=imperial&appid=\(apiKey)"
+        
+        AF.request(currentWeatherUrl).validate().responseDecodable(of: CurrentWeatherResponse.self) { currentWeatherResponse in
+            switch currentWeatherResponse.result {
+            case .success(let currentWeatherData):
+                let currentHighTemperature = currentWeatherData.main.temp_max
+                let currentLowTemperature = currentWeatherData.main.temp_min
+                completionHandler(.success((highTemperature: currentHighTemperature, lowTemperature: currentLowTemperature)))
+            case .failure(let error):
+                completionHandler(.failure(error))
+            }
+        }
+    }
+    
+    private func getFutureTempData(latitude: Double, longitude: Double, apiKey: String, completionHandler: @escaping (Result<[[Double]], Error>) -> Void) {
+        let forecastUrl = "https://api.openweathermap.org/data/2.5/forecast?lat=\(latitude)&lon=\(longitude)&units=imperial&appid=\(apiKey)"
+        
+        AF.request(forecastUrl).validate().responseDecodable(of: ForecastResponse.self) { forecastResponse in
+            switch forecastResponse.result {
+            case .success(let forecastData):
+                let futureTempData = forecastData.list.prefix(14).map { [$0.main.temp_max, $0.main.temp_min] }
+                completionHandler(.success(Array(futureTempData)))
             case .failure(let error):
                 completionHandler(.failure(error))
             }

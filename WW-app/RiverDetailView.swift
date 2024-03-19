@@ -100,8 +100,8 @@ struct RiverDetailView: View {
             switch result {
             case .success(let weatherData):
                 DispatchQueue.main.async {
-                    self.highTemperature = String(format: "%.1f°F", weatherData.highTemperature)
-                    self.lowTemperature = String(format: "%.1f°F", weatherData.lowTemperature)
+                    self.highTemperature = String(format: "%.1f°F", weatherData.currentHighTemperature)
+                    self.lowTemperature = String(format: "%.1f°F", weatherData.currentLowTemperature)
                 }
             case .failure(let error):
                 DispatchQueue.main.async {
