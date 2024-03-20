@@ -32,7 +32,7 @@ def save_as_h5(model, output_filename="lstm_model.h5"):
 # output a flattened prediction of shape [?, forecast_horizon * 2]
 # then immediately reshaped it to the desired [?, forecast_horizon, 2].
 # Reshape the data to be suitable for LSTM training
-def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
+def reshape_data_for_lstm(data, historical_flow_timesteps=1825, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
     X, Y = [], []
     required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]
 
@@ -51,7 +51,14 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
 
     # Loop through the data to create input and output sets
     for i in range(len(data) - total_required_days - forecast_flow_timesteps + 1):
-        input_features = data.iloc[i:i+total_required_days][feature_columns].values
+        # Use historical flow and temperature data for input features
+        historical_flow_data = data.iloc[i:i+historical_flow_timesteps][["Min Flow", "Max Flow"]].values
+        historical_temp_data = data.iloc[i:i+historical_flow_timesteps][["TMIN", "TMAX"]].values
+        future_temp_data = data.iloc[i+historical_flow_timesteps:i+total_required_days][["TMIN", "TMAX"]].values
+        station_data = data.iloc[i][station_columns].values
+        date_normalized = data.iloc[i]['date_normalized']
+
+        input_features = np.concatenate((historical_flow_data, historical_temp_data, future_temp_data, station_data.reshape(1, -1), np.array([[date_normalized]])), axis=1)
         X.append(input_features)
 
         future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values
@@ -61,7 +68,6 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
 
     return np.array(X), np.array(Y)
 
-# Build LSTM model
 def build_lstm_model(input_shape, forecast_horizon=14):
     # Define the model
     model = Sequential()
@@ -77,13 +83,11 @@ def build_lstm_model(input_shape, forecast_horizon=14):
     model.add(tf.keras.layers.Reshape((forecast_horizon, 2)))
 
     # Compile the model
-    model.compile(optimizer='adam', loss='mse')
-    
+    model.compile(optimizer='adam', loss='mse')    
     return model
 
-# Main function to execute the training process
 def main():
-    data = combine_data.main()
+    data = combine_data.main(training_num_years=5)  # Use 5 years of data for training
     if data is None or data.empty:
         raise ValueError("Error: Data is not available or not in expected format.")
 
@@ -101,8 +105,8 @@ def main():
     y_test = y_test.astype('float32')
 
     # Adjust the input_shape to match the LSTM input requirements
-    # The number of site IDs is determined by the count of one-hot encoded station columns
-    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]))
+    input_shape = (X_train.shape[1], X_train.shape[2])
+    model = build_lstm_model(input_shape=input_shape)
 
     # Modify the fit call (note that site_id is no longer used)
     model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test))
