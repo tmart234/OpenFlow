@@ -70,31 +70,22 @@ jobs:
 
     #  number of timesteps per sample = (historical_flow_timesteps + forecast_temperature_timesteps) = (60+14)=74
       #  5 features per time step: (Min Flow, Max Flow, TMIN, TMAX, date_normalized)
-    - name: Convert Model to Core ML Package
+
+
+    - name: Convert Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.h5 ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage "[None, 74, ${{ env.NUM_FEATURES }}]"
-        - name: Create Release
-          id: create_release
-          uses: actions/create-release@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            tag_name: ${{ env.NEW_TAG }}
-            release_name: Release ${{ env.NEW_TAG }}
-            draft: false
-            prerelease: false
+        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.h5 ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage "(74, ${{ env.NUM_FEATURES }})"            
+        - name: Check Model Package Exists
+          run: |
+            if [ ! -f "./model/lstm_model_${{ env.NEW_TAG }}.mlpackage" ]; then
+              echo "Model package not found: lstm_model_${{ env.NEW_TAG }}.mlpackage"
+              exit 1
+            fi
             
-    - name: Check Model Package Exists
-      run: |
-        if [ ! -f "./model/lstm_model_${{ env.NEW_TAG }}.mlpackage" ]; then
-          echo "Model package not found: lstm_model_${{ env.NEW_TAG }}.mlpackage"
-          exit 1
-        fi
-        
-        if [ ! -s "./model/lstm_model_${{ env.NEW_TAG }}.mlpackage" ]; then
-          echo "Model package is empty: lstm_model_${{ env.NEW_TAG }}.mlpackage"
-          exit 1
-        fi
+            if [ ! -s "./model/lstm_model_${{ env.NEW_TAG }}.mlpackage" ]; then
+              echo "Model package is empty: lstm_model_${{ env.NEW_TAG }}.mlpackage"
+              exit 1
+            fi
     
     - name: Zip the Model Package
       run: zip -r lstm_model_${{ env.NEW_TAG }}.mlpackage.zip . -i ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage
