@@ -34,9 +34,21 @@ jobs:
     - name: Determine new version tag
       id: new_version
       run: |
-        LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+        # Fetch the latest release
+        LATEST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest)
+        
+        # Extract the tag name from the latest release
+        LATEST_TAG=$(echo $LATEST_RELEASE | jq -r '.tag_name')
+        
+        # If there are no releases then exit
+        if [ -z "$LATEST_TAG" ]; then
+          exit 1
+        fi
+        
         echo "Current version: $LATEST_TAG"
+        
         NEW_TAG=$(bump2version --current-version $LATEST_TAG patch --dry-run --list | grep 'new_version=' | cut -d= -f2)
+        
         echo "New version: $NEW_TAG"
         echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
 
