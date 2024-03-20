@@ -74,19 +74,8 @@ jobs:
 
     - name: Convert Model to Core ML
       run: |
-        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.h5 ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage "(74, ${{ env.NUM_FEATURES }})"            
-        - name: Check Model Package Exists
-          run: |
-            if [ ! -f "./model/lstm_model_${{ env.NEW_TAG }}.mlpackage" ]; then
-              echo "Model package not found: lstm_model_${{ env.NEW_TAG }}.mlpackage"
-              exit 1
-            fi
-            
-            if [ ! -s "./model/lstm_model_${{ env.NEW_TAG }}.mlpackage" ]; then
-              echo "Model package is empty: lstm_model_${{ env.NEW_TAG }}.mlpackage"
-              exit 1
-            fi
-    
+        python $GITHUB_WORKSPACE/openFlowML/ml_utils.py ./model/lstm_model.h5 ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage "(1, 74, ${{ env.NUM_FEATURES }})"
+        
     - name: Zip the Model Package
       run: zip -r lstm_model_${{ env.NEW_TAG }}.mlpackage.zip . -i ./model/lstm_model_${{ env.NEW_TAG }}.mlpackage
    
