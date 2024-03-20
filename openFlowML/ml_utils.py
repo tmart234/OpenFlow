@@ -16,8 +16,14 @@ def convert_model(model_path, mlmodel_output_path, input_shape):
     model = tf.keras.models.load_model(model_path)
 
     # Convert the model to Core ML format
-    input_shape_with_batch = (1,) + tuple(input_shape[1:])  # Use a fixed batch size of 1
-    mlmodel = ct.convert(model, inputs=[ct.TensorType(shape=input_shape_with_batch)])
+    if len(input_shape) == 3:
+        # If input shape is already 3D, use it directly
+        mlmodel = ct.convert(model, inputs=[ct.TensorType(shape=input_shape)])
+    else:
+        # If input shape is 2D, add a sequence length dimension of 1
+        input_shape_with_sequence = (1,) + tuple(input_shape)
+        mlmodel = ct.convert(model, inputs=[ct.TensorType(shape=input_shape_with_sequence)])
+
 
     # Check if the output directory exists, create it if necessary
     output_dir = os.path.dirname(mlmodel_output_path)
