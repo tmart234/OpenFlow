@@ -23,8 +23,8 @@ struct USGSRiverData: Identifiable, Codable {
     let reservoirSiteIDs: [Int]
     let lastFetchedDate: Date
     var isFavorite: Bool
-    let latitude: Double
-    let longitude: Double
+    let latitude: Double?
+    let longitude: Double?
     var flowRate: Int
     // CustomStringConvertible conformance
     var description: String {
@@ -68,7 +68,21 @@ class RiverDataModel: ObservableObject {
             let task = URLSession.shared.dataTask(with: dataURL) { data, response, error in
                 if let data = data {
                     if let dataString = String(data: data, encoding: .utf8) {
-                        self.parseData(dataString)
+                        self.parseData(dataString) {parsedRivers in
+                            self.fetchCoordinatesForAllStations { result in
+                                switch result {
+                                case .success(let stationCoordinates):
+                                    for (siteNumber, coordinates) in stationCoordinates {
+                                        if let index = self.rivers.firstIndex(where: { $0.siteNumber == siteNumber }) {
+                                            self.rivers[index].latitude = coordinates.latitude
+                                            self.rivers[index].longitude = coordinates.longitude
+                                        }
+                                    }
+                                case .failure(let error):
+                                    print("Error fetching coordinates for stations: \(error)")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -76,8 +90,53 @@ class RiverDataModel: ObservableObject {
             task.resume()
         }
     }
-
     
+    func fetchCoordinatesForAllStations(completion: @escaping (Result<[String: (latitude: Double, longitude: Double)], Error>) -> Void) {
+        let urlString = "https://waterdata.usgs.gov/nwis/inventory?state_cd=co&group_key=NONE&format=sitefile_output&sitefile_output_format=rdb&column_name=agency_cd&column_name=site_no&column_name=station_nm&column_name=site_tp_cd&column_name=dec_lat_va&column_name=dec_long_va&list_of_search_criteria=state_cd"
+        
+        guard let url = URL(string: urlString) else {
+            completion(.failure(NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            
+            guard let data = data, let dataString = String(data: data, encoding: .utf8) else {
+                completion(.failure(NSError(domain: "", code: 500, userInfo: [NSLocalizedDescriptionKey: "No data"])))
+                return
+            }
+            
+            let lines = dataString.components(separatedBy: .newlines)
+            var stationCoordinates: [String: (latitude: Double, longitude: Double)] = [:]
+            
+            // Skip the header lines
+            var linesToSkip = 0
+            for line in lines {
+                if line.hasPrefix("#") {
+                    linesToSkip += 1
+                } else {
+                    break
+                }
+            }
+            
+            for line in lines.dropFirst(linesToSkip) {
+                let values = line.components(separatedBy: .whitespaces)
+                if values.count >= 6,
+                   let latitude = Double(values[4]),
+                   let longitude = Double(values[5]) {
+                    let siteNumber = values[1]
+                    stationCoordinates[siteNumber] = (latitude, longitude)
+                }
+            }
+            
+            completion(.success(stationCoordinates))
+        }.resume()
+    }
+
     func updateFavoriteRivers() {
         favoriteRivers = rivers.filter { $0.isFavorite }
         LocalStorage.saveFavoriteRivers(favoriteRivers)

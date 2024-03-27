@@ -140,10 +140,19 @@ struct FlowGraphView: View {
                 
                 let apiKey = "74e6dd2bb94e19344d2ce618bdb33147" // Replace with your actual OpenWeatherMap API key
                 
-                APIManager.shared.getWeatherData(latitude: lat, longitude: lon, apiKey: apiKey) { result in
+                APIManager().getWeatherData(latitude: lat, longitude: lon, apiKey: apiKey) { result in
                     switch result {
                     case .success(let weatherData):
                         futureTempData = weatherData.futureTempData
+                        
+                        // Print the predicted temperatures for debugging
+                        print("Predicted Temperatures:")
+                        for (index, tempData) in weatherData.futureTempData.enumerated() {
+                            let maxTemp = tempData[0]
+                            let minTemp = tempData[1]
+                            print("Day \(index + 1): Max Temp: \(maxTemp), Min Temp: \(minTemp)")
+                        }
+                        
                     case .failure(let error):
                         print("Error fetching weather data: \(error)")
                     }
@@ -204,16 +213,4 @@ private func normalizeDate(_ date: Date) -> Double {
     let isLeapYear = calendar.range(of: .day, in: .year, for: date)?.count == 366
     let yearFraction = (dayOfYear - 1) / (isLeapYear ? 366.0 : 365.0)
     return yearFraction
-}
-
-private func normalizeStationID(_ stationID: String) -> [Double] {
-    // Create a dictionary to map station IDs to one-hot encoded vectors
-    let stationIDMap = [
-        "station_1": [1.0, 0.0, 0.0],
-        "station_2": [0.0, 1.0, 0.0],
-        "station_3": [0.0, 0.0, 1.0]
-        // Add more station IDs as needed
-    ]
-    
-    return stationIDMap[stationID] ?? Array(repeating: 0.0, count: stationIDMap.count)
 }
