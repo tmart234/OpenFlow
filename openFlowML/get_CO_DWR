@@ -1,0 +1,62 @@
+# gets daily flow data from Colorado Department of water resources
+
+import requests
+import argparse
+import pandas as pd
+import logging
+from datetime import datetime, timedelta
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def get_historical_data(station_id, start_date, end_date):
+    base_url = "https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewatertsday"
+    
+    params = {
+        "format": "json",
+        "dateFormat": "dateOnly",
+        "fields": "abbrev,measDate,measType,value,measUnit",
+        "encoding": "deflate",
+        "abbrev": "DISCHRG",
+        "min-measDate": start_date,
+        "max-measDate": end_date,
+        "stationNum": station_id
+    }
+    
+    logging.info(f"Fetching historical data from: {base_url}")
+    
+    response = requests.get(base_url, params=params)
+    
+    if response.status_code == 200:
+        data = response.json()
+        dates, discharge_values = [], []
+        
+        for record in data:
+            meas_date = record['measDate']
+            discharge = record['value']
+            dates.append(meas_date)
+            discharge_values.append(discharge)
+        
+        df = pd.DataFrame({'Date': dates, 'Discharge': discharge_values})
+        return df
+    else:
+        logging.error(f"Error: {response.status_code}")
+        return pd.DataFrame(columns=['Date', 'Discharge'])
+
+def main(station_id, start_date=None, end_date=None):
+    if start_date is None:
+        start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
+    if end_date is None:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+    
+    df = get_historical_data(station_id, start_date, end_date)
+    logging.info(df)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Fetch historical data for a given Colorado DWR station.')
+    parser.add_argument('--station_id', type=str, required=True, help='Colorado DWR station ID')
+    parser.add_argument('--start_date', type=str, default=None, help='Start date in the format YYYY-MM-DD')
+    parser.add_argument('--end_date', type=str, default=None, help='End date in the format YYYY-MM-DD')
+    args = parser.parse_args()
+    
+    main(args.station_id, args.start_date, args.end_date)
