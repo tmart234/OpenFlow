@@ -23,8 +23,8 @@ struct USGSRiverData: Identifiable, Codable {
     let reservoirSiteIDs: [Int]
     let lastFetchedDate: Date
     var isFavorite: Bool
-    let latitude: Double?
-    let longitude: Double?
+    var latitude: Double?
+    var longitude: Double?
     var flowRate: Int
     // CustomStringConvertible conformance
     var description: String {
@@ -68,19 +68,18 @@ class RiverDataModel: ObservableObject {
             let task = URLSession.shared.dataTask(with: dataURL) { data, response, error in
                 if let data = data {
                     if let dataString = String(data: data, encoding: .utf8) {
-                        self.parseData(dataString) {parsedRivers in
-                            self.fetchCoordinatesForAllStations { result in
-                                switch result {
-                                case .success(let stationCoordinates):
-                                    for (siteNumber, coordinates) in stationCoordinates {
-                                        if let index = self.rivers.firstIndex(where: { $0.siteNumber == siteNumber }) {
-                                            self.rivers[index].latitude = coordinates.latitude
-                                            self.rivers[index].longitude = coordinates.longitude
-                                        }
+                        self.parseData(dataString)
+                        self.fetchCoordinatesForAllStations { result in
+                            switch result {
+                            case .success(let stationCoordinates):
+                                for (siteNumber, coordinates) in stationCoordinates {
+                                    if let index = self.rivers.firstIndex(where: { $0.siteNumber == siteNumber }) {
+                                        self.rivers[index].latitude = coordinates.latitude
+                                        self.rivers[index].longitude = coordinates.longitude
                                     }
-                                case .failure(let error):
-                                    print("Error fetching coordinates for stations: \(error)")
                                 }
+                            case .failure(let error):
+                                print("Error fetching coordinates for stations: \(error)")
                             }
                         }
                     }

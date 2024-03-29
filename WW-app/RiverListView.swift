@@ -9,7 +9,7 @@ import Foundation
 import MapKit
 
 struct RiverListView: View {
-    @EnvironmentObject var riverDataModel: RiverDataModel
+    @ObservedObject var riverDataModel = RiverDataModel()
     @State private var searchTerm: String = ""
     @State private var showMapView = false
     
@@ -86,17 +86,25 @@ struct MapView: View {
     @State private var region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 39.0, longitude: -105.5), span: MKCoordinateSpan(latitudeDelta: 5.0, longitudeDelta: 5.0))
     
     var body: some View {
-        Map(coordinateRegion: $region, annotationItems: rivers) { river in
-            MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: river.latitude, longitude: river.longitude)) {
-                NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
-                    Image(systemName: "mappin.circle.fill")
-                        .foregroundColor(.blue)
-                        .frame(width: 44, height: 44)
-                        .background(Color.white)
-                        .clipShape(Circle())
-                }
+        Map(coordinateRegion: $region, annotationItems: rivers.filter { $0.latitude != nil && $0.longitude != nil }) { river in
+            MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: river.latitude!, longitude: river.longitude!)) {
+                RiverAnnotationView(river: river)
             }
         }
         .edgesIgnoringSafeArea(.all)
+    }
+}
+
+struct RiverAnnotationView: View {
+    let river: USGSRiverData
+    
+    var body: some View {
+        NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
+            Image(systemName: "mappin.circle.fill")
+                .foregroundColor(.blue)
+                .frame(width: 44, height: 44)
+                .background(Color.white)
+                .clipShape(Circle())
+        }
     }
 }
