@@ -25,7 +25,7 @@ struct MLListView: View {
                     
                     List(filteredRivers.indices, id: \.self) { index in
                         let splitName = Utility.splitStationName(filteredRivers[index].stationName)
-                        NavigationLink(destination: RiverDetailView(river: filteredRivers[index], isMLRiver: true)
+                        NavigationLink(destination: RiverDetailView(river: RiverDataType.usgs(filteredRivers[index]), isMLRiver: true)
                             .environmentObject(sharedModelData)) {
                                 HStack {
                                     VStack(alignment: .leading) {
@@ -45,6 +45,7 @@ struct MLListView: View {
                 }
                 .navigationBarTitle("ML Rivers")
                 .onAppear {
+                    riverDataModel.fetchDWRRivers()
                     riverDataModel.fetchMLStationIDs { fetchedIDs in
                         self.stationIDs = fetchedIDs
                     }

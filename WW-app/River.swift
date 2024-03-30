@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct USGSRiverData: Identifiable, Codable {
+struct USGSRiverData: Codable, Identifiable {
     var id = UUID()
     let agency: String
     let siteNumber: String
@@ -33,10 +33,23 @@ struct USGSRiverData: Identifiable, Codable {
 
 }
 
+struct DWRRiverData: Codable, Identifiable {
+    var id = UUID()
+    let stationNum: Int
+    let abbrev: String
+    let stationName: String
+    let latitude: Double?
+    let longitude: Double?
+    var value: Double?
+    var measDate: Date?
+    var isFavorite: Bool = false
+}
+
 class RiverDataModel: ObservableObject {
     @Published var rivers: [USGSRiverData] = []
+    @Published var dwrRivers: [DWRRiverData] = []
     var favoriteRivers: [USGSRiverData] = []
-
+    
     init() {
         if let fetchedFavorites = LocalStorage.getFavoriteRivers() {
             self.favoriteRivers = fetchedFavorites
@@ -48,15 +61,64 @@ class RiverDataModel: ObservableObject {
         }
         fetchAndParseData()
     }
+    func fetchDWRRivers() {
+        guard let url = URL(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewaterstations") else {
+            print("Invalid URL")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                print("Error fetching DWR rivers: \(error)")
+                return
+            }
+            
+            if let data = data {
+                do {
+                    let decodedData = try JSONDecoder().decode([DWRRiverData].self, from: data)
+                    DispatchQueue.main.async {
+                        self.dwrRivers = decodedData
+                        print("Fetched \(decodedData.count) DWR rivers")
+                    }
+                } catch {
+                    print("Error decoding JSON: \(error)")
+                }
+            }
+        }.resume()
+    }
+    func fetchDWRFlow(for river: DWRRiverData) {
+        guard let url = URL(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewatertsday?abbrev=\(river.abbrev)") else {
+            print("Invalid URL")
+            return
+        }
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let data = data {
+                do {
+                    let decodedData = try JSONDecoder().decode([DWRRiverData].self, from: data)
+                    if let flowData = decodedData.first {
+                        DispatchQueue.main.async {
+                            if let index = self.dwrRivers.firstIndex(where: { $0.id == river.id }) {
+                                self.dwrRivers[index].value = flowData.value
+                                self.dwrRivers[index].measDate = flowData.measDate
+                            }
+                        }
+                    }
+                } catch {
+                    print("Error decoding JSON: \(error)")
+                }
+            }
+        }.resume()
+    }
     func fetchMLStationIDs(completion: @escaping ([String]) -> Void) {
         guard let url = URL(string: "https://raw.githubusercontent.com/tmart234/OpenFlowColorado/main/.github/site_ids.txt") else { return }
-
+        
         URLSession.shared.dataTask(with: url) { data, _, _ in
             guard let data = data, let content = String(data: data, encoding: .utf8) else {
                 completion([])
                 return
             }
-
+            
             let stationIDs = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
             DispatchQueue.main.async {
                 completion(stationIDs)
@@ -69,13 +131,17 @@ class RiverDataModel: ObservableObject {
                 if let data = data {
                     if let dataString = String(data: data, encoding: .utf8) {
                         self.parseData(dataString)
+                        
                         self.fetchCoordinatesForAllStations { result in
                             switch result {
                             case .success(let stationCoordinates):
-                                for (siteNumber, coordinates) in stationCoordinates {
-                                    if let index = self.rivers.firstIndex(where: { $0.siteNumber == siteNumber }) {
-                                        self.rivers[index].latitude = coordinates.latitude
-                                        self.rivers[index].longitude = coordinates.longitude
+                                DispatchQueue.main.async {
+                                    for (siteNumber, coordinates) in stationCoordinates {
+                                        if let index = self.rivers.firstIndex(where: { $0.siteNumber == siteNumber }) {
+                                            self.rivers[index].latitude = coordinates.latitude
+                                            self.rivers[index].longitude = coordinates.longitude
+                                            print("Updated coordinates for station: \(siteNumber), latitude: \(coordinates.latitude), longitude: \(coordinates.longitude)")
+                                        }
                                     }
                                 }
                             case .failure(let error):
@@ -89,7 +155,53 @@ class RiverDataModel: ObservableObject {
             task.resume()
         }
     }
-    
+    func parseData(_ data: String) {
+        let lines = data.components(separatedBy: .newlines)
+        
+        var linesToSkip = 2  // Counter to track lines to skip
+        var parsedRivers: [USGSRiverData] = [] // Temporary storage for the parsed rivers
+        for line in lines {
+            if !line.isEmpty && !line.hasPrefix("#") {
+                if linesToSkip > 0 {
+                    linesToSkip -= 1
+                    continue
+                }
+                
+                let values = line.components(separatedBy: "\t")
+                if values.count >= 9 {
+                    let siteNumber = values[1]
+                    let stationName = values[2]
+                    let flowReading = values[7]
+                    let dateOfReading = values[5]
+                    
+                    let river = USGSRiverData(
+                        agency: "",
+                        siteNumber: siteNumber,
+                        stationName: stationName,
+                        timeSeriesID: "",
+                        parameterCode: "",
+                        resultDate: dateOfReading,
+                        resultTimezone: "",
+                        resultValue: flowReading,
+                        resultCode: "",
+                        resultModifiedDate: "",
+                        snotelStationID: "",
+                        reservoirSiteIDs: [],
+                        lastFetchedDate: Date(),
+                        isFavorite: false,
+                        latitude: nil,
+                        longitude: nil,
+                        flowRate: 0
+                    )
+                    parsedRivers.append(river)
+                }
+            }
+        }
+        DispatchQueue.main.async {
+            self.rivers = parsedRivers
+        }
+    }
+
     func fetchCoordinatesForAllStations(completion: @escaping (Result<[String: (latitude: Double, longitude: Double)], Error>) -> Void) {
         let urlString = "https://waterdata.usgs.gov/nwis/inventory?state_cd=co&group_key=NONE&format=sitefile_output&sitefile_output_format=rdb&column_name=agency_cd&column_name=site_no&column_name=station_nm&column_name=site_tp_cd&column_name=dec_lat_va&column_name=dec_long_va&list_of_search_criteria=state_cd"
         
@@ -129,78 +241,36 @@ class RiverDataModel: ObservableObject {
                    let longitude = Double(values[5]) {
                     let siteNumber = values[1]
                     stationCoordinates[siteNumber] = (latitude, longitude)
+                    print("Fetched coordinates for station: \(siteNumber), latitude: \(latitude), longitude: \(longitude)")
                 }
             }
             
             completion(.success(stationCoordinates))
         }.resume()
-    }
-
-    func updateFavoriteRivers() {
-        favoriteRivers = rivers.filter { $0.isFavorite }
-        LocalStorage.saveFavoriteRivers(favoriteRivers)
-    }
-
-    func loadFavoriteRivers() {
-        if let savedFavorites = LocalStorage.getFavoriteRivers() {
-            rivers = savedFavorites
+        
+        
+        func updateFavoriteRivers() {
+            favoriteRivers = rivers.filter { $0.isFavorite }
+            LocalStorage.saveFavoriteRivers(favoriteRivers)
         }
-    }
-    func toggleFavorite(at index: Int) {
-        rivers[index].isFavorite.toggle()
-        updateFavoriteRivers()
-    }
-
-    
-    func parseData(_ data: String) {
-        let lines = data.components(separatedBy: .newlines)
-
-        var linesToSkip = 2  // Counter to track lines to skip
-        var parsedRivers: [USGSRiverData] = [] // Temporary storage for the parsed rivers
-        for line in lines {
-            if !line.isEmpty && !line.hasPrefix("#") {
-                if linesToSkip > 0 {
-                    linesToSkip -= 1
-                    continue
-                }
-                
-                let values = line.components(separatedBy: "\t")
-                if values.count >= 10 {
-                    let isFavorite = favoriteRivers.contains(where: { $0.siteNumber == values[1] })
-                    let cleanedStationName = values[2].replacingOccurrences(of: ", CO", with: "").replacingOccurrences(of: ".", with: "")
-                    
-                    let river = USGSRiverData(
-                        agency: values[0],
-                        siteNumber: values[1],
-                        stationName: cleanedStationName,
-                        timeSeriesID: values[3],
-                        parameterCode: values[4],
-                        resultDate: values[5],
-                        resultTimezone: values[6],
-                        resultValue: values[7],
-                        resultCode: values[8],
-                        resultModifiedDate: values[9],
-                        snotelStationID: "",
-                        reservoirSiteIDs: [],
-                        lastFetchedDate: Date(),
-                        isFavorite: isFavorite,
-                        latitude: 0.0, // Placeholder value
-                        longitude: 0.0,  // Placeholder value
-                        flowRate: 0
-                    )
-                    parsedRivers.append(river)
-                }
+        
+        func loadFavoriteRivers() {
+            if let savedFavorites = LocalStorage.getFavoriteRivers() {
+                rivers = savedFavorites
             }
         }
-
-        // Update the rivers property on the main thread
-        DispatchQueue.main.async {
-            self.rivers = parsedRivers
+        func toggleFavorite(at index: Int) {
+            rivers[index].isFavorite.toggle()
+            updateFavoriteRivers()
         }
+        
+        func toggleFavorite(at index: Int, isDWR: Bool) {
+            dwrRivers[index].isFavorite.toggle()
+        }
+        
     }
-    
 }
-
+    
 // saves:
 // 1) favorite USGS rivers and
 // 2) feteched river data in RiverDeatilView
@@ -227,7 +297,7 @@ class LocalStorage {
             UserDefaults.standard.set(encodedData, forKey: favoriteRiversKey)
         }
     }
-
+    
     // Retrieve favorite rivers
     static func getFavoriteRivers() -> [USGSRiverData]? {
         if let data = UserDefaults.standard.data(forKey: favoriteRiversKey) {
@@ -236,5 +306,3 @@ class LocalStorage {
         return nil
     }
 }
-
-

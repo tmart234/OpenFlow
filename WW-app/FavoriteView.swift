@@ -19,7 +19,7 @@ struct FavoriteView: View {
         NavigationView {
             List {
                 ForEach(favoriteRivers) { river in
-                    NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
+                    NavigationLink(destination: RiverDetailView(river: RiverDataType.usgs(river), isMLRiver: false)) {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(river.stationName)

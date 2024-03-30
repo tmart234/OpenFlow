@@ -12,6 +12,7 @@ struct RiverListView: View {
     @ObservedObject var riverDataModel = RiverDataModel()
     @State private var searchTerm: String = ""
     @State private var showMapView = false
+    @State private var showDWRRivers = false
     
     var filteredRivers: [USGSRiverData] {
         if searchTerm.isEmpty {
@@ -21,11 +22,19 @@ struct RiverListView: View {
         }
     }
     
+    var filteredDWRRivers: [DWRRiverData] { // New computed property
+        if searchTerm.isEmpty {
+            return riverDataModel.dwrRivers
+        } else {
+            return riverDataModel.dwrRivers.filter { $0.stationName.lowercased().contains(searchTerm.lowercased()) }
+        }
+    }
+    
     var body: some View {
         NavigationView {
             VStack {
                 if showMapView {
-                    MapView(rivers: filteredRivers)
+                    MapView(rivers: filteredRivers.map { RiverDataType.usgs($0) } + filteredDWRRivers.map { RiverDataType.dwr($0) })
                 } else {
                     // Search bar
                     TextField("Search by station name...", text: $searchTerm)
@@ -33,11 +42,15 @@ struct RiverListView: View {
                         .background(Color(.systemGray6))
                         .cornerRadius(8)
                         .padding(.horizontal)
+                    // DWR rivers toggle
+                    Toggle("Show DWR Rivers", isOn: $showDWRRivers)
+                        .padding(.horizontal)
                     
                     List {
-                        ForEach(filteredRivers.indices, id: \.self) { index in
-                            let splitName = Utility.splitStationName(filteredRivers[index].stationName)
-                            NavigationLink(destination: RiverDetailView(river: filteredRivers[index], isMLRiver: false)) {
+                        ForEach(showDWRRivers ? filteredDWRRivers.indices : filteredRivers.indices, id: \.self) { index in
+                            let river: RiverDataType = showDWRRivers ? .dwr(filteredDWRRivers[index]) : .usgs(filteredRivers[index])
+                            let splitName = Utility.splitStationName(river.stationName)
+                            NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(splitName.0) // Part 1 of the title
@@ -59,11 +72,21 @@ struct RiverListView: View {
                             }
                             .swipeActions {
                                 Button(action: {
-                                    riverDataModel.toggleFavorite(at: index) // Ensure this works with filtered rivers
+                                    if case .usgs(let usgsRiver) = river {
+                                        let index = riverDataModel.rivers.firstIndex(where: { $0.id == usgsRiver.id })
+                                        if let index = index {
+                                            riverDataModel.toggleFavorite(at: index)
+                                        }
+                                    } else if case .dwr(let dwrRiver) = river {
+                                        let index = riverDataModel.dwrRivers.firstIndex(where: { $0.id == dwrRiver.id })
+                                        if let index = index {
+                                            riverDataModel.toggleFavorite(at: index, isDWR: true)
+                                        }
+                                    }
                                 }) {
-                                    Label(filteredRivers[index].isFavorite ? "Unfavorite" : "Favorite", systemImage: filteredRivers[index].isFavorite ? "star.slash.fill" : "star.fill")
+                                    Label(river.isFavorite ? "Unfavorite" : "Favorite", systemImage: river.isFavorite ? "star.slash.fill" : "star.fill")
                                 }
-                                .tint(filteredRivers[index].isFavorite ? .gray : .yellow)
+                                .tint(river.isFavorite ? .gray : .yellow)
                             }
                         }
                     }
@@ -82,11 +105,19 @@ struct RiverListView: View {
 }
 
 struct MapView: View {
-    let rivers: [USGSRiverData]
+    let rivers: [RiverDataType]
     @State private var region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 39.0, longitude: -105.5), span: MKCoordinateSpan(latitudeDelta: 5.0, longitudeDelta: 5.0))
     
     var body: some View {
-        Map(coordinateRegion: $region, annotationItems: rivers.filter { $0.latitude != nil && $0.longitude != nil }) { river in
+        Map(coordinateRegion: $region, annotationItems: rivers.filter { river in
+            let hasCoordinates = river.latitude != nil && river.longitude != nil
+            if hasCoordinates {
+                print("River with coordinates: \(river.stationName), latitude: \(river.latitude!), longitude: \(river.longitude!)")
+            } else {
+                print("River missing coordinates: \(river.stationName)")
+            }
+            return hasCoordinates
+        }) { river in
             MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: river.latitude!, longitude: river.longitude!)) {
                 RiverAnnotationView(river: river)
             }
@@ -96,7 +127,7 @@ struct MapView: View {
 }
 
 struct RiverAnnotationView: View {
-    let river: USGSRiverData
+    let river: RiverDataType
     
     var body: some View {
         NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {

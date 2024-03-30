@@ -12,7 +12,7 @@ import CoreML
 import Charts
 
 struct FlowGraphView: View {
-    let river: USGSRiverData
+    let river: RiverDataType
     @EnvironmentObject var sharedModelData: SharedModelData
     @State private var flowData: [(date: Date, flow: Double)] = []
     @State private var predictedFlowData: [(date: Date, flow: Double)] = []

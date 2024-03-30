@@ -13,7 +13,7 @@ import Zip
 
 
 struct RiverDetailView: View {
-    let river: USGSRiverData
+    let river: RiverDataType
     let isMLRiver: Bool
     @EnvironmentObject var sharedModelData: SharedModelData
     @State private var reservoirData: [ReservoirInfo] = []

@@ -44,6 +44,7 @@
 		99D968702BA9014F00261E95 /* FlowGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D9686F2BA9014F00261E95 /* FlowGraphView.swift */; };
 		99D968722BA908AA00261E95 /* ReservoirManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D968712BA908AA00261E95 /* ReservoirManager.swift */; };
 		99D968742BA9116200261E95 /* CoordinatesFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D968732BA9116200261E95 /* CoordinatesFetcher.swift */; };
+		99D968782BB88D9400261E95 /* RiverDataType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D968772BB88D9400261E95 /* RiverDataType.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -74,6 +75,7 @@
 		99D9686F2BA9014F00261E95 /* FlowGraphView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FlowGraphView.swift; sourceTree = "<group>"; };
 		99D968712BA908AA00261E95 /* ReservoirManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ReservoirManager.swift; sourceTree = "<group>"; };
 		99D968732BA9116200261E95 /* CoordinatesFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatesFetcher.swift; sourceTree = "<group>"; };
+		99D968772BB88D9400261E95 /* RiverDataType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RiverDataType.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -137,8 +139,9 @@
 				99CFC17829D52DDD0069F04E /* WW_app.entitlements */,
 				99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */,
 				99CFC17929D52DDD0069F04E /* Preview Content */,
-				99CFC18129D52EE80069F04E /* River.swift */,
 				99D968712BA908AA00261E95 /* ReservoirManager.swift */,
+				99CFC18129D52EE80069F04E /* River.swift */,
+				99D968772BB88D9400261E95 /* RiverDataType.swift */,
 				99CFC18729D531780069F04E /* RiverListView.swift */,
 				99D41CFA2AFFEA6800F842CF /* ProfileView.swift */,
 				99CFC18929D531950069F04E /* RiverDetailView.swift */,
@@ -272,6 +275,7 @@
 				99CFC18E29D53A360069F04E /* APIManager.swift in Sources */,
 				99B07C712B0B1FB600AF2687 /* Utils.swift in Sources */,
 				99CFC18229D52EE80069F04E /* River.swift in Sources */,
+				99D968782BB88D9400261E95 /* RiverDataType.swift in Sources */,
 				99CFC18C29D539EA0069F04E /* SnowpackData.swift in Sources */,
 				99B07C6F2B0B170000AF2687 /* MLListView.swift in Sources */,
 				99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */,
