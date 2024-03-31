@@ -247,27 +247,24 @@ class RiverDataModel: ObservableObject {
             
             completion(.success(stationCoordinates))
         }.resume()
-        
-        
-        func updateFavoriteRivers() {
-            favoriteRivers = rivers.filter { $0.isFavorite }
-            LocalStorage.saveFavoriteRivers(favoriteRivers)
+    }
+    func updateFavoriteRivers() {
+        favoriteRivers = rivers.filter { $0.isFavorite }
+        LocalStorage.saveFavoriteRivers(favoriteRivers)
+    }
+    
+    func loadFavoriteRivers() {
+        if let savedFavorites = LocalStorage.getFavoriteRivers() {
+            rivers = savedFavorites
         }
-        
-        func loadFavoriteRivers() {
-            if let savedFavorites = LocalStorage.getFavoriteRivers() {
-                rivers = savedFavorites
-            }
-        }
-        func toggleFavorite(at index: Int) {
-            rivers[index].isFavorite.toggle()
-            updateFavoriteRivers()
-        }
-        
-        func toggleFavorite(at index: Int, isDWR: Bool) {
-            dwrRivers[index].isFavorite.toggle()
-        }
-        
+    }
+    func toggleFavorite(at index: Int) {
+        rivers[index].isFavorite.toggle()
+        updateFavoriteRivers()
+    }
+    
+    func toggleFavorite(at index: Int, isDWR: Bool) {
+        dwrRivers[index].isFavorite.toggle()
     }
 }
     

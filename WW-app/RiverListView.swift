@@ -9,7 +9,7 @@ import Foundation
 import MapKit
 
 struct RiverListView: View {
-    @ObservedObject var riverDataModel = RiverDataModel()
+    @StateObject var riverDataModel = RiverDataModel()
     @State private var searchTerm: String = ""
     @State private var showMapView = false
     @State private var showDWRRivers = false
@@ -47,10 +47,10 @@ struct RiverListView: View {
                         .padding(.horizontal)
                     
                     List {
-                        ForEach(showDWRRivers ? filteredDWRRivers.indices : filteredRivers.indices, id: \.self) { index in
-                            let river: RiverDataType = showDWRRivers ? .dwr(filteredDWRRivers[index]) : .usgs(filteredRivers[index])
-                            let splitName = Utility.splitStationName(river.stationName)
-                            NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
+                         ForEach(showDWRRivers ? filteredDWRRivers.indices : filteredRivers.indices, id: \.self) { index in
+                             let river: RiverDataType = showDWRRivers ? .dwr(filteredDWRRivers[index]) : .usgs(filteredRivers[index])
+                             let splitName = Utility.splitStationName(river.stationName)
+                             NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(splitName.0) // Part 1 of the title
@@ -70,24 +70,23 @@ struct RiverListView: View {
                                     Spacer()
                                 }
                             }
-                            .swipeActions {
-                                Button(action: {
-                                    if case .usgs(let usgsRiver) = river {
-                                        let index = riverDataModel.rivers.firstIndex(where: { $0.id == usgsRiver.id })
-                                        if let index = index {
-                                            riverDataModel.toggleFavorite(at: index)
-                                        }
-                                    } else if case .dwr(let dwrRiver) = river {
-                                        let index = riverDataModel.dwrRivers.firstIndex(where: { $0.id == dwrRiver.id })
-                                        if let index = index {
-                                            riverDataModel.toggleFavorite(at: index, isDWR: true)
-                                        }
-                                    }
-                                }) {
-                                    Label(river.isFavorite ? "Unfavorite" : "Favorite", systemImage: river.isFavorite ? "star.slash.fill" : "star.fill")
-                                }
-                                .tint(river.isFavorite ? .gray : .yellow)
-                            }
+                             .swipeActions {
+                                 Button(action: {
+                                     switch river {
+                                     case .usgs(let usgsRiver):
+                                         if let index = riverDataModel.rivers.firstIndex(where: { $0.id == usgsRiver.id }) {
+                                             riverDataModel.toggleFavorite(at: index)
+                                         }
+                                     case .dwr(let dwrRiver):
+                                         if let index = riverDataModel.dwrRivers.firstIndex(where: { $0.id == dwrRiver.id }) {
+                                             riverDataModel.toggleFavorite(at: index, isDWR: true)
+                                         }
+                                     }
+                                 }) {
+                                     Label(river.isFavorite ? "Unfavorite" : "Favorite", systemImage: river.isFavorite ? "star.slash.fill" : "star.fill")
+                                 }
+                                 .tint(river.isFavorite ? .gray : .yellow)
+                             }
                         }
                     }
                 }
