@@ -1,6 +1,6 @@
 # OpenFlowColorado
-New here? See our wiki to learn more:
-![wiki](https://github.com/tmart234/OpenFlowColorado.wiki)
+New here? See our wiki 
+[wiki](/wiki) to learn more
 
 ![Alt text](assets/SS3.png?raw=true "Home Screen")
 ![Alt text](assets/SS1.png?raw=true "River View")
