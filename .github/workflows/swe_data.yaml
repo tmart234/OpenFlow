@@ -26,19 +26,31 @@ jobs:
         ELEMENTS="WTEQ"
 
         # Retrieve the list of river basins from the API
-        BASINS=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS" | jq -r '.[] | .name')
+        BASINS_RESPONSE=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS")
+        echo "Basins Response:"
+        echo "$BASINS_RESPONSE"
+        
+        BASINS=$(echo "$BASINS_RESPONSE" | jq -r '.[] | .name')
 
         # Create an empty JSON object to store the SWE values
         echo "{}" > swe_data.json
 
         # Iterate over each basin and retrieve the SWE value
         for BASIN in $BASINS; do
-          STATION_TRIPLET=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS&stationNames=$BASIN" | jq -r '.[0].stationTriplet')
+          STATION_RESPONSE=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS&stationNames=$BASIN")
+          echo "Station Response for $BASIN:"
+          echo "$STATION_RESPONSE"
+          
+          STATION_TRIPLET=$(echo "$STATION_RESPONSE" | jq -r '.[0].stationTriplet')
           
           # Echo the API URL for testing
           echo "API URL: $API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET"
           
-          SWE_VALUE=$(curl -s "$API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET" | jq -r '.[0].data[0].values[-1].value')
+          SWE_RESPONSE=$(curl -s "$API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET")
+          echo "SWE Response for $BASIN:"
+          echo "$SWE_RESPONSE"
+          
+          SWE_VALUE=$(echo "$SWE_RESPONSE" | jq -r '.[0].data[0].values[-1].value')
           
           # Update the JSON object with the SWE value for the current basin
           jq --arg basin "$BASIN" --arg value "$SWE_VALUE" '. + {($basin): $value}' swe_data.json > temp.json
