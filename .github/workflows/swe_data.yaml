@@ -1,4 +1,4 @@
-name: get SWE Data
+name: Save PNG Image
 
 on:
   schedule:
@@ -6,61 +6,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  update-swe-data:
+  save-png-image:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Download PNG image
       run: |
-        sudo apt-get install jq
+        if [ ! -d ".github/assets" ]; then
+          mkdir -p .github/assets
+        fi
+        curl -L -o .github/assets/colorado_swe.png "https://nwcc-apps.sc.egov.usda.gov/imap/#version=&elements=R&networks=!&states=!&basins=!&hucs=&minElevation=&maxElevation=&elementSelectType=all&activeOnly=true&activeForecastPointsOnly=false&hucLabels=true&hucIdLabels=false&hucParameterLabels=true&stationLabels=&overlays=&hucOverlays=&basinOpacity=100&basinNoDataOpacity=100&basemapOpacity=100&maskOpacity=0&mode=data&openSections=dataElement,parameter,date,basin,elements,location,networks,labels&controlsOpen=true&popup=&popupMulti=&popupBasin=&base=esriNgwm&displayType=basinstation&basinType=co\_8&dataElement=WTEQ&depth=-8&parameter=PCTMED&frequency=DAILY&duration=I&customDuration=&dayPart=E&monthPart=E&forecastPubDay=1&forecastExceedance=50&useMixedPast=true&seqColor=1&divColor=3&scaleType=D&scaleMin=&scaleMax=&referencePeriodType=POR&referenceBegin=1981&referenceEnd=2020&minimumYears=20&hucAssociations=true&relativeDate=-1&lat=39.127&lon=-106.538&zoom=7.0&autoExport=full,png,8,0,L,BL,,41.6727,36.3238,-101.4368,-112.0386"
 
-    - name: Retrieve SWE data
-      run: |
-        # Define the API endpoint and parameters
-        API_URL="https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/data"
-        DATE=$(date +%Y-%m-%d)
-        DURATION="DAILY"
-        ELEMENTS="WTEQ"
-
-        # Retrieve the list of river basins from the API
-        BASINS_RESPONSE=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS")
-        echo "Basins Response:"
-        echo "$BASINS_RESPONSE"
-        
-        BASINS=$(echo "$BASINS_RESPONSE" | jq -r '.[] | .name')
-
-        # Create an empty JSON object to store the SWE values
-        echo "{}" > swe_data.json
-
-        # Iterate over each basin and retrieve the SWE value
-        for BASIN in $BASINS; do
-          STATION_RESPONSE=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS&stationNames=$BASIN")
-          echo "Station Response for $BASIN:"
-          echo "$STATION_RESPONSE"
-          
-          STATION_TRIPLET=$(echo "$STATION_RESPONSE" | jq -r '.[0].stationTriplet')
-          
-          # Echo the API URL for testing
-          echo "API URL: $API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET"
-          
-          SWE_RESPONSE=$(curl -s "$API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET")
-          echo "SWE Response for $BASIN:"
-          echo "$SWE_RESPONSE"
-          
-          SWE_VALUE=$(echo "$SWE_RESPONSE" | jq -r '.[0].data[0].values[-1].value')
-          
-          # Update the JSON object with the SWE value for the current basin
-          jq --arg basin "$BASIN" --arg value "$SWE_VALUE" '. + {($basin): $value}' swe_data.json > temp.json
-          mv temp.json swe_data.json
-        done
-
-    - name: Commit and push SWE data
+    - name: Commit and push image
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add .github/swe_data.json
-        git commit -m "Update SWE data"
+        git add .github/assets/colorado_swe.png
+        git commit -m "Update Colorado SWE PNG image"
         git push
