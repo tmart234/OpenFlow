@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>NWCC iMap</title>
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="shortcut icon" type="image/ico" href="/assets/favicon.ico">
+        <link rel="icon" type="image/png" href="/assets/favicon.png">
+        <link rel="stylesheet" href="/assets/css/fsa-style.min.css">
+        <link rel="stylesheet" href="/assets/leaflet/leaflet.css">
+        <link rel="stylesheet" href="/assets/leaflet/fullscreen/leaflet.fullscreen.css">
+        <link rel="stylesheet" href="/assets/jquery/jquery-ui-slider.css">
+        <link rel="stylesheet" href="/assets/css/stationmap-page.css">
+        <link rel="stylesheet" href="/assets/css/stationmap.css">
+        <link rel="stylesheet" href="/assets/css/nwcc-style.css" media="all">
+        <script type="module" src="/assets/js/nwcc-template.js"></script>
+    </head>
+    <body>
+        <nwcc-header>
+            <abbr slot="app-acronym">iMap</abbr>
+            <abbr slot="application-long-name">NWCC Interactive Map</abbr>
+            <span slot="splash-short-title">iMap</span>
+            <span slot="splash-long-title">NWCC Interactive Map</span>
+        </nwcc-header>
+        <main id="main-content" tabindex="-1">
+            <div class="fsa-section fsa-section--fullscreen">
+                <div class="fsa-grid--no-gutter">
+                    <div id="map-container" class="fsa-grid__1/1">
+                        <div id="map" class="fsa-box@m fsa-box--br-2@m map-div"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+        <nwcc-footer></nwcc-footer>
+        <script src="/awdb/output/stations.js"></script>
+        <script src="/assets/jquery/jquery.min.js"></script>
+        <script src="/assets/jquery/jquery.collapse.js"></script>
+        <script src="/assets/jquery/jquery.typing-0.3.0.min.js"></script>
+        <script src="/assets/jquery/jquery-ui-slider.js"></script>
+        <script src="/assets/jquery/dropit.js"></script>
+        <script src="/assets/leaflet/leaflet.js"></script>
+        <script src="/assets/leaflet/leaflet-providers.js"></script>
+        <script src="/assets/leaflet/fullscreen/Leaflet.fullscreen.js"></script>
+        <script src="/assets/leaflet/leaflet-omnivore.min.js"></script>
+        <script src="/assets/leaflet/leaflet-pip.min.js"></script>
+        <script src="/assets/js/stationmap-min.js"></script>
+        <script src="/assets/js/fsa-growl.js"></script>
+        <script>
+            function loadMain () {
+                const main = document.getElementById('main-content')
+                main.style.visibility = 'visible'
+                const shadowDom = document.getElementsByTagName('nwcc-header')[0].shadowRoot
+                const splash = shadowDom.getElementById('loading-splash')
+                splash.style.display = 'none'
+                const map = document.getElementById('map')
+                map.style.zIndex = 1
+            }
+            window.onload = function () {
+                loadMain();
+                function stateChange(newState) {
+                    setTimeout(function () {
+                        if (newState == -1) {
+                            const mapContainer = document.getElementById('map-container')
+                            mapContainer.scrollIntoView({ behavior: "smooth", block: "center"})
+                        }
+                    }, 2000);
+                }
+                stateChange(-1);
+            }
+        </script>
+    </body>
+</html>
