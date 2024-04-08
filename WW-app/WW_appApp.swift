@@ -135,14 +135,18 @@ struct WW_appApp: App {
             return
         }
         do {
-            let compiledModelURL = try MLModel.compileModel(at: modelFilePath)
-            let model = try MLModel(contentsOf: compiledModelURL)
-            DispatchQueue.main.async {
-                sharedModelData.compiledModel = model
-                sharedModelData.isModelLoaded = true
+            DispatchQueue.global().async {
+                do {
+                    let compiledModelURL = try MLModel.compileModel(at: modelFilePath)
+                    let model = try MLModel(contentsOf: compiledModelURL)
+                    DispatchQueue.main.async {
+                        sharedModelData.compiledModel = model
+                        sharedModelData.isModelLoaded = true
+                    }
+                } catch {
+                    print("Error compiling or loading the model: \(error.localizedDescription)")
+                }
             }
-        } catch {
-            print("Error compiling or loading the model: \(error.localizedDescription)")
         }
     }
     

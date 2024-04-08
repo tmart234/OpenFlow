@@ -10,7 +10,7 @@ import Foundation
 struct RiverData: Codable, Identifiable {
     var id = UUID()
     // USGS, DWR, etc
-    let agency: String
+    var agency: String
     let siteNumber: String
     let stationName: String
     let timeSeriesID: String

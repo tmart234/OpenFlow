@@ -14,13 +14,13 @@ struct RiverListView: View {
     @State private var showMapView = false
     // enables DWR agency for RiverDataType
     @State private var showDWRRivers = false
-    @State private var riverCoordinates: [String: Coordinates] = [:]
     
     var filteredRivers: [RiverData] {
+        let rivers = riverDataModel.rivers.filter { showDWRRivers ? $0.agency == "DWR" : $0.agency == "USGS" }
         if searchTerm.isEmpty {
-            return riverDataModel.rivers
+            return rivers
         } else {
-            return riverDataModel.rivers.filter { $0.stationName.lowercased().contains(searchTerm.lowercased()) }
+            return rivers.filter { $0.stationName.lowercased().contains(searchTerm.lowercased()) }
         }
     }
     
@@ -37,6 +37,9 @@ struct RiverListView: View {
                         .background(Color(.systemGray6))
                         .cornerRadius(8)
                         .padding(.horizontal)
+                    // DWR rivers toggle
+                    Toggle("Show DWR Rivers", isOn: $showDWRRivers)
+                       .padding(.horizontal)
                     
                     List {
                         ForEach(filteredRivers) { river in
