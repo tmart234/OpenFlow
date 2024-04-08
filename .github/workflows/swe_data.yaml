@@ -13,12 +13,22 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Install dependencies
+      run: |
+        npm install puppeteer
+
     - name: Download PNG image
       run: |
-        if [ ! -d ".github/assets" ]; then
-          mkdir -p .github/assets
-        fi
-        curl -L -o .github/assets/colorado_swe.png "https://nwcc-apps.sc.egov.usda.gov/imap/#version=&elements=R&networks=!&states=!&basins=!&hucs=&minElevation=&maxElevation=&elementSelectType=all&activeOnly=true&activeForecastPointsOnly=false&hucLabels=true&hucIdLabels=false&hucParameterLabels=true&stationLabels=&overlays=&hucOverlays=&basinOpacity=100&basinNoDataOpacity=100&basemapOpacity=100&maskOpacity=0&mode=data&openSections=dataElement,parameter,date,basin,elements,location,networks,labels&controlsOpen=true&popup=&popupMulti=&popupBasin=&base=esriNgwm&displayType=basinstation&basinType=co\_8&dataElement=WTEQ&depth=-8&parameter=PCTMED&frequency=DAILY&duration=I&customDuration=&dayPart=E&monthPart=E&forecastPubDay=1&forecastExceedance=50&useMixedPast=true&seqColor=1&divColor=3&scaleType=D&scaleMin=&scaleMax=&referencePeriodType=POR&referenceBegin=1981&referenceEnd=2020&minimumYears=20&hucAssociations=true&relativeDate=-1&lat=39.127&lon=-106.538&zoom=7.0&autoExport=full,png,8,0,L,BL,,41.6727,36.3238,-101.4368,-112.0386"
+        node <<EOF
+        const puppeteer = require('puppeteer');
+        (async () => {
+          const browser = await puppeteer.launch();
+          const page = await browser.newPage();
+          await page.goto('https://nwcc-apps.sc.egov.usda.gov/imap/#version=&elements=R&networks=!&states=!&basins=!&hucs=&minElevation=&maxElevation=&elementSelectType=all&activeOnly=true&activeForecastPointsOnly=false&hucLabels=true&hucIdLabels=false&hucParameterLabels=true&stationLabels=&overlays=&hucOverlays=&basinOpacity=100&basinNoDataOpacity=100&basemapOpacity=100&maskOpacity=0&mode=data&openSections=dataElement,parameter,date,basin,elements,location,networks,labels&controlsOpen=true&popup=&popupMulti=&popupBasin=&base=esriNgwm&displayType=basinstation&basinType=co\_8&dataElement=WTEQ&depth=-8&parameter=PCTMED&frequency=DAILY&duration=I&customDuration=&dayPart=E&monthPart=E&forecastPubDay=1&forecastExceedance=50&useMixedPast=true&seqColor=1&divColor=3&scaleType=D&scaleMin=&scaleMax=&referencePeriodType=POR&referenceBegin=1981&referenceEnd=2020&minimumYears=20&hucAssociations=true&relativeDate=-1&lat=39.127&lon=-106.538&zoom=7.0&autoExport=full,png,8,0,L,BL,,41.6727,36.3238,-101.4368,-112.0386', { waitUntil: 'networkidle0' });
+          await page.screenshot({ path: '.github/assets/colorado_swe.png', fullPage: true });
+          await browser.close();
+        })();
+        EOF
 
     - name: Commit and push image
       run: |
