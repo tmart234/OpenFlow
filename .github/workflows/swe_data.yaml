@@ -1,0 +1,54 @@
+name: get SWE Data
+
+on:
+  schedule:
+    - cron: '0 14 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  update-swe-data:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get install jq
+
+    - name: Retrieve SWE data
+      run: |
+        # Define the API endpoint and parameters
+        API_URL="https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/data"
+        DATE=$(date +%Y-%m-%d)
+        DURATION="DAILY"
+        ELEMENTS="WTEQ"
+
+        # Retrieve the list of river basins from the API
+        BASINS=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS" | jq -r '.[] | .name')
+
+        # Create an empty JSON object to store the SWE values
+        echo "{}" > swe_data.json
+
+        # Iterate over each basin and retrieve the SWE value
+        for BASIN in $BASINS; do
+          STATION_TRIPLET=$(curl -s "https://wcc.sc.egov.usda.gov/awdbWebService/services/v1/stations?durations=$DURATION&elements=$ELEMENTS&stationNames=$BASIN" | jq -r '.[0].stationTriplet')
+          
+          # Echo the API URL for testing
+          echo "API URL: $API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET"
+          
+          SWE_VALUE=$(curl -s "$API_URL?beginDate=$DATE&duration=$DURATION&elements=$ELEMENTS&endDate=$DATE&stationTriplets=$STATION_TRIPLET" | jq -r '.[0].data[0].values[-1].value')
+          
+          # Update the JSON object with the SWE value for the current basin
+          jq --arg basin "$BASIN" --arg value "$SWE_VALUE" '. + {($basin): $value}' swe_data.json > temp.json
+          mv temp.json swe_data.json
+        done
+
+    - name: Commit and push SWE data
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .github/swe_data.json
+        git commit -m "Update SWE data"
+        git push
