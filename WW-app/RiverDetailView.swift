@@ -13,8 +13,9 @@ import Zip
 
 
 struct RiverDetailView: View {
-    let river: RiverDataType
+    let river: RiverData
     let isMLRiver: Bool
+    let coordinates: Coordinates?
     @EnvironmentObject var sharedModelData: SharedModelData
     @State private var reservoirData: [ReservoirInfo] = []
     @State private var selectedDate = Date()
@@ -29,49 +30,6 @@ struct RiverDetailView: View {
     @State private var latitude: Double? = nil
     @State private var longitude: Double? = nil
     @State private var mlModel: MLModel?
-
-    func fetchCoordinates(for siteID: String, completion: @escaping (Result<(Double, Double), Error>) -> Void) {
-        let urlString = "https://waterdata.usgs.gov/nwis/inventory?search_site_no=\(siteID)&search_site_no_match_type=exact&group_key=NONE&format=sitefile_output&sitefile_output_format=rdb&column_name=dec_lat_va&column_name=dec_long_va&list_of_search_criteria=search_site_no"
-        print("USGS metadata URL: ", urlString)
-        guard let url = URL(string: urlString) else {
-            completion(.failure(NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
-            return
-        }
-
-        URLSession.shared.dataTask(with: url) { data, response, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-
-            guard let data = data, let dataString = String(data: data, encoding: .utf8) else {
-                completion(.failure(NSError(domain: "", code: 500, userInfo: [NSLocalizedDescriptionKey: "No data"])))
-                return
-            }
-
-            let lines = dataString.components(separatedBy: .newlines)
-
-            // Skip the first 2 lines
-            var linesToSkip = 2
-            for line in lines {
-                if !line.isEmpty && !line.hasPrefix("#") {
-                    if linesToSkip > 0 {
-                        linesToSkip -= 1
-                        continue
-                    }
-
-                    let values = line.components(separatedBy: "\t")
-                    if values.count >= 2, let latitude = Double(values[0]), let longitude = Double(values[1]) {
-                        completion(.success((latitude, longitude)))
-                        return
-                    }
-                }
-            }
-
-            completion(.failure(NSError(domain: "", code: 500, userInfo: [NSLocalizedDescriptionKey: "No coordinates found"])))
-
-        }.resume()
-    }
 
     func fetchSnowpackData() {
         print("Calling fetchSnowpackData() for station ID: \(river.snotelStationID)")
@@ -198,16 +156,6 @@ struct RiverDetailView: View {
             fetchWeatherData()
             fetchSnowpackData()
             fetchFlowData(for: self.river.siteNumber)
-            fetchCoordinates(for: self.river.siteNumber) { result in
-                switch result {
-                case .success(let (lat, lon)):
-                    self.latitude = lat
-                    self.longitude = lon
-                    fetchWeatherData()
-                case .failure(let error):
-                    print("Error fetching coordinates: \(error)")
-                    }
-                }
             }
         }
     }

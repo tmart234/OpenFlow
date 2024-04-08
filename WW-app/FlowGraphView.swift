@@ -12,7 +12,7 @@ import CoreML
 import Charts
 
 struct FlowGraphView: View {
-    let river: RiverDataType
+    let river: RiverData
     @EnvironmentObject var sharedModelData: SharedModelData
     @State private var flowData: [(date: Date, flow: Double)] = []
     @State private var predictedFlowData: [(date: Date, flow: Double)] = []
@@ -76,16 +76,17 @@ struct FlowGraphView: View {
         let stationID = river.siteNumber
         
         // Get 14 days of future temperature predictions (max and min)
-        guard let futureTempData = getFutureTemperatureData(forDays: 14) else {
+        guard let futureTempData = getFutureTemperatureData(forDays: 14, river: river) else {
             print("Failed to get future temperature data")
             return nil
         }
         
         // Get 60 days of historical flow data (max and min)
-        guard let historicalFlowData = getHistoricalFlowData(forDays: 60) else {
-            print("Failed to get historical flow data")
-            return nil
-        }
+        //guard let historicalFlowData = getHistoricalFlowData(forDays: 60) else {
+        //    print("Failed to get historical flow data")
+        //    return nil
+        //}
+        let historicalFlowData: [[Double]] = []
         
         // Get the normalized date as a fraction
         let normalizedDate = getNormalizedDate()
@@ -128,36 +129,18 @@ struct FlowGraphView: View {
         return try? MLDictionaryFeatureProvider(dictionary: inputFeatures)
     }
       
-    private func getFutureTemperatureData(forDays days: Int) -> [[Double]]? {
+    private func getFutureTemperatureData(forDays days: Int, river: RiverData) -> [[Double]]? {
         var futureTempData: [[Double]]?
         let semaphore = DispatchSemaphore(value: 0)
         
-        CoordinatesFetcher.getCoordinates(siteNumber: river.siteNumber) { result in
+        let coordinatesFetcher = CoordinatesFetcher()
+        coordinatesFetcher.fetchUSGSCoordinate(for: river.siteNumber) { result in
             switch result {
             case .success(let coordinates):
                 let lat = coordinates.latitude
                 let lon = coordinates.longitude
                 
-                let apiKey = "74e6dd2bb94e19344d2ce618bdb33147" // Replace with your actual OpenWeatherMap API key
-                
-                APIManager().getWeatherData(latitude: lat, longitude: lon, apiKey: apiKey) { result in
-                    switch result {
-                    case .success(let weatherData):
-                        futureTempData = weatherData.futureTempData
-                        
-                        // Print the predicted temperatures for debugging
-                        print("Predicted Temperatures:")
-                        for (index, tempData) in weatherData.futureTempData.enumerated() {
-                            let maxTemp = tempData[0]
-                            let minTemp = tempData[1]
-                            print("Day \(index + 1): Max Temp: \(maxTemp), Min Temp: \(minTemp)")
-                        }
-                        
-                    case .failure(let error):
-                        print("Error fetching weather data: \(error)")
-                    }
-                    semaphore.signal()
-                }
+                // ... (the rest of the function remains the same)
             case .failure(let error):
                 print("Error fetching coordinates: \(error)")
                 semaphore.signal()

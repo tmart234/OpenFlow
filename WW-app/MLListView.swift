@@ -25,7 +25,7 @@ struct MLListView: View {
                     
                     List(filteredRivers.indices, id: \.self) { index in
                         let splitName = Utility.splitStationName(filteredRivers[index].stationName)
-                        NavigationLink(destination: RiverDetailView(river: RiverDataType.usgs(filteredRivers[index]), isMLRiver: true)
+                        NavigationLink(destination: RiverDetailView(river: filteredRivers[index], isMLRiver: true, coordinates: riverDataModel.riverCoordinates[filteredRivers[index].siteNumber])
                             .environmentObject(sharedModelData)) {
                                 HStack {
                                     VStack(alignment: .leading) {
@@ -54,7 +54,7 @@ struct MLListView: View {
         }
     }
     
-    var filteredRivers: [USGSRiverData] {
+    var filteredRivers: [RiverData] {
         riverDataModel.rivers.filter { river in
             stationIDs.contains(river.siteNumber) &&
             (searchTerm.isEmpty || river.stationName.lowercased().contains(searchTerm.lowercased()))

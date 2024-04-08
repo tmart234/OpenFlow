@@ -81,7 +81,9 @@ struct WW_appApp: App {
             do {
                 let decodedResponse = try JSONDecoder().decode(GitHubRelease.self, from: data)
                 if let asset = decodedResponse.assets.first(where: { $0.name.hasPrefix("lstm_model_") && $0.name.hasSuffix(".mlpackage.zip") }) {
-                    self.downloadMLModel(from: asset.browserDownloadUrl)
+                    DispatchQueue.main.async {
+                        self.downloadMLModel(from: asset.browserDownloadUrl)
+                    }
                 } else {
                     print("Error: No suitable ML model file found in the release")
                 }
@@ -173,7 +175,9 @@ struct WW_appApp: App {
 
                 try fileManager.moveItem(at: tempLocalUrl, to: destinationUrl)
                 print("Moved ML model to: \(destinationUrl)")
-                self.unzipAndLoadModel(at: destinationUrl)
+                DispatchQueue.main.async {
+                    self.unzipAndLoadModel(at: destinationUrl)
+                }
             } catch {
                 print("File move or unzip failed: \(error)")
             }

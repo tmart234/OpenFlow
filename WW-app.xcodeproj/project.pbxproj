@@ -130,7 +130,6 @@
 		99CFC16C29D52DDD0069F04E /* WW-app */ = {
 			isa = PBXGroup;
 			children = (
-				99D968732BA9116200261E95 /* CoordinatesFetcher.swift */,
 				99B07C6E2B0B170000AF2687 /* MLListView.swift */,
 				99CFC18B29D539EA0069F04E /* SnowpackData.swift */,
 				99CFC16D29D52DDD0069F04E /* WW_appApp.swift */,
@@ -140,6 +139,7 @@
 				99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */,
 				99CFC17929D52DDD0069F04E /* Preview Content */,
 				99D968712BA908AA00261E95 /* ReservoirManager.swift */,
+				99D968732BA9116200261E95 /* CoordinatesFetcher.swift */,
 				99CFC18129D52EE80069F04E /* River.swift */,
 				99D968772BB88D9400261E95 /* RiverDataType.swift */,
 				99CFC18729D531780069F04E /* RiverListView.swift */,

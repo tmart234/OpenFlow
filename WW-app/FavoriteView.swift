@@ -11,7 +11,7 @@ import SwiftUI
 struct FavoriteView: View {
     @EnvironmentObject var riverDataModel: RiverDataModel
     
-    var favoriteRivers: [USGSRiverData] {
+    var favoriteRivers: [RiverData] {
         return riverDataModel.rivers.filter { $0.isFavorite }
     }
 
@@ -19,7 +19,7 @@ struct FavoriteView: View {
         NavigationView {
             List {
                 ForEach(favoriteRivers) { river in
-                    NavigationLink(destination: RiverDetailView(river: RiverDataType.usgs(river), isMLRiver: false)) {
+                    NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false, coordinates: riverDataModel.riverCoordinates[river.siteNumber])) {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(river.stationName)
