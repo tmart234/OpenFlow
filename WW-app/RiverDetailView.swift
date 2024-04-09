@@ -13,6 +13,7 @@ import Zip
 
 
 struct RiverDetailView: View {
+    @EnvironmentObject var riverDataModel: RiverDataModel
     let river: RiverData
     let isMLRiver: Bool
     let coordinates: Coordinates?
@@ -47,7 +48,7 @@ struct RiverDetailView: View {
         }
     }
     func fetchWeatherData() {
-        guard let lat = latitude, let lon = longitude else {
+        guard let lat = river.latitude, let lon = river.longitude else {
             print("Coordinates are not available.")
             return
         }
@@ -92,9 +93,10 @@ struct RiverDetailView: View {
             } else {
                 Text("Fetching SWE data...")
             }
-            Text("Current Flow: \(flowData)")
+            Text("Flow: \(river.flowRateValue ?? 0, specifier: "%.2f") cfs")
                 .font(.title2)
                 .padding(.top)
+
             Text("Daily High Temperature: \(highTemperature)")
                 .font(.title2)
                 .padding(.top)
@@ -152,10 +154,12 @@ struct RiverDetailView: View {
                      print("Error fetching reservoir data:", error)
                  }
              }
-
+            
+            //fetchSnowpackData()
             fetchWeatherData()
-            fetchSnowpackData()
-            fetchFlowData(for: self.river.siteNumber)
+            if (river.flowRateValue == 0.0 && river.agency == "USGS"){
+                fetchFlowData(for: self.river.siteNumber)
+                }
             }
         }
     }

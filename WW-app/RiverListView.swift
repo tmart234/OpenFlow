@@ -62,6 +62,11 @@ struct RiverListView: View {
                                   Spacer()
                               }
                           }
+                          .simultaneousGesture(TapGesture().onEnded {
+                                if river.agency == "DWR" {
+                                    riverDataModel.fetchDWRFlow(for: river)
+                                }
+                            })
                           .swipeActions {
                               Button(action: {
                                   if let index = riverDataModel.rivers.firstIndex(where: { $0.id == river.id }) {

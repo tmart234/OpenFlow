@@ -15,9 +15,8 @@ struct RiverData: Codable, Identifiable {
     let stationName: String
     let timeSeriesID: String
     let parameterCode: String
-    let resultDate: String
+    var resultDate: String
     let resultTimezone: String
-    let resultValue: String
     let resultCode: String
     let resultModifiedDate: String
     let snotelStationID: String
@@ -26,12 +25,11 @@ struct RiverData: Codable, Identifiable {
     var isFavorite: Bool = false
     var latitude: Double?
     var longitude: Double?
-    var flowRate: Int
-    var value: Double?
+    var flowRateValue: Double?
     var measDate: Date?
     
     // CustomStringConvertible conformance
     var description: String {
-        return "Site Number: \(siteNumber), Station Name: \(stationName), Flow Rate: \(flowRate)"
+        return "Site Number: \(siteNumber), Station Name: \(stationName), Flow Rate: \(flowRateValue)"
     }
 }

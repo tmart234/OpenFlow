@@ -20,6 +20,22 @@ struct DWRResponse: Codable {
     }
 }
 
+struct DWRFlowResponse: Codable {
+    let stationNum: Int?
+    let abbrev: String?
+    let usgsSiteId: String?
+    let measType: String?
+    let measDate: String?
+    let value: Double?
+    let flagA: String?
+    let flagB: String?
+    let flagC: String?
+    let flagD: String?
+    let dataSource: String?
+    let modified: String?
+    let measUnit: String?
+}
+
 class RiverDataModel: ObservableObject {
     @Published var rivers: [RiverData] = []
     @Published var riverCoordinates: [String: Coordinates] = [:]
@@ -54,52 +70,50 @@ class RiverDataModel: ObservableObject {
             print("Invalid URL")
             return
         }
-
+        
         URLSession.shared.dataTask(with: url) { data, response, error in
             if let error = error {
                 print("Error fetching DWR rivers: \(error)")
                 return
             }
-
+            
             if let data = data {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
-
+                
                 do {
                     if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
                        let resultList = json["ResultList"] as? [[String: Any]] {
                         var updatedData: [RiverData] = []
                         
                         for riverDict in resultList {
-                            let siteNumber = riverDict["stationNum"] as? String ?? ""
+                            let siteNumber = riverDict["usgsSiteId"] as? String ?? ""
                             let stationName = riverDict["stationName"] as? String ?? ""
                             let latitude = riverDict["latitude"] as? Double
                             let longitude = riverDict["longitude"] as? Double
-                            let value = riverDict["value"] as? Double
                             let measDate = riverDict["measDate"] as? String
-                            
-                            let riverData = RiverData(
-                                agency: "DWR",
-                                siteNumber: siteNumber,
-                                stationName: stationName,
-                                timeSeriesID: "",
-                                parameterCode: "",
-                                resultDate: "",
-                                resultTimezone: "",
-                                resultValue: "",
-                                resultCode: "",
-                                resultModifiedDate: "",
-                                snotelStationID: "",
-                                reservoirSiteIDs: [],
-                                lastFetchedDate: Date(),
-                                latitude: latitude,
-                                longitude: longitude,
-                                flowRate: 0,
-                                value: value,
-                                measDate: measDate.flatMap { ISO8601DateFormatter().date(from: $0) }
-                            )
-                            
-                            updatedData.append(riverData)
+                            let source = riverDict["dataSource"] as? String ?? ""
+                            if (source.lowercased().contains("dwr")) {
+                                let riverData = RiverData(
+                                    agency: "DWR",
+                                    siteNumber: siteNumber,
+                                    stationName: stationName,
+                                    timeSeriesID: "",
+                                    parameterCode: "",
+                                    resultDate: "",
+                                    resultTimezone: "",
+                                    resultCode: "",
+                                    resultModifiedDate: "",
+                                    snotelStationID: "",
+                                    reservoirSiteIDs: [],
+                                    lastFetchedDate: Date(),
+                                    latitude: latitude,
+                                    longitude: longitude,
+                                    flowRateValue: 0.0
+                                )
+                                
+                                updatedData.append(riverData)
+                            }
                         }
                         
                         DispatchQueue.main.async {
@@ -118,30 +132,54 @@ class RiverDataModel: ObservableObject {
     }
     
     func fetchDWRFlow(for river: RiverData) {
-        guard let url = URL(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewatertsday?abbrev=\(river.siteNumber)") else {
+        guard let encodedSiteNumber = river.siteNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewatertsday?usgsSiteId=\(encodedSiteNumber)&format=json") else {
             print("Invalid URL")
             return
         }
+        print(url)
         
         URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error {
+                print("Error: \(error.localizedDescription)")
+                return
+            }
+            
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                if let data = data, let errorString = String(data: data, encoding: .utf8) {
+                    print("API Error: \(errorString)")
+                } else {
+                    print("Unknown API Error")
+                }
+                return
+            }
+            
             if let data = data {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                
                 do {
-                    let decodedData = try JSONDecoder().decode([RiverData].self, from: data)
-                    if let flowData = decodedData.first {
-                        DispatchQueue.main.async {
-                            if let index = self.rivers.firstIndex(where: { $0.id == river.id }) {
-                                self.rivers[index].value = flowData.value
-                                self.rivers[index].measDate = flowData.measDate
+                    if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                       let resultList = json["ResultList"] as? [[String: Any]],
+                       let latestFlowData = resultList.last {
+                        if let value = latestFlowData["value"] as? Double,
+                           let measDate = latestFlowData["measDate"] as? String {
+                            DispatchQueue.main.async {
+                                if let index = self.rivers.firstIndex(where: { $0.id == river.id }) {
+                                    self.rivers[index].flowRateValue = value
+                                    self.rivers[index].resultDate = measDate
+                                }
                             }
                         }
+                    } else {
+                        print("Invalid DWR API response format")
                     }
                 } catch {
-                    print("Error decoding JSON: \(error)")
+                    print("Error decoding DWR JSON: \(error)")
                 }
             }
         }.resume()
     }
-    
     func fetchMLStationIDs(completion: @escaping ([String]) -> Void) {
         guard let url = URL(string: "https://raw.githubusercontent.com/tmart234/OpenFlowColorado/main/.github/site_ids.txt") else { return }
         
@@ -221,8 +259,8 @@ class RiverDataModel: ObservableObject {
                     let stationName = values[2]
                     let flowReading = values[7]
                     let dateOfReading = values[5]
-                    let flowRate = Int(flowReading) ?? 0
-                    
+                    let flowRate = Double(flowReading) ?? 0.0
+
                     let river = RiverData(
                         agency: "USGS",
                         siteNumber: siteNumber,
@@ -231,7 +269,6 @@ class RiverDataModel: ObservableObject {
                         parameterCode: "",
                         resultDate: dateOfReading,
                         resultTimezone: "",
-                        resultValue: flowReading,
                         resultCode: "",
                         resultModifiedDate: "",
                         snotelStationID: "",
@@ -239,7 +276,7 @@ class RiverDataModel: ObservableObject {
                         lastFetchedDate: Date(),
                         latitude: nil,
                         longitude: nil,
-                        flowRate: flowRate
+                        flowRateValue: flowRate
                     )
                     parsedRivers.append(river)
                 }
