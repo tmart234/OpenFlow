@@ -131,10 +131,11 @@ class RiverDataModel: ObservableObject {
         }.resume()
     }
     
-    func fetchDWRFlow(for river: RiverData) {
+    func fetchDWRFlow(for river: RiverData, completion: @escaping () -> Void) {
         guard let encodedSiteNumber = river.siteNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewatertsday?usgsSiteId=\(encodedSiteNumber)&format=json") else {
             print("Invalid URL")
+            completion()
             return
         }
         print(url)
@@ -178,6 +179,7 @@ class RiverDataModel: ObservableObject {
                     print("Error decoding DWR JSON: \(error)")
                 }
             }
+            completion()
         }.resume()
     }
     func fetchMLStationIDs(completion: @escaping ([String]) -> Void) {

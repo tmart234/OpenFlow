@@ -31,7 +31,8 @@ struct RiverDetailView: View {
     @State private var latitude: Double? = nil
     @State private var longitude: Double? = nil
     @State private var mlModel: MLModel?
-
+    @State private var isLoadingFlowData = false
+    
     func fetchSnowpackData() {
         print("Calling fetchSnowpackData() for station ID: \(river.snotelStationID)")
         APIManager.shared.getSnowpackDataFromCSV(stationID: river.snotelStationID) { result in
@@ -93,9 +94,21 @@ struct RiverDetailView: View {
             } else {
                 Text("Fetching SWE data...")
             }
-            Text("Flow: \(river.flowRateValue ?? 0, specifier: "%.2f") cfs")
-                .font(.title2)
-                .padding(.top)
+            if river.agency == "DWR" {
+                if isLoadingFlowData {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .padding(.top)
+                } else {
+                    Text("Flow: \(river.flowRateValue ?? 0, specifier: "%.2f") cfs")
+                        .font(.title2)
+                        .padding(.top)
+                }
+            } else {
+                Text("Flow: \(river.flowRateValue ?? 0, specifier: "%.2f") cfs")
+                    .font(.title2)
+                    .padding(.top)
+            }
 
             Text("Daily High Temperature: \(highTemperature)")
                 .font(.title2)
@@ -108,21 +121,6 @@ struct RiverDetailView: View {
             Spacer()
                 .frame(height: 20)
 
-            if reservoirData.isEmpty {
-                ProgressView()
-            } else {
-                VStack {
-                    Text("Reservoir Data:")
-                    ForEach(reservoirData) { info in
-                        VStack(alignment: .leading) {
-                            Text(info.reservoirName)
-                                .font(.headline)
-                            
-                            Text("Percentage filled: \(info.percentageFilled, specifier: "%.1f")%")
-                        }
-                    }
-                }
-            }
 
             if let errorMessage = errorMessage {
                 Text(errorMessage)
@@ -147,18 +145,27 @@ struct RiverDetailView: View {
                 }
             }
             ReservoirManager.shared.fetchReservoirData(siteIDs: river.reservoirSiteIDs) { result in
-                 switch result {
-                 case .success(let reservoirData):
-                     self.reservoirData = reservoirData
-                 case .failure(let error):
-                     print("Error fetching reservoir data:", error)
-                 }
-             }
+                switch result {
+                case .success(let reservoirData):
+                    self.reservoirData = reservoirData
+                case .failure(let error):
+                    print("Error fetching reservoir data:", error)
+                }
+            }
             
             //fetchSnowpackData()
             fetchWeatherData()
-            if (river.flowRateValue == 0.0 && river.agency == "USGS"){
+            if river.flowRateValue == 0.0 && river.agency == "USGS" {
                 fetchFlowData(for: self.river.siteNumber)
+            }
+            
+            if river.agency == "DWR" {
+                isLoadingFlowData = true
+                riverDataModel.fetchDWRFlow(for: river) {
+                    DispatchQueue.main.async {
+                        isLoadingFlowData = false
+                        }
+                    }
                 }
             }
         }
