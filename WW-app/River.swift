@@ -188,7 +188,10 @@ class RiverDataModel: ObservableObject {
                         CoordinatesFetcher.fetchUSGSCoordinates { result in
                             switch result {
                             case .success(let coordinates):
-                                self.updateCoordinates(coordinates)
+                                DispatchQueue.main.async {
+                                    self.updateCoordinates(coordinates)
+                                    self.isUSGSFetchComplete = true
+                                }
                             case .failure(let error):
                                 print("Error fetching coordinates: \(error)")
                             }

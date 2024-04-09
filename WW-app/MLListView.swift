@@ -45,7 +45,6 @@ struct MLListView: View {
                 }
                 .navigationBarTitle("ML Rivers")
                 .onAppear {
-                    riverDataModel.fetchDWRRivers()
                     riverDataModel.fetchMLStationIDs { fetchedIDs in
                         self.stationIDs = fetchedIDs
                     }

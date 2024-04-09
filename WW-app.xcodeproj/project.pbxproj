@@ -7,11 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		32AEC02E2B907E67187F092D /* awsconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 72EEBD568338F5CA2198E378 /* awsconfiguration.json */; };
-		47112FE52C84FB4D9C2DB320 /* amplifyconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 35AA14D37B0875146C0E1791 /* amplifyconfiguration.json */; };
-		990722BC29D8BAEA00C18065 /* Backend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 990722BB29D8BAEA00C18065 /* Backend.swift */; };
-		9907231329D9316000C18065 /* amplifyconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 9907231129D9316000C18065 /* amplifyconfiguration.json */; };
-		9907231429D9316000C18065 /* awsconfiguration.json in Resources */ = {isa = PBXBuildFile; fileRef = 9907231229D9316000C18065 /* awsconfiguration.json */; };
 		9907233729D936F400C18065 /* AWSAPIPlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233629D936F400C18065 /* AWSAPIPlugin */; };
 		9907233929D936F400C18065 /* AWSCognitoAuthPlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233829D936F400C18065 /* AWSCognitoAuthPlugin */; };
 		9907233B29D936F400C18065 /* AWSDataStorePlugin in Frameworks */ = {isa = PBXBuildFile; productRef = 9907233A29D936F400C18065 /* AWSDataStorePlugin */; };
@@ -48,11 +43,6 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		35AA14D37B0875146C0E1791 /* amplifyconfiguration.json */ = {isa = PBXFileReference; explicitFileType = text.json; path = amplifyconfiguration.json; sourceTree = "<group>"; };
-		72EEBD568338F5CA2198E378 /* awsconfiguration.json */ = {isa = PBXFileReference; explicitFileType = text.json; path = awsconfiguration.json; sourceTree = "<group>"; };
-		990722BB29D8BAEA00C18065 /* Backend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backend.swift; sourceTree = "<group>"; };
-		9907231129D9316000C18065 /* amplifyconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = amplifyconfiguration.json; sourceTree = SOURCE_ROOT; };
-		9907231229D9316000C18065 /* awsconfiguration.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = awsconfiguration.json; sourceTree = SOURCE_ROOT; };
 		997623B72AEF21960004185E /* AuthButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthButtons.swift; sourceTree = "<group>"; };
 		997623BB2AEF63900004185E /* FavoriteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoriteView.swift; sourceTree = "<group>"; };
 		99B07C6E2B0B170000AF2687 /* MLListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLListView.swift; sourceTree = "<group>"; };
@@ -101,21 +91,11 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		46BB18E53DC1E951AEA7DCBA /* AmplifyConfig */ = {
-			isa = PBXGroup;
-			children = (
-				72EEBD568338F5CA2198E378 /* awsconfiguration.json */,
-				35AA14D37B0875146C0E1791 /* amplifyconfiguration.json */,
-			);
-			name = AmplifyConfig;
-			sourceTree = "<group>";
-		};
 		99CFC16129D52DDD0069F04E = {
 			isa = PBXGroup;
 			children = (
 				99CFC16C29D52DDD0069F04E /* WW-app */,
 				99CFC16B29D52DDD0069F04E /* Products */,
-				46BB18E53DC1E951AEA7DCBA /* AmplifyConfig */,
 			);
 			sourceTree = "<group>";
 		};
@@ -149,9 +129,6 @@
 				99D9686F2BA9014F00261E95 /* FlowGraphView.swift */,
 				99CFC19229D53DF80069F04E /* NRCSResponse.swift */,
 				99CFC19429D55FCF0069F04E /* WeatherResponse.swift */,
-				990722BB29D8BAEA00C18065 /* Backend.swift */,
-				9907231129D9316000C18065 /* amplifyconfiguration.json */,
-				9907231229D9316000C18065 /* awsconfiguration.json */,
 				997623B72AEF21960004185E /* AuthButtons.swift */,
 				997623BB2AEF63900004185E /* FavoriteView.swift */,
 				99B07C702B0B1FB600AF2687 /* Utils.swift */,
@@ -250,10 +227,6 @@
 			files = (
 				99CFC17B29D52DDD0069F04E /* Preview Assets.xcassets in Resources */,
 				99CFC17729D52DDD0069F04E /* Assets.xcassets in Resources */,
-				9907231429D9316000C18065 /* awsconfiguration.json in Resources */,
-				9907231329D9316000C18065 /* amplifyconfiguration.json in Resources */,
-				32AEC02E2B907E67187F092D /* awsconfiguration.json in Resources */,
-				47112FE52C84FB4D9C2DB320 /* amplifyconfiguration.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -281,7 +254,6 @@
 				99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */,
 				997623B82AEF21960004185E /* AuthButtons.swift in Sources */,
 				99D968742BA9116200261E95 /* CoordinatesFetcher.swift in Sources */,
-				990722BC29D8BAEA00C18065 /* Backend.swift in Sources */,
 				99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */,
 				99D968722BA908AA00261E95 /* ReservoirManager.swift in Sources */,
 			);

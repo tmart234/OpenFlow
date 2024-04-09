@@ -6,10 +6,6 @@
 //
 
 import SwiftUI
-import Amplify
-import AWSPluginsCore
-import AWSCognitoAuthPlugin
-import AWSAPIPlugin
 import Zip
 import CoreML
 
@@ -17,8 +13,7 @@ import CoreML
 struct WW_appApp: App {
     @StateObject private var sharedModelData = SharedModelData()
     @State private var isModelLoaded = false
-    // Initialize your model once here
-    let riverDataModel = RiverDataModel()
+    @StateObject private var riverDataModel = RiverDataModel()
     
     init() {
         // Configure Amplify here if needed
