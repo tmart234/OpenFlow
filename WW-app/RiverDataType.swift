@@ -13,6 +13,7 @@ struct RiverData: Codable, Identifiable {
     var agency: String
     let siteNumber: String
     let stationName: String
+    let stationNum: Int
     let timeSeriesID: String
     let parameterCode: String
     var resultDate: String

@@ -88,6 +88,7 @@ class RiverDataModel: ObservableObject {
                         
                         for riverDict in resultList {
                             let siteNumber = riverDict["usgsSiteId"] as? String ?? ""
+                            let stationNumber = riverDict["stationNum"] as? Int ?? 0
                             let stationName = riverDict["stationName"] as? String ?? ""
                             let latitude = riverDict["latitude"] as? Double
                             let longitude = riverDict["longitude"] as? Double
@@ -98,6 +99,7 @@ class RiverDataModel: ObservableObject {
                                     agency: "DWR",
                                     siteNumber: siteNumber,
                                     stationName: stationName,
+                                    stationNum: stationNumber,
                                     timeSeriesID: "",
                                     parameterCode: "",
                                     resultDate: "",
@@ -132,17 +134,32 @@ class RiverDataModel: ObservableObject {
     }
     
     func fetchDWRFlow(for river: RiverData, completion: @escaping () -> Void) {
-        guard let encodedSiteNumber = river.siteNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewatertsday?usgsSiteId=\(encodedSiteNumber)&format=json") else {
+        var urlComponents = URLComponents(string: "https://dwr.state.co.us/rest/get/api/v2/surfacewater/surfacewatertsday")
+        urlComponents?.queryItems = [
+            URLQueryItem(name: "format", value: "json")
+        ]
+        
+        let stationNum = river.stationNum
+        if !river.siteNumber.isEmpty {
+            urlComponents?.queryItems?.append(URLQueryItem(name: "usgsSiteId", value: river.siteNumber))
+        } else if stationNum > 0 {
+            urlComponents?.queryItems?.append(URLQueryItem(name: "stationNum", value: String(stationNum)))
+        } else {
+            print("Invalid site number or USGS site ID")
+            completion()
+            return
+        }
+        
+        guard let url = urlComponents?.url else {
             print("Invalid URL")
             completion()
             return
         }
-        print(url)
-        
+                
         URLSession.shared.dataTask(with: url) { data, response, error in
             if let error = error {
                 print("Error: \(error.localizedDescription)")
+                completion()
                 return
             }
             
@@ -152,6 +169,7 @@ class RiverDataModel: ObservableObject {
                 } else {
                     print("Unknown API Error")
                 }
+                completion()
                 return
             }
             
@@ -179,6 +197,7 @@ class RiverDataModel: ObservableObject {
                     print("Error decoding DWR JSON: \(error)")
                 }
             }
+            
             completion()
         }.resume()
     }
@@ -267,6 +286,7 @@ class RiverDataModel: ObservableObject {
                         agency: "USGS",
                         siteNumber: siteNumber,
                         stationName: stationName,
+                        stationNum: 0,
                         timeSeriesID: "",
                         parameterCode: "",
                         resultDate: dateOfReading,
