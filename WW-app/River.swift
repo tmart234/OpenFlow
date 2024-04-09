@@ -317,7 +317,13 @@ class RiverDataModel: ObservableObject {
     
     func loadFavoriteRivers() {
         if let savedFavorites = LocalStorage.getFavoriteRivers() {
-            self.rivers = savedFavorites
+            for index in rivers.indices {
+                if savedFavorites.contains(where: { $0.siteNumber == rivers[index].siteNumber }) {
+                    rivers[index].isFavorite = true
+                } else {
+                    rivers[index].isFavorite = false
+                }
+            }
         }
     }
     

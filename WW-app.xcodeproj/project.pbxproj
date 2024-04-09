@@ -20,6 +20,7 @@
 		99B07C742B0B254200AF2687 /* Zip in Frameworks */ = {isa = PBXBuildFile; productRef = 99B07C732B0B254200AF2687 /* Zip */; };
 		99C62BA929D79C3D00A37181 /* SwiftCSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BA829D79C3D00A37181 /* SwiftCSV */; };
 		99C62BAC29D7B21500A37181 /* CSV in Frameworks */ = {isa = PBXBuildFile; productRef = 99C62BAB29D7B21500A37181 /* CSV */; };
+		99CF9EB42BC5AF11008D16AE /* MapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CF9EB32BC5AF11008D16AE /* MapView.swift */; };
 		99CFC16E29D52DDD0069F04E /* WW_appApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16D29D52DDD0069F04E /* WW_appApp.swift */; };
 		99CFC17029D52DDD0069F04E /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC16F29D52DDD0069F04E /* Persistence.swift */; };
 		99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 99CFC17129D52DDD0069F04E /* WW_app.xcdatamodeld */; };
@@ -47,6 +48,7 @@
 		997623BB2AEF63900004185E /* FavoriteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoriteView.swift; sourceTree = "<group>"; };
 		99B07C6E2B0B170000AF2687 /* MLListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLListView.swift; sourceTree = "<group>"; };
 		99B07C702B0B1FB600AF2687 /* Utils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utils.swift; sourceTree = "<group>"; };
+		99CF9EB32BC5AF11008D16AE /* MapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapView.swift; sourceTree = "<group>"; };
 		99CFC16A29D52DDD0069F04E /* WW-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WW-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		99CFC16D29D52DDD0069F04E /* WW_appApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WW_appApp.swift; sourceTree = "<group>"; };
 		99CFC16F29D52DDD0069F04E /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
@@ -123,6 +125,7 @@
 				99CFC18129D52EE80069F04E /* River.swift */,
 				99D968772BB88D9400261E95 /* RiverDataType.swift */,
 				99CFC18729D531780069F04E /* RiverListView.swift */,
+				99CF9EB32BC5AF11008D16AE /* MapView.swift */,
 				99D41CFA2AFFEA6800F842CF /* ProfileView.swift */,
 				99CFC18929D531950069F04E /* RiverDetailView.swift */,
 				99CFC18D29D53A360069F04E /* APIManager.swift */,
@@ -254,6 +257,7 @@
 				99CFC18A29D531950069F04E /* RiverDetailView.swift in Sources */,
 				997623B82AEF21960004185E /* AuthButtons.swift in Sources */,
 				99D968742BA9116200261E95 /* CoordinatesFetcher.swift in Sources */,
+				99CF9EB42BC5AF11008D16AE /* MapView.swift in Sources */,
 				99CFC17329D52DDD0069F04E /* WW_app.xcdatamodeld in Sources */,
 				99D968722BA908AA00261E95 /* ReservoirManager.swift in Sources */,
 			);
