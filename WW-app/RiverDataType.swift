@@ -31,6 +31,6 @@ struct RiverData: Codable, Identifiable {
     
     // CustomStringConvertible conformance
     var description: String {
-        return "Site Number: \(siteNumber), Station Name: \(stationName), Flow Rate: \(flowRateValue)"
+        return "Site Number: \(siteNumber), Station Name: \(stationName), Flow Rate: \(String(describing: flowRateValue) )"
     }
 }

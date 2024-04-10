@@ -43,7 +43,7 @@ struct RiverListView: View {
                     List {
                         ForEach(filteredRivers) { river in
                             let splitName = Utility.splitStationName(river.stationName)
-                            NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false, coordinates: riverDataModel.riverCoordinates[river.siteNumber])) {
+                            NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {
                               HStack {
                                   VStack(alignment: .leading) {
                                       Text(splitName.0)

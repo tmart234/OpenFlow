@@ -92,7 +92,6 @@ class RiverDataModel: ObservableObject {
                             let stationName = riverDict["stationName"] as? String ?? ""
                             let latitude = riverDict["latitude"] as? Double
                             let longitude = riverDict["longitude"] as? Double
-                            let measDate = riverDict["measDate"] as? String
                             let source = riverDict["dataSource"] as? String ?? ""
                             if (source.lowercased().contains("dwr")) {
                                 let riverData = RiverData(

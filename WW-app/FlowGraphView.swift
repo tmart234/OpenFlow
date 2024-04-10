@@ -76,10 +76,7 @@ struct FlowGraphView: View {
         let stationID = river.siteNumber
         
         // Get 14 days of future temperature predictions (max and min)
-        guard let futureTempData = getFutureTemperatureData(forDays: 14, river: river) else {
-            print("Failed to get future temperature data")
-            return nil
-        }
+        var futureTempData = [1,2,3,4,5]
         
         // Get 60 days of historical flow data (max and min)
         //guard let historicalFlowData = getHistoricalFlowData(forDays: 60) else {
@@ -104,11 +101,6 @@ struct FlowGraphView: View {
         }
         
         // Set the values for future temperature data
-        for (rowIndex, tempData) in futureTempData.enumerated() {
-            for (colIndex, value) in tempData.enumerated() {
-                futureTempMultiArray[[rowIndex, colIndex] as [NSNumber]] = NSNumber(value: value)
-            }
-        }
 
         // Set the values for historical flow data
         for (rowIndex, flowData) in historicalFlowData.enumerated() {
@@ -129,27 +121,7 @@ struct FlowGraphView: View {
         return try? MLDictionaryFeatureProvider(dictionary: inputFeatures)
     }
       
-    private func getFutureTemperatureData(forDays days: Int, river: RiverData) -> [[Double]]? {
-        var futureTempData: [[Double]]?
-        let semaphore = DispatchSemaphore(value: 0)
-        
-        let coordinatesFetcher = CoordinatesFetcher()
-        coordinatesFetcher.fetchUSGSCoordinate(for: river.siteNumber) { result in
-            switch result {
-            case .success(let coordinates):
-                let lat = coordinates.latitude
-                let lon = coordinates.longitude
-                
-                // ... (the rest of the function remains the same)
-            case .failure(let error):
-                print("Error fetching coordinates: \(error)")
-                semaphore.signal()
-            }
-        }
-        
-        _ = semaphore.wait(timeout: .distantFuture)
-        return futureTempData
-    }
+
       
       private func getHistoricalFlowData(forDays days: Int) -> [[Double]]? {
           // Implement the logic to fetch historical flow data (max and min) for the specified number of days

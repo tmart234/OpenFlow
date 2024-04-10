@@ -125,7 +125,6 @@
 				99CFC18129D52EE80069F04E /* River.swift */,
 				99D968772BB88D9400261E95 /* RiverDataType.swift */,
 				99CFC18729D531780069F04E /* RiverListView.swift */,
-				99CF9EB32BC5AF11008D16AE /* MapView.swift */,
 				99D41CFA2AFFEA6800F842CF /* ProfileView.swift */,
 				99CFC18929D531950069F04E /* RiverDetailView.swift */,
 				99CFC18D29D53A360069F04E /* APIManager.swift */,
@@ -133,6 +132,7 @@
 				99CFC19229D53DF80069F04E /* NRCSResponse.swift */,
 				99CFC19429D55FCF0069F04E /* WeatherResponse.swift */,
 				997623B72AEF21960004185E /* AuthButtons.swift */,
+				99CF9EB32BC5AF11008D16AE /* MapView.swift */,
 				997623BB2AEF63900004185E /* FavoriteView.swift */,
 				99B07C702B0B1FB600AF2687 /* Utils.swift */,
 			);

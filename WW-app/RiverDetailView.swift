@@ -13,10 +13,12 @@ import Zip
 
 
 struct RiverDetailView: View {
-    @EnvironmentObject var riverDataModel: RiverDataModel
     let river: RiverData
     let isMLRiver: Bool
-    let coordinates: Coordinates?
+    @EnvironmentObject var riverDataModel: RiverDataModel
+    var coordinates: Coordinates? {
+        riverDataModel.riverCoordinates[river.siteNumber]
+    }
     @EnvironmentObject var sharedModelData: SharedModelData
     @State private var reservoirData: [ReservoirInfo] = []
     @State private var selectedDate = Date()

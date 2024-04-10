@@ -25,7 +25,7 @@ struct MLListView: View {
                     
                     List(filteredRivers.indices, id: \.self) { index in
                         let splitName = Utility.splitStationName(filteredRivers[index].stationName)
-                        NavigationLink(destination: RiverDetailView(river: filteredRivers[index], isMLRiver: true, coordinates: riverDataModel.riverCoordinates[filteredRivers[index].siteNumber])
+                        NavigationLink(destination: RiverDetailView(river: filteredRivers[index], isMLRiver: true)
                             .environmentObject(sharedModelData)) {
                                 HStack {
                                     VStack(alignment: .leading) {
