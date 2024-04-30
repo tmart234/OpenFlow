@@ -74,7 +74,7 @@ struct MapView: View {
                     return hasCoordinates
                 }) { river in
                     MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: river.latitude!, longitude: river.longitude!)) {
-                        RiverAnnotationView(river: river, coordinates: riverDataModel.riverCoordinates[river.siteNumber])
+                        RiverAnnotationView(river: river)
                     }
                 }
                 .edgesIgnoringSafeArea(.all)
@@ -110,7 +110,6 @@ struct MapView: View {
 
 struct RiverAnnotationView: View {
     let river: RiverData
-    let coordinates: Coordinates?
     
     var body: some View {
         NavigationLink(destination: RiverDetailView(river: river, isMLRiver: false)) {

@@ -38,7 +38,6 @@ struct DWRFlowResponse: Codable {
 
 class RiverDataModel: ObservableObject {
     @Published var rivers: [RiverData] = []
-    @Published var riverCoordinates: [String: Coordinates] = [:]
     var favoriteRivers: [RiverData] = []
     private var isUSGSFetchComplete = false
     private var isDWRFetchComplete = false
@@ -216,23 +215,6 @@ class RiverDataModel: ObservableObject {
         }.resume()
     }
     
-    func updateCoordinates(_ coordinates: [[String: String]]) {
-        DispatchQueue.main.async {
-            for coordinateDict in coordinates {
-                if let siteNumber = coordinateDict["number"],
-                   let latitude = Double(coordinateDict["lat"] ?? ""),
-                   let longitude = Double(coordinateDict["long"] ?? "") {
-                    
-                    // Update coordinates for rivers
-                    if let index = self.rivers.firstIndex(where: { $0.siteNumber.hasSuffix(siteNumber) }) {
-                        self.rivers[index].latitude = latitude
-                        self.rivers[index].longitude = longitude
-                    }
-                }
-            }
-        }
-    }
-    
     func fetchAndParseData() {
         guard !isUSGSFetchComplete else {
             return
@@ -247,7 +229,7 @@ class RiverDataModel: ObservableObject {
                             switch result {
                             case .success(let coordinates):
                                 DispatchQueue.main.async {
-                                    self.updateCoordinates(coordinates)
+                                    CoordinatesFetcher.updateRiverCoordinates(&self.rivers, with: coordinates)
                                     self.isUSGSFetchComplete = true
                                 }
                             case .failure(let error):
@@ -326,9 +308,11 @@ class RiverDataModel: ObservableObject {
         }
     }
     
-    func toggleFavorite(at index: Int) {
-        rivers[index].isFavorite.toggle()
-        updateFavoriteRivers()
+    func toggleFavorite(for river: RiverData) {
+        if let index = rivers.firstIndex(where: { $0.id == river.id }) {
+            rivers[index].isFavorite.toggle()
+            updateFavoriteRivers()
+        }
     }
 }
     

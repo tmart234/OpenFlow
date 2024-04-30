@@ -1,14 +1,12 @@
 import Foundation
 
 struct Coordinates {
-    let siteNo: String
-    let stationName: String
     let latitude: Double
     let longitude: Double
 }
 
 struct CoordinatesFetcher {
-    static func fetchUSGSCoordinates(completion: @escaping (Result<[[String: String]], Error>) -> Void) {
+    static func fetchUSGSCoordinates(completion: @escaping (Result<[String: Coordinates], Error>) -> Void) {
         let urlString = "https://waterdata.usgs.gov/nwis/inventory?state_cd=co&group_key=NONE&format=sitefile_output&sitefile_output_format=rdb&column_name=agency_cd&column_name=site_no&column_name=station_nm&column_name=site_tp_cd&column_name=dec_lat_va&column_name=dec_long_va&list_of_search_criteria=state_cd"
         
         guard let url = URL(string: urlString) else {
@@ -32,7 +30,7 @@ struct CoordinatesFetcher {
             
             let dataLines = lines.filter { !$0.hasPrefix("#") }
             
-            var coordinates: [[String: String]] = []
+            var coordinates: [String: Coordinates] = [:]
             
             for line in dataLines {
                 let fields = line.components(separatedBy: "\t")
@@ -42,11 +40,9 @@ struct CoordinatesFetcher {
                 }
                 
                 let siteNo = fields[1]
-                let latitude = fields[4]
-                let longitude = fields[5]
-                
-                let coordinateDict = ["number": siteNo, "lat": latitude, "long": longitude]
-                coordinates.append(coordinateDict)
+                if let latitude = Double(fields[4]), let longitude = Double(fields[5]) {
+                    coordinates[siteNo] = Coordinates(latitude: latitude, longitude: longitude)
+                }
             }
             
             completion(.success(coordinates))
@@ -90,7 +86,7 @@ struct CoordinatesFetcher {
                 let longitude = Double(fields[4])
                 
                 if siteNo == siteID, let lat = latitude, let lon = longitude {
-                    let coordinates = Coordinates(siteNo: siteNo, stationName: stationName, latitude: lat, longitude: lon)
+                    let coordinates = Coordinates(latitude: lat, longitude: lon)
                     completion(.success(coordinates))
                     return
                 }
@@ -100,5 +96,14 @@ struct CoordinatesFetcher {
         }
         
         task.resume()
+    }
+    static func updateRiverCoordinates(_ rivers: inout [RiverData], with coordinates: [String: Coordinates]) {
+        for index in rivers.indices {
+            let river = rivers[index]
+            if let coordinate = coordinates[river.siteNumber] {
+                rivers[index].latitude = coordinate.latitude
+                rivers[index].longitude = coordinate.longitude
+            }
+        }
     }
 }

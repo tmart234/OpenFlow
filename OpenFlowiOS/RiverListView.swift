@@ -61,17 +61,14 @@ struct RiverListView: View {
                                   Spacer()
                               }
                           }
-                          .swipeActions {
-                              Button(action: {
-                                  if let index = riverDataModel.rivers.firstIndex(where: { $0.id == river.id }) {
-                                      riverDataModel.toggleFavorite(at: index)
-                                  }
-                              }) {
-                                  Label(river.isFavorite ? "Unfavorite" : "Favorite", systemImage: river.isFavorite ? "star.slash.fill" : "star.fill")
-                              }
-                              .tint(river.isFavorite ? .gray : .yellow)
-                          }
-                        }
+                        .swipeActions {
+                            Button(action: {
+                                riverDataModel.toggleFavorite(for: river)
+                            }) {
+                                Label(river.isFavorite ? "Unfavorite" : "Favorite", systemImage: river.isFavorite ? "star.slash.fill" : "star.fill")
+                            }
+                            .tint(river.isFavorite ? .gray : .yellow)
+                        }                        }
                     }
                 }
             }

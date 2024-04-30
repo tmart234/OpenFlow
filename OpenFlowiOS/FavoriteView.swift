@@ -39,9 +39,7 @@ struct FavoriteView: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(action: {
-                            if let index = riverDataModel.rivers.firstIndex(where: { $0.id == river.id }) {
-                                riverDataModel.toggleFavorite(at: index)
-                            }
+                            riverDataModel.toggleFavorite(for: river)
                         }) {
                             Label("Unfavorite", systemImage: "star.slash.fill")
                         }

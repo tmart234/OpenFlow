@@ -16,9 +16,8 @@ struct RiverDetailView: View {
     let river: RiverData
     let isMLRiver: Bool
     @EnvironmentObject var riverDataModel: RiverDataModel
-    var coordinates: Coordinates? {
-        riverDataModel.riverCoordinates[river.siteNumber]
-    }
+    var riverCoordinates: [String: Coordinates] = [:]
+
     @EnvironmentObject var sharedModelData: SharedModelData
     @State private var reservoirData: [ReservoirInfo] = []
     @State private var selectedDate = Date()
@@ -50,6 +49,7 @@ struct RiverDetailView: View {
             }
         }
     }
+    
     func fetchWeatherData() {
         guard let lat = river.latitude, let lon = river.longitude else {
             print("Coordinates are not available.")
