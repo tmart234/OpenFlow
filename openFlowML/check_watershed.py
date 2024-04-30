@@ -120,11 +120,14 @@ if __name__ == "__main__":
     gps_coordinate = (-105.0499163, 39.7516321)
     wbdhu2_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu2_a_us_september2023.gdb.zip'
     wbdhu4_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu4_a_us_september2023.gdb.zip'
+    wbdhu6_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu6_a_us_september2023.gdb.zip'
+
 
     # Get watershed information for the GPS coordinate
     # hu12_result = get_hu12_watershed(gps_coordinate)
     hu2_result = get_hu_watershed(wbdhu2_path, gps_coordinate, layer='WBDHU2', loc='huc2')
     hu4_result = get_hu_watershed(wbdhu4_path, gps_coordinate, layer='WBDHU4', loc='huc4')
+    hu6_result = get_hu_watershed(wbdhu6_path, gps_coordinate, layer='WBDHU6', loc='huc6')
     hu12_result = None
     
     if hu12_result is None:
@@ -144,3 +147,9 @@ if __name__ == "__main__":
         print(f"HU4 found: {watershed_name} (HUC 4 Code: {huc4_code})")
     else:
         print("Error: Unable to find HU4 watershed information or there was an issue with the download or file extraction.")
+
+    if hu6_result:
+        watershed_name, huc6_code = hu6_result
+        print(f"HU6 found: {watershed_name} (HUC 6 Code: {huc6_code})")
+    else:
+        print("Error: Unable to find HU6 watershed information or there was an issue with the download or file extraction.")
