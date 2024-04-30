@@ -1,6 +1,8 @@
 import os
 from datetime import datetime, timedelta
 import get_flow
+import get_CODWR_flow
+import check_watershed
 import get_noaa
 import normalize_data
 import pandas as pd
@@ -13,6 +15,13 @@ import numpy as np
 Takes multiuple individual data components and combindes into a dataset
 
 scaling/Performance concerns: noaa script, pd.concat
+
+TODO:
+1) check if USGS or DWR and fetch either
+    - edit stations.txt
+2) check Basin/sub-basin and add its SWE data
+3) fix one-hot encoding columns. Add error checking for checking one-hot station columns vs station IDs
+
  """
 
 # This function will merge NOAA and flow data.

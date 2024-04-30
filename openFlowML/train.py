@@ -6,7 +6,14 @@ import combine_data
 import numpy as np
 import pandas as pd
 import logging
-#import tf2onnx
+"""
+TODO:
+1) go from keras to Darts framework
+2) remove station ID one-hot encoding and add embedding layers to transform each station ID into a dense vector
+    - dense vectors can be input into further layers to process the temporal and other contextual features like SWE and temperature
+3) Zero-shot Learning for generalization of station IDs
+
+"""
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
