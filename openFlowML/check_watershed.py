@@ -79,36 +79,33 @@ def get_hu12_watershed(gps_coordinate):
     else:
         return None  # Error in downloading or unzipping the shapefile
     
-def get_hu2_watershed(url, coords):
+def get_hu_watershed(url, coords, layer, loc):
     # Send a GET request to the server
     response = requests.get(url)
-    
-    # Check response status and content type
-    print("HTTP Status Code:", response.status_code)
-    print("HTTP Headers:", response.headers)
 
-    if response.headers.get('Content-Type', '').lower() == 'application/zip':
+    if 'application/zip' in response.headers.get('Content-Type', ''):
         try:
-            with ZipFile(BytesIO(response.content)) as the_zip:
-                print("Files in the zip:", the_zip.namelist())
-                
-                # Assuming there is a specific .gdb file to look for
-                file_name = [name for name in the_zip.namelist() if name.endswith('.gdb') and 'WBDHU2' in name]
-                if not file_name:
-                    print("No suitable .gdb file found in the zip.")
-                    return None
-
-                # Extract to a temporary directory using extractall method
+            with ZipFile(BytesIO(response.content)) as the_zip:                
+                # Extract to a temporary directory
                 with tempfile.TemporaryDirectory() as temp_dir:
                     the_zip.extractall(temp_dir)
-                    gdb_path = os.path.join(temp_dir, file_name[0])
-                    gdf = gpd.read_file(gdb_path, layer='WBDHU2')
+                    print("Extracted files to:", temp_dir)
+
+                    # Assuming the geodatabase directory's name contains 'wbdhu2_a_us_september2023.gdb'
+                    gdb_dir = [d for d in os.listdir(temp_dir) if d.endswith('.gdb')]
+                    if not gdb_dir:
+                        print("No geodatabase directory found in the zip.")
+                        return None
+
+                    gdb_path = os.path.join(temp_dir, gdb_dir[0])
+                    print("GDB Path:", gdb_path)
                     
+                    gdf = gpd.read_file(gdb_path, layer=layer)
                     point = Point(coords)
                     contained_watersheds = gdf[gdf.geometry.contains(point)]
                     
                     if not contained_watersheds.empty:
-                        return contained_watersheds.iloc[0]['name'], contained_watersheds.iloc[0]['huc2']
+                        return contained_watersheds.iloc[0]['name'], contained_watersheds.iloc[0][loc]
                     else:
                         return None
 
@@ -120,12 +117,14 @@ def get_hu2_watershed(url, coords):
 
 if __name__ == "__main__":
     # Example GPS coordinate for the SWE station (39.181624, -106.282648)
-    gps_coordinate = (-106.282648, 39.181624)
-    wbdhu2_path = 'https://nrcs.app.box.com/v/huc/file/1300081266989'
+    gps_coordinate = (-105.0499163, 39.7516321)
+    wbdhu2_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu2_a_us_september2023.gdb.zip'
+    wbdhu4_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu4_a_us_september2023.gdb.zip'
 
     # Get watershed information for the GPS coordinate
     # hu12_result = get_hu12_watershed(gps_coordinate)
-    hu2_result = get_hu2_watershed(wbdhu2_path, gps_coordinate)
+    hu2_result = get_hu_watershed(wbdhu2_path, gps_coordinate, layer='WBDHU2', loc='huc2')
+    hu4_result = get_hu_watershed(wbdhu4_path, gps_coordinate, layer='WBDHU4', loc='huc4')
     hu12_result = None
     
     if hu12_result is None:
@@ -133,6 +132,15 @@ if __name__ == "__main__":
     else:
         part1, part2 = hu12_result
         print(f"HU12 found: {part2} near {part1}")
-              
-    print(hu2_result)
-    
+
+    if hu2_result:
+        watershed_name, huc2_code = hu2_result
+        print(f"HU2 found: {watershed_name} (HUC 2 Code: {huc2_code})")
+    else:
+        print("Error: Unable to find HU2 watershed information or there was an issue with the download or file extraction.")
+
+    if hu4_result:
+        watershed_name, huc4_code = hu4_result
+        print(f"HU4 found: {watershed_name} (HUC 4 Code: {huc4_code})")
+    else:
+        print("Error: Unable to find HU4 watershed information or there was an issue with the download or file extraction.")
