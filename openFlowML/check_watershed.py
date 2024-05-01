@@ -125,31 +125,15 @@ if __name__ == "__main__":
 
     # Get watershed information for the GPS coordinate
     # hu12_result = get_hu12_watershed(gps_coordinate)
-    hu2_result = get_hu_watershed(wbdhu2_path, gps_coordinate, layer='WBDHU2', loc='huc2')
-    hu4_result = get_hu_watershed(wbdhu4_path, gps_coordinate, layer='WBDHU4', loc='huc4')
+    # hu2_result = get_hu_watershed(wbdhu2_path, gps_coordinate, layer='WBDHU2', loc='huc2')
+    # hu4_result = get_hu_watershed(wbdhu4_path, gps_coordinate, layer='WBDHU4', loc='huc4')
     hu6_result = get_hu_watershed(wbdhu6_path, gps_coordinate, layer='WBDHU6', loc='huc6')
     hu12_result = None
     
-    if hu12_result is None:
-        print("Error: Unable to find HU12 watershed information.")
-    else:
-        part1, part2 = hu12_result
-        print(f"HU12 found: {part2} near {part1}")
-
-    if hu2_result:
-        watershed_name, huc2_code = hu2_result
-        print(f"HU2 found: {watershed_name} (HUC 2 Code: {huc2_code})")
-    else:
-        print("Error: Unable to find HU2 watershed information or there was an issue with the download or file extraction.")
-
-    if hu4_result:
-        watershed_name, huc4_code = hu4_result
-        print(f"HU4 found: {watershed_name} (HUC 4 Code: {huc4_code})")
-    else:
-        print("Error: Unable to find HU4 watershed information or there was an issue with the download or file extraction.")
-
-    if hu6_result:
-        watershed_name, huc6_code = hu6_result
-        print(f"HU6 found: {watershed_name} (HUC 6 Code: {huc6_code})")
-    else:
-        print("Error: Unable to find HU6 watershed information or there was an issue with the download or file extraction.")
+    # print all restults here
+    for level, result in [('HU6', hu6_result),('HU12', hu12_result)]:
+        if result:
+            name, code = result
+            print(f"{level} found: {name} (Code: {code})")
+        else:
+            print(f"Error: Unable to find {level} watershed information or there was an issue with the download or file extraction.")

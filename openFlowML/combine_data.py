@@ -17,10 +17,8 @@ Takes multiuple individual data components and combindes into a dataset
 scaling/Performance concerns: noaa script, pd.concat
 
 TODO:
-1) check if USGS or DWR and fetch either
-    - edit stations.txt
-2) check Basin/sub-basin and add its SWE data
-3) fix one-hot encoding columns. Add error checking for checking one-hot station columns vs station IDs
+1) check Basin/sub-basin and add its SWE data
+2) fix one-hot encoding columns. Add error checking for checking one-hot station columns vs station IDs
 
  """
 
@@ -176,43 +174,34 @@ def get_site_ids(filename=None):
     with open(filename, 'r') as f:
         return [line.strip() for line in f]
 
+
 def main(training_num_years = 7):
-    # Configure logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     all_data = {}
-    
-    # Extract and encode site ids
     site_ids = get_site_ids()
-    
     base_path = get_base_path()
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=training_num_years*365)
 
-    # Get dates for the last n years
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=training_num_years*365)).strftime('%Y-%m-%d')
-
-    # Iterate over each site ID
     for site_id in site_ids:
         try:
-            coords_dict = get_coordinates(site_id)
-            latitude = coords_dict['latitude']
-            longitude = coords_dict['longitude']
+            prefix, id = site_id.split(':')
+            if prefix == "DWR":
+                flow_data = get_CODWR_flow.main(id, start_date, end_date)
+            elif prefix == "USGS":
+                flow_data = get_CODWR_flow.main(id, start_date, end_date)
+            else:
+                logging.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
+                continue
 
-            # Call NOAA and get_flow
-            closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
-            flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
-
-            # Skip if no data is available
-            if noaa_data.empty or flow_data.empty:
+            if flow_data.empty:
                 logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue
 
-            # Merge NOAA and flow data
-            combined_data = merge_dataframes(noaa_data, flow_data, site_id)
-            all_data[site_id] = combined_data
+            # Assuming you have a method to merge and handle data after fetching
+            all_data[site_id] = flow_data
         except Exception as e:
             logging.error(f"An error occurred for site ID {site_id}: {e}")
 
-    # Save combined data if available
     if all_data:
         final_data = save_combined_data(all_data, base_path)
         return final_data
