@@ -18,7 +18,6 @@ scaling/Performance concerns: noaa script, pd.concat
 
 TODO:
 1) check Basin/sub-basin and add its SWE data
-2) fix one-hot encoding columns. Add error checking for checking one-hot station columns vs station IDs
 
  """
 
