@@ -1,12 +1,11 @@
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Embedding, Input, Concatenate, LSTM, Dropout, Dense
 from darts.models import BlockRNNModel, AutoARIMA
 from sklearn.model_selection import train_test_split
 import combine_data
 import numpy as np
 import pandas as pd
 import logging
+from darts import TimeSeries
+from darts.dataprocessing.transformers import Scaler
 
 """
 TODO:
@@ -37,8 +36,8 @@ def train_autoarima(train_series):
 def train_lstm(input_shape):
     model = BlockRNNModel(
         model='LSTM',
-        input_chunk_length=input_shape[0],
-        output_chunk_length=input_shape[1],
+        input_chunk_length=input_shape[0],  # Define appropriate chunk length
+        output_chunk_length=input_shape[1],  # Define appropriate output length
         n_rnn_layers=2,
         hidden_dim=50,
         dropout=0.2,
@@ -48,42 +47,51 @@ def train_lstm(input_shape):
     )
     return model
 
-def preprocess_data(data, target_columns, past_covariate_columns):
+def prepare_data(data):
     scaler = Scaler()
-    series_target = TimeSeries.from_dataframe(data[target_columns])
-    series_past_covariates = TimeSeries.from_dataframe(data[past_covariate_columns])
-    series_target = scaler.fit_transform(series_target)
-    series_past_covariates = scaler.transform(series_past_covariates)
-    return series_target, series_past_covariates
+    series = TimeSeries.from_dataframe(data)
+    series = scaler.fit_transform(series)
+    return series, scaler
 
 def main():
-    data = pd.read_csv("your_data.csv")  # Example: load your data here
-    # Split data into features and targets
-    features = ["Min Flow", "Max Flow", "TMIN", "TMAX", "station_id"]
-    target = ["Min Flow", "Max Flow"]
-    data_features, data_target = data[features], data[target]
-    
-    X_train, X_test, y_train, y_test = train_test_split(data_features, data_target, test_size=0.2, random_state=42)
-    
-    # Prepare the data for Darts models
-    train_series_target, train_series_covariates = preprocess_data(X_train, target, features)
-    test_series_target, test_series_covariates = preprocess_data(X_test, target, features)
-    
-    # Train models
-    arima_model = train_autoarima(train_series_target)
-    lstm_input_shape = (len(train_series_covariates), len(target))  # Hypothetical shape
-    lstm_model = train_lstm(lstm_input_shape)
-    
-    # Fit LSTM model (note: we fit directly on TimeSeries objects)
-    lstm_model.fit(series=train_series_target, past_covariates=train_series_covariates, verbose=True)
-    
-    # Predictions
-    arima_pred = arima_model.predict(len(test_series_target))
-    lstm_pred = lstm_model.predict(n=len(test_series_target), series=train_series_target, past_covariates=test_series_covariates)
-    
-    # Evaluate models (just a print for now, adjust with actual evaluation metrics)
-    print("ARIMA predictions:", arima_pred.values())
-    print("LSTM predictions:", lstm_pred.values())
+    data = combine_data.main(training_num_years=5)  # Assuming combine_data.main() returns a DataFrame
+
+    if data is None or data.empty:
+        raise ValueError("Error: Data is not available or not in expected format.")
+
+    # Assuming 'flow' and 'temperature' are columns in your data
+    target_columns = ['flow']
+    covariate_columns = ['temperature', 'SWE']  # Example covariate columns
+
+    series_target, scaler = prepare_data(data[target_columns])
+    series_covariates, _ = prepare_data(data[covariate_columns])
+
+    train_target, val_target = series_target.split_before(0.8)
+    train_covariates, val_covariates = series_covariates.split_before(0.8)
+
+    # Train AutoARIMA
+    arima_model = train_autoarima(train_target)
+
+    # Train LSTM
+    input_shape = (60, 1)  # Example input shape, adjust based on actual data
+    lstm_model = train_lstm(input_shape)
+    lstm_model.fit(train_target, past_covariates=train_covariates, verbose=True)
+
+    # Prediction
+    arima_forecast = arima_model.predict(len(val_target))
+    lstm_forecast = lstm_model.predict(n=len(val_target), series=train_target, past_covariates=val_covariates)
+
+    # Evaluate (example using MAPE, you might choose other metrics such as MSE or MAE)
+    from darts.metrics import mape
+    arima_mape = mape(val_target, arima_forecast)
+    lstm_mape = mape(val_target, lstm_forecast)
+
+    print(f"ARIMA MAPE: {arima_mape}")
+    print(f"LSTM MAPE: {lstm_mape}")
+
+    # Optionally: Save models
+    # arima_model.save_model('arima_model.pkl')
+    # lstm_model.save_model('lstm_model.pkl')
 
 if __name__ == '__main__':
     main()
