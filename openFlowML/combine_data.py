@@ -63,7 +63,7 @@ def merge_dataframes(noaa_data, flow_data, station_id):
         return pd.DataFrame()  # Return an empty DataFrame on error
  
 # This function will handle fetching and processing (non-flow) data for a single site ID
-def fetch_and_process_data(prefix, site_id, start_date, end_date):
+def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     coords_dict = get_coordinates(prefix, site_id)
     latitude = coords_dict['latitude']
     longitude = coords_dict['longitude']
@@ -78,9 +78,6 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date):
         # Clean NOAA data
         noaa_data['TMAX'] = pd.to_numeric(noaa_data['TMAX'], errors='coerce')
         noaa_data['TMIN'] = pd.to_numeric(noaa_data['TMIN'], errors='coerce')
-
-    # Fetch flow data
-    flow_data = get_flow.get_daily_flow_data(site_id, start_date, end_date)
 
     # Diagnostic logging to check 'Date' column in NOAA data
     if 'Date' in noaa_data.columns:
@@ -106,8 +103,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date):
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 df[col].fillna(df[col].mean(), inplace=True)  # Fill missing values with mean
 
-    return noaa_data, flow_data
-
+    return noaa_data
 
 def get_site_ids(filename=None):
     if filename is None:
@@ -187,13 +183,12 @@ def main(training_num_years = 7):
             else:
                 logging.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
-            fetch_and_process_data(prefix,id, start_date, end_date)
+            noaa_dataframe = fetch_and_process_data(prefix,id, start_date, end_date, flow_dataframe)
             if flow_dataframe.empty:
                 logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue
 
-            # Assuming you have a method to merge and handle data after fetching
-            all_data[site_id] = flow_dataframe
+            all_data[site_id] = merge_dataframes(noaa_dataframe, flow_dataframe, site_id)
         except Exception as e:
             logging.error(f"An error occurred for site ID {site_id}: {e}")
 
