@@ -10,6 +10,7 @@ from get_coordinates import get_coordinates
 import logging
 import re
 import numpy as np
+import ml_utils
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -106,13 +107,7 @@ def fetch_and_process_data(site_id, start_date, end_date):
                 df[col].fillna(df[col].mean(), inplace=True)  # Fill missing values with mean
 
     return noaa_data, flow_data
- 
- # Additional function to display the beginning and ending of the dataframe
-def preview_data(df, num_rows=4):
-    logging.info("First few rows:")
-    logging.info(df.head(num_rows))
-    logging.info("\nLast few rows:")
-    logging.info(df.tail(num_rows))
+
 
 def get_site_ids(filename=None):
     if filename is None:
@@ -128,7 +123,7 @@ def save_combined_data(all_data, base_path):
         final_data = pd.concat([final_data, data])
 
     # Preview the combined data
-    preview_data(final_data)
+    ml_utils.preview_data(final_data)
 
     # Save the combined raw data to a CSV file
     combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
