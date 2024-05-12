@@ -18,7 +18,7 @@ scaling/Performance concerns: noaa script, pd.concat
 
 TODO:
 1) check Basin/sub-basin and add its SWE data
-
+2) remove station ID one-hot encoding
  """
 
 # This function will merge NOAA and flow data.
@@ -184,20 +184,21 @@ def main(training_num_years = 7):
     for site_id in site_ids:
         try:
             prefix, id = site_id.split(':')
+            logging.info(f"Consuming {prefix} and {id}")
             if prefix == "DWR":
-                flow_data = get_CODWR_flow.main(id, start_date, end_date)
+                flow_dataframe = get_CODWR_flow.main(id, start_date, end_date)
             elif prefix == "USGS":
-                flow_data = get_CODWR_flow.main(id, start_date, end_date)
+                flow_dataframe = get_flow.main(id, start_date, end_date)
             else:
                 logging.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
 
-            if flow_data.empty:
+            if flow_dataframe.empty:
                 logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue
 
             # Assuming you have a method to merge and handle data after fetching
-            all_data[site_id] = flow_data
+            all_data[site_id] = flow_dataframe
         except Exception as e:
             logging.error(f"An error occurred for site ID {site_id}: {e}")
 

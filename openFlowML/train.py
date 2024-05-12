@@ -1,15 +1,16 @@
-from darts.models import BlockRNNModel, AutoARIMA
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, Input, Concatenate, LSTM, Dropout, Dense
 from sklearn.model_selection import train_test_split
 import combine_data
 import numpy as np
 import pandas as pd
 import logging
-from darts import TimeSeries
-from darts.dataprocessing.transformers import Scaler
+#import tf2onnx
 
 """
 TODO:
-1) remove station ID one-hot encoding and add embedding layers to transform each station ID into a dense vector
+1) add embedding layers to transform each station ID into a dense vector
     - dense vectors can be input into further layers to process the temporal and other contextual features like SWE and temperature
 2) Zero-shot Learning for generalization of station IDs
 """
@@ -27,71 +28,82 @@ def save_as_h5(model, output_filename="lstm_model.h5"):
 # output a flattened prediction of shape [?, forecast_horizon * 2]
 # then immediately reshaped it to the desired [?, forecast_horizon, 2].
 # Reshape the data to be suitable for LSTM training
+def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
+    X, Y = [], []
+    required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]
 
-def train_autoarima(train_series):
-    model = AutoARIMA(seasonal=True, suppress_warnings=True)
-    model.fit(train_series)
+    # Ensure required columns are present
+    if not all(col in data.columns for col in required_columns):
+        raise ValueError(f"Data missing required columns. Available columns: {data.columns}")
+
+    # Debugging: Print the DataFrame columns before one-hot encoding
+    logging.info("DataFrame columns before one-hot encoding: %s", data.columns)
+
+    # Assuming station columns are already one-hot encoded
+    station_columns = [col for col in data.columns if col.startswith('station_')]
+    feature_columns = required_columns + station_columns + ['date_normalized']
+
+    total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
+
+    # Loop through the data to create input and output sets
+    for i in range(len(data) - total_required_days - forecast_flow_timesteps + 1):
+        input_features = data.iloc[i:i+total_required_days][feature_columns].values
+        X.append(input_features)
+
+        future_flow = data.iloc[i+total_required_days:i+total_required_days+forecast_flow_timesteps][["Min Flow", "Max Flow"]].values
+        # Reshape future_flow to match the output shape of the model
+        future_flow = future_flow.reshape(-1, forecast_flow_timesteps, 2)
+        Y.append(future_flow[0])  # Assuming future_flow is not empty
+
+    return np.array(X), np.array(Y)
+
+# Build LSTM model
+def build_lstm_model(input_shape, forecast_horizon=14):
+    # Define the model
+    model = Sequential()
+
+    # Add LSTM layers
+    model.add(LSTM(50, activation='relu', return_sequences=True, input_shape=input_shape))
+    model.add(Dropout(0.2))
+    model.add(LSTM(50, activation='relu'))
+    model.add(Dropout(0.2))
+
+    # Add Dense output layer
+    model.add(Dense(forecast_horizon * 2, activation="linear"))
+    model.add(tf.keras.layers.Reshape((forecast_horizon, 2)))
+
+    # Compile the model
+    model.compile(optimizer='adam', loss='mse')
+    
     return model
 
-def train_lstm(input_shape):
-    model = BlockRNNModel(
-        model='LSTM',
-        input_chunk_length=input_shape[0],  # Define appropriate chunk length
-        output_chunk_length=input_shape[1],  # Define appropriate output length
-        n_rnn_layers=2,
-        hidden_dim=50,
-        dropout=0.2,
-        n_epochs=10,
-        optimizer_kwargs={'lr': 1e-3},
-        random_state=42
-    )
-    return model
-
-def prepare_data(data):
-    scaler = Scaler()
-    series = TimeSeries.from_dataframe(data)
-    series = scaler.fit_transform(series)
-    return series, scaler
-
+# Main function to execute the training process
 def main():
-    data = combine_data.main(training_num_years=5)  # Assuming combine_data.main() returns a DataFrame
-
+    data = combine_data.main()
     if data is None or data.empty:
         raise ValueError("Error: Data is not available or not in expected format.")
 
-    # Assuming 'flow' and 'temperature' are columns in your data
-    target_columns = ['flow']
-    covariate_columns = ['temperature', 'SWE']  # Example covariate columns
+    # Extract one-hot encoded station columns
+    station_columns = [col for col in data.columns if col.startswith('station_')]
 
-    series_target, scaler = prepare_data(data[target_columns])
-    series_covariates, _ = prepare_data(data[covariate_columns])
+    # Ensure that site_id_data is no longer needed
+    X, Y = reshape_data_for_lstm(data)
 
-    train_target, val_target = series_target.split_before(0.8)
-    train_covariates, val_covariates = series_covariates.split_before(0.8)
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2)
+    X_train = X_train.astype('float32')
+    X_test = X_test.astype('float32')
+    y_train = y_train.astype('float32')
+    y_test = y_test.astype('float32')
 
-    # Train AutoARIMA
-    arima_model = train_autoarima(train_target)
+    # Adjust the input_shape to match the LSTM input requirements
+    # The number of site IDs is determined by the count of one-hot encoded station columns
+    model = build_lstm_model(input_shape=(X_train.shape[1], X_train.shape[2]))
 
-    # Train LSTM
-    input_shape = (60, 1)  # Example input shape, adjust based on actual data
-    lstm_model = train_lstm(input_shape)
-    lstm_model.fit(train_target, past_covariates=train_covariates, verbose=True)
+    # Modify the fit call (note that site_id is no longer used)
+    model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test))
 
-    # Prediction
-    arima_forecast = arima_model.predict(len(val_target))
-    lstm_forecast = lstm_model.predict(n=len(val_target), series=train_target, past_covariates=val_covariates)
-
-    # Evaluate (example using MAPE, you might choose other metrics such as MSE or MAE)
-    from darts.metrics import mape
-    arima_mape = mape(val_target, arima_forecast)
-    lstm_mape = mape(val_target, lstm_forecast)
-
-    print(f"ARIMA MAPE: {arima_mape}")
-    print(f"LSTM MAPE: {lstm_mape}")
-
-    # Optionally: Save models
-    # arima_model.save_model('arima_model.pkl')
-    # lstm_model.save_model('lstm_model.pkl')
+    save_as_h5(model)
 
 if __name__ == '__main__':
     main()

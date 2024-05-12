@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_daily_flow_data(flow_site_id, start_date, end_date):
+    start_date = start_date.strftime('%Y-%m-%d')
+    end_date = end_date.strftime('%Y-%m-%d')
     url = f"https://nwis.waterservices.usgs.gov/nwis/iv/?sites={flow_site_id}&parameterCd=00060&startDT={start_date}&endDT={end_date}&siteStatus=all&format=rdb"
     logging.info(f"Fetching flow data from: {url}")
     response = requests.get(url)
@@ -53,6 +55,7 @@ def main(flow_site_id='09114500', start_date=None, end_date=None):
 
     df = get_daily_flow_data(flow_site_id, start_date, end_date)
     logging.info(df)
+    return df
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch daily flow data for a given USGS site.')
