@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
+import ml_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -61,7 +62,7 @@ def main(abbrev, start_date=None, end_date=None):
         end_date = datetime.now()
     
     df = get_historical_data(abbrev, start_date, end_date)
-    logging.info(df)
+    ml_utils.preview_data(df)
     return df
 
 if __name__ == "__main__":

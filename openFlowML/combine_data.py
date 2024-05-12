@@ -6,7 +6,7 @@ import check_watershed
 import get_noaa
 import normalize_data
 import pandas as pd
-from get_coordinates import get_coordinates
+import get_coordinates
 import logging
 import re
 import numpy as np
@@ -62,16 +62,16 @@ def merge_dataframes(noaa_data, flow_data, station_id):
         logging.error(f"Error merging dataframes for station ID {station_id}: {e}")
         return pd.DataFrame()  # Return an empty DataFrame on error
  
-# This function will handle fetching and processing data for a single site ID.
-def fetch_and_process_data(site_id, start_date, end_date):
-    coords_dict = get_coordinates(site_id)
+# This function will handle fetching and processing (non-flow) data for a single site ID
+def fetch_and_process_data(prefix, site_id, start_date, end_date):
+    coords_dict = get_coordinates(prefix, site_id)
     latitude = coords_dict['latitude']
     longitude = coords_dict['longitude']
 
     # Fetch NOAA data
     closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
 
-    # Add the USGS site ID to the NOAA data
+    # Add the site ID to the NOAA data
     if not noaa_data.empty:
         noaa_data['USGS_site_ID'] = site_id  # Add the site ID as a new column
 
@@ -179,7 +179,7 @@ def main(training_num_years = 7):
     for site_id in site_ids:
         try:
             prefix, id = site_id.split(':')
-            logging.info(f"Consuming {prefix} and {id}")
+            logging.info(f"Consuming {prefix}:{id}")
             if prefix == "DWR":
                 flow_dataframe = get_CODWR_flow.main(id, start_date, end_date)
             elif prefix == "USGS":
@@ -187,7 +187,7 @@ def main(training_num_years = 7):
             else:
                 logging.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
-
+            fetch_and_process_data(prefix,id, start_date, end_date)
             if flow_dataframe.empty:
                 logging.warning(f"No data available for site ID {site_id}. Skipping...")
                 continue

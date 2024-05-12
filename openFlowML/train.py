@@ -21,13 +21,6 @@ def save_as_h5(model, output_filename="lstm_model.h5"):
     # Save the Keras model to HDF5 format
     model.save(output_filename)
 
-# make mix/max flow prediction for next 14 days, 
-# take in a window of 14 day future temps, 
-# and take in window of 60 days of past flow data
-# with station id
-# output a flattened prediction of shape [?, forecast_horizon * 2]
-# then immediately reshaped it to the desired [?, forecast_horizon, 2].
-# Reshape the data to be suitable for LSTM training
 def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperature_timesteps=14, forecast_flow_timesteps=14):
     X, Y = [], []
     required_columns = ["Min Flow", "Max Flow", "TMIN", "TMAX"]

@@ -1,7 +1,7 @@
 import requests
 import argparse
 
-def get_coordinates(site_number):
+def get_usgs_coordinates(site_number):
     base_url = "https://waterdata.usgs.gov/nwis/inventory"
     params = {
         'search_site_no': site_number,
@@ -24,16 +24,45 @@ def get_coordinates(site_number):
     site_no, station_nm, dec_lat_va, dec_long_va = fields[0], fields[1], fields[2], fields[3]
     
     return {
-        'site_no': site_no,
-        'station_nm': station_nm,
         'latitude': dec_lat_va,
         'longitude': dec_long_va
     }
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
-    parser.add_argument('site_number', type=str, help='USGS site number')
-    args = parser.parse_args()
+def get_dwr_coordinates(abbrev):
+    base_url = "https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations"
+    params = {
+        "format": "json",
+        "dateFormat": "dateOnly",
+        "fields": "abbrev,longitude,latitude",
+        "encoding": "deflate",
+        "abbrev": abbrev,
+    }
+
+    response = requests.get(base_url, params=params)
+    lines = response.text.splitlines()
     
-    result = get_coordinates(args.site_number)
+    # Filter out comment lines and retrieve relevant data
+    data_lines = [line for line in lines if not line.startswith('#')]
+    data = data_lines[2]  # Since we're skipping the first two lines after comments
+    
+    fields = data.split('\t')
+    station_nm, dec_lat_va, dec_long_va = fields[0], fields[1], fields[2]
+    
+    return {
+        'latitude': dec_lat_va,
+        'longitude': dec_long_va
+    }
+
+def main():
+    parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
+    parser.add_argument('site_type', type=str, help='site type number')
+    parser.add_argument('site_number', type=str, help='site number')
+    args = parser.parse_args()
+    if args.site_type.lowercase == 'usgs':
+        result = get_usgs_coordinates(args.site_type, args.site_number)
+    elif args.site_type.lowercase == 'dwr':
+        result = get_dwr_coordinates(args.site_type, args.site_number)
     print(result)
+
+if __name__ == '__main__':
+    main()
