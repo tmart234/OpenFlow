@@ -19,6 +19,7 @@ def latlon_to_web_mercator(lat, lon):
     x, y = transformer.transform(lon, lat)
     return x, y
 
+# HUC6 or 8 from ArcGIS
 def query_watershed(gps_coordinate, loc):
     try:
         lon, lat = gps_coordinate

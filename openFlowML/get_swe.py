@@ -1,7 +1,16 @@
 import requests
+import argparse
+from swe_dicts import basins, subbasins
 
-# example data as defaults
-def fetch_snow_data(start_date="2020-01-01", end_date="2021-01-01", station_id="360", state="MT"):
+""" 
+Given a basin or sub-basin (HU6 or HU8) and a date, look up historic SWE
+"""
+
+def fetch_basin_swe():
+    return
+
+# fetch SWE from a station
+def fetch_swe_station(start_date="2020-01-01", end_date="2021-01-01", station_id="360", state="MT"):
     url_template = "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customMultiTimeSeriesGroupByStationReport/daily/start_of_period/{station_id}:{state}:SNTL%7Cid=%22%22%7Cname/{start_date},{end_date}/WTEQ::value"
     url = url_template.format(
         start_date=start_date,
@@ -37,7 +46,14 @@ def fetch_snow_data(start_date="2020-01-01", end_date="2021-01-01", station_id="
 
     return data_dict
 
+def main(basin_name, start_date, end_date):
+    df = fetch_basin_swe(basin_name, start_date, end_date)
+    return df
+    
 if __name__ == "__main__":
-    # Example usage
-    result = fetch_snow_data()
-    print(result)
+    parser = argparse.ArgumentParser(description='Fetch daily flow data for a given USGS site.')
+    parser.add_argument('--basin_name', type=str, default='09114500', help='basin or sub-basin name')
+    parser.add_argument('--start_date', type=str, default=None, help='Start date in the format YYYY-MM-DD')
+    parser.add_argument('--end_date', type=str, default=None, help='End date in the format YYYY-MM-DD')
+    args = parser.parse_args()
+    main(args.basin_name, args.start_date, args.end_date)
