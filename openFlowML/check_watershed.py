@@ -7,13 +7,6 @@ import os
 import tempfile
 from pyproj import Transformer
 
-WATERSHED_URLS = {
-    "colorado_headwaters": "https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco_8/colorado_headwaters.json",
-    "yampa_white_little_snake": "https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco_8/yampa-white-little_snake.json",
-    "arkansas": "https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco_8/arkansas.json",
-    # Add more mappings as needed
-}
-
 def latlon_to_web_mercator(lat, lon):
     transformer = Transformer.from_crs("epsg:4326", "epsg:3857", always_xy=True)
     x, y = transformer.transform(lon, lat)
