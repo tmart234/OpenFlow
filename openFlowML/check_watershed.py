@@ -23,14 +23,16 @@ def query_watershed(gps_coordinate, loc):
     try:
         lon, lat = gps_coordinate
         x, y = latlon_to_web_mercator(lat, lon)
-        url = "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/3/query"
+        # Map loc to layer ID based on HUC level: e.g., '3' for HUC6, '4' for HUC8
+        layer_id = '3' if loc == 'huc6' else '4' if loc == 'huc8' else '3'
+        url = f"https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/{layer_id}/query"
         params = {
             'where': "1=1",
             'geometry': f"{x},{y}",
             'geometryType': 'esriGeometryPoint',
             'inSR': '102100',
             'spatialRel': 'esriSpatialRelIntersects',
-            'outFields': f"name,{loc.lower()}",  # Construct dynamic field names based on loc
+            'outFields': f"name,{loc}",  # Dynamic field names based on HUC level
             'returnGeometry': 'false',
             'f': 'json'
         }
@@ -40,12 +42,12 @@ def query_watershed(gps_coordinate, loc):
         data = response.json()
         if 'features' in data and len(data['features']) > 0:
             attributes = data['features'][0].get('attributes', {})
-            watershed_name = attributes.get('name')  # Use lowercase 'name'
-            watershed_code = attributes.get('huc6')  # Use lowercase 'huc6'
+            watershed_name = attributes.get('name')  # The name of the watershed
+            watershed_code = attributes.get(loc)  # Dynamic HUC code based on loc
             if watershed_name and watershed_code:
                 return watershed_name, watershed_code
             else:
-                print("Name or HUC6 not found in the attributes.")
+                print(f"Name or {loc.upper()} not found in the attributes.")
                 return None, None
         else:
             print("No features found at this location.")
@@ -109,16 +111,14 @@ if __name__ == "__main__":
     # Example GPS coordinate for the SWE station (39.181624, -106.282648)
     gps_coordinate = (-105.0499163, 39.7516321)
 
-    # Get watershed information for the GPS coordinate
-    # hu12_result = get_hu12_watershed(gps_coordinate)
-    # hu6_result = get_hu_watershed(wbdhu6_path, gps_coordinate, layer='WBDHU6', loc='huc6')
-    hu6_result = query_watershed(gps_coordinate, loc='huc6')
-    hu12_result = None
-    
-    # print all restults here
-    for level, result in [('HU6', hu6_result),('HU12', hu12_result)]:
+    # Get watershed information for the GPS coordinate at different HUC levels
+    hu6_result = query_watershed(gps_coordinate, 'huc6')
+    hu8_result = query_watershed(gps_coordinate, 'huc8')
+
+    # Print all results here
+    for level, result in [('HU6', hu6_result), ('HU8', hu8_result)]:
         if result:
             name, code = result
             print(f"{level} found: {name} (Code: {code})")
         else:
-            print(f"Error: Unable to find {level} watershed information or there was an issue with the download or file extraction.")
+            print(f"Error: Unable to find {level} watershed information.")
