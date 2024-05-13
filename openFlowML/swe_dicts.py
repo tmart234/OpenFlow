@@ -11,7 +11,7 @@ basins = {
 }
 
 # HU8 data
-subbains = {
+subbasins = {
     "animas":"https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco2_8/animas.json",
     "dolores":"https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco2_8/dolores.json",
     "san miguel":"https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco2_8/san_miguel.json",
@@ -57,5 +57,4 @@ subbains = {
     "headwaters rio grande":"https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco2_8/headwaters_rio_grande.json",
     "northern san luis valley":"https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco2_8/northern_san_luis_valley.json",
     "sagauche":"https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco2_8/sagauche.json",
-    "":"",
 }
