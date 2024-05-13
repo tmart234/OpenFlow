@@ -5,6 +5,7 @@ from zipfile import ZipFile, BadZipFile
 from io import BytesIO
 import os
 import tempfile
+from pyproj import Transformer
 
 WATERSHED_URLS = {
     "colorado_headwaters": "https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco_8/colorado_headwaters.json",
@@ -12,6 +13,47 @@ WATERSHED_URLS = {
     "arkansas": "https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUCco_8/arkansas.json",
     # Add more mappings as needed
 }
+
+def latlon_to_web_mercator(lat, lon):
+    transformer = Transformer.from_crs("epsg:4326", "epsg:3857", always_xy=True)
+    x, y = transformer.transform(lon, lat)
+    return x, y
+
+def query_watershed(gps_coordinate, loc):
+    try:
+        lon, lat = gps_coordinate
+        x, y = latlon_to_web_mercator(lat, lon)
+        url = "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/3/query"
+        params = {
+            'where': "1=1",
+            'geometry': f"{x},{y}",
+            'geometryType': 'esriGeometryPoint',
+            'inSR': '102100',
+            'spatialRel': 'esriSpatialRelIntersects',
+            'outFields': f"name,{loc.lower()}",  # Construct dynamic field names based on loc
+            'returnGeometry': 'false',
+            'f': 'json'
+        }
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+
+        data = response.json()
+        if 'features' in data and len(data['features']) > 0:
+            attributes = data['features'][0].get('attributes', {})
+            watershed_name = attributes.get('name')  # Use lowercase 'name'
+            watershed_code = attributes.get('huc6')  # Use lowercase 'huc6'
+            if watershed_name and watershed_code:
+                return watershed_name, watershed_code
+            else:
+                print("Name or HUC6 not found in the attributes.")
+                return None, None
+        else:
+            print("No features found at this location.")
+            return None, None
+
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+        return None, None
 
 def download_and_unzip(url, download_dir):
     response = requests.get(url)
@@ -118,16 +160,11 @@ def get_hu_watershed(url, coords, layer, loc):
 if __name__ == "__main__":
     # Example GPS coordinate for the SWE station (39.181624, -106.282648)
     gps_coordinate = (-105.0499163, 39.7516321)
-    wbdhu2_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu2_a_us_september2023.gdb.zip'
-    wbdhu4_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu4_a_us_september2023.gdb.zip'
-    wbdhu6_path = 'https://github.com/tmart234/OpenFlowColorado/raw/main/shapefile_data/wbdhu6_a_us_september2023.gdb.zip'
-
 
     # Get watershed information for the GPS coordinate
     # hu12_result = get_hu12_watershed(gps_coordinate)
-    # hu2_result = get_hu_watershed(wbdhu2_path, gps_coordinate, layer='WBDHU2', loc='huc2')
-    # hu4_result = get_hu_watershed(wbdhu4_path, gps_coordinate, layer='WBDHU4', loc='huc4')
-    hu6_result = get_hu_watershed(wbdhu6_path, gps_coordinate, layer='WBDHU6', loc='huc6')
+    # hu6_result = get_hu_watershed(wbdhu6_path, gps_coordinate, layer='WBDHU6', loc='huc6')
+    hu6_result = query_watershed(gps_coordinate, loc='huc6')
     hu12_result = None
     
     # print all restults here
