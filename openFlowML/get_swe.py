@@ -40,20 +40,23 @@ def get_swe_for_date(data, target_date, years_range):
     return year_values
 
 def get_swe_for_date_range(data, start_date, end_date):
-    start_date = datetime.strptime(start_date, "%Y-%m-%d").date() if isinstance(start_date, str) else start_date
-    end_date = datetime.strptime(end_date, "%Y-%m-%d").date() if isinstance(end_date, str) else end_date
+    # Ensure both start_date and end_date are datetime.date objects for comparison
+    if isinstance(start_date, datetime):
+        start_date = start_date.date()
+    if isinstance(end_date, datetime):
+        end_date = end_date.date()
+
     years_range = range(start_date.year, end_date.year + 1)
-    
     all_dates = []
     all_values = []
 
     for entry in data:
         entry_date_str = entry['date']
         for year in years_range:
+            if entry_date_str == "02-29" and not is_leap(year):
+                continue
+            date_str = f"{year}-{entry_date_str}"
             try:
-                if entry_date_str == "02-29" and not is_leap(year):
-                    continue
-                date_str = f"{year}-{entry_date_str}"
                 entry_date = datetime.strptime(date_str, "%Y-%m-%d").date()
                 if start_date <= entry_date <= end_date:
                     year_data = entry.get(str(year), None)
@@ -62,18 +65,11 @@ def get_swe_for_date_range(data, start_date, end_date):
                         all_values.append(year_data)
             except ValueError as e:
                 logging.error(f"Error processing date {date_str}: {e}")
-                continue
-    
-    # Create DataFrame
-    result_df = pd.DataFrame({
+
+    return pd.DataFrame({
         'Date': all_dates,
         'SWE Value': all_values
     })
-
-    # Sort DataFrame by date
-    result_df.sort_values('Date', inplace=True)
-    return result_df
-
 
 """
 def fetch_swe_station(start_date="2020-01-01", end_date="2021-01-01", station_id="360", state="MT"):
@@ -109,6 +105,8 @@ def fetch_swe_station(start_date="2020-01-01", end_date="2021-01-01", station_id
 """
 
 def main(basin_name, basin_type, start_date, end_date):
+    if end_date < start_date:
+        raise ValueError("End date must be after start date.")
     if basin_type.lower() == "basin":
         target_dict = basins
     elif basin_type.lower() == "subbasin":
@@ -137,7 +135,7 @@ def main(basin_name, basin_type, start_date, end_date):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch SWE data for a specified basin and date range.')
     parser.add_argument('--basin_name', type=str, required=True, help='Name of the basin or sub-basin')
-    parser.add_argument('--basin_type', type=str, required=True, choices=['basin', 'subbasin'], help='Type of basin: "basin" or "subbasin"')
+    parser.add_argument('--basin_type', type=str, required=True, choices=['basin', 'subbasin'], help='Type of basin: "basin (HUC6)" or "subbasin (HUC8)"')
     parser.add_argument('--start_date', type=str, required=True, help='Start date in the format YYYY-MM-DD')
     parser.add_argument('--end_date', type=str, required=True, help='End date in the format YYYY-MM-DD')
     args = parser.parse_args()
