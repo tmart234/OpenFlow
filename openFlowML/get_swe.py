@@ -108,35 +108,45 @@ def fetch_swe_station(start_date="2020-01-01", end_date="2021-01-01", station_id
     return data_dict
 """
 
-def main(basin_name, start_date, end_date):
+def main(basin_name, basin_type, start_date, end_date):
+    if basin_type.lower() == "basin":
+        target_dict = basins
+    elif basin_type.lower() == "subbasin":
+        target_dict = subbasins
+    else:
+        logging.error("Invalid basin type specified. Choose 'basin' or 'subbasin'.")
+        return pd.DataFrame()
+
     normalized_basin_name = normalize_name(basin_name)
-    if normalized_basin_name in basins:
-        url = basins[normalized_basin_name]
+    if normalized_basin_name in target_dict:
+        url = target_dict[normalized_basin_name]
         data = fetch_swe_data(url)
         if data:
             result_df = get_swe_for_date_range(data, start_date, end_date)
-            if not result_df.empty:  # Use .empty to check if the DataFrame has data
-                print(result_df)
+            if result_df is not None and not result_df.empty:
+                return result_df
             else:
-                print("No SWE data found within the specified date range.")
+                logging.error("No SWE data found within the specified date range.")
         else:
             logging.warn("Failed to fetch data.")
     else:
-        logging.error(f"No data URL found for basin: {normalized_basin_name}")
+        logging.error(f"No data URL found for the specified basin: {normalized_basin_name}")
+    
+    return pd.DataFrame()  # Ensure a DataFrame is always returned
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch SWE data for a specified basin and date range.')
-    parser.add_argument('--basin_name', type=str, default='South Platte', help='Name of the basin or sub-basin')
-    parser.add_argument('--start_date', type=str, default=(datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d'), help='Start date in the format YYYY-MM-DD')
-    parser.add_argument('--end_date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help='End date in the format YYYY-MM-DD')
+    parser.add_argument('--basin_name', type=str, required=True, help='Name of the basin or sub-basin')
+    parser.add_argument('--basin_type', type=str, required=True, choices=['basin', 'subbasin'], help='Type of basin: "basin" or "subbasin"')
+    parser.add_argument('--start_date', type=str, required=True, help='Start date in the format YYYY-MM-DD')
+    parser.add_argument('--end_date', type=str, required=True, help='End date in the format YYYY-MM-DD')
     args = parser.parse_args()
 
-    # Ensure dates are properly converted to datetime.date objects
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
     end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
 
-    result_df = main(args.basin_name, start_date, end_date)
-    if not result_df.empty:
+    result_df = main(args.basin_name, args.basin_type, start_date, end_date)
+    if result_df is not None and not result_df.empty:
         print(result_df)
     else:
         print("No SWE data found for the given parameters.")
