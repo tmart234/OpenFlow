@@ -31,6 +31,7 @@ def test_invalid_basin_type():
     result = get_swe.main(basin_name, basin_type, start_date, end_date)
     assert result.empty, "DataFrame should be empty for invalid basin types"
 
+# check basin vs sub basin
 # Using a tuple in parametrize to differentiate between basin types and their names
 @pytest.mark.parametrize("basin_type,basin_name", [
     ('basin', 'South Platte'),  # Known basin

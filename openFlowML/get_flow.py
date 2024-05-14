@@ -48,19 +48,14 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
     df = pd.DataFrame({'Date': dates, 'Min Discharge': min_flows, 'Max Discharge': max_flows})
     return df
 
-def main(flow_site_id='09114500', start_date=None, end_date=None):
-    if start_date is None:
-        start_date = (datetime.now() - timedelta(days=7*365 + 7)).strftime('%Y-%m-%d')
-    if end_date is None:
-        end_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-
+def main(flow_site_id, start_date, end_date):
     df = get_daily_flow_data(flow_site_id, start_date, end_date)
     ml_utils.preview_data(df)
     return df
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch daily flow data for a given USGS site.')
-    parser.add_argument('--flow_site_id', type=str, default='09114500', help='USGS flow site ID (default: 09114500)')
+    parser.add_argument('--flow_site_id', type=str, default=None, help='USGS flow site ID (ex: 09114500)')
     parser.add_argument('--start_date', type=str, default=None, help='Start date in the format YYYY-MM-DD')
     parser.add_argument('--end_date', type=str, default=None, help='End date in the format YYYY-MM-DD')
     args = parser.parse_args()
