@@ -1,3 +1,5 @@
+from .test_utils import set_root_pypath
+set_root_pypath()
 import pytest
 from datetime import datetime, timedelta
 from get_CODWR_flow import get_historical_data
