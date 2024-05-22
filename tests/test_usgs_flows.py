@@ -1,5 +1,5 @@
-from .test_utils import set_root_pypath
-set_root_pypath()
+from .test_utils import set_ml_pypath
+set_ml_pypath()
 from get_flow import get_daily_flow_data
 import pytest
 from datetime import datetime, timedelta
