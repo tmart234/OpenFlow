@@ -1,4 +1,5 @@
 import requests
+import json
 
 def get_huc8_polygon(lat, lon):
     url = "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/4/query"
@@ -18,6 +19,9 @@ def get_huc8_polygon(lat, lon):
     
     if response.status_code == 200:
         data = response.json()
+        with open('huc8_polygon.json', 'w') as f:
+            json.dump(data, f, indent=4)
+        print("JSON saved to huc8_polygon.json")
         features = data["features"]
         if features:
             feature = features[0]
