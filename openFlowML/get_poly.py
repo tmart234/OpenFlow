@@ -1,8 +1,6 @@
 import requests
 import argparse
 import logging
-from datetime import datetime
-import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,16 +44,19 @@ def get_huc8_polygon(lat, lon):
 def simplify_polygon(polygon, max_points=100):
     if len(polygon) <= max_points:
         return polygon
-    epsilon = 0.01
-    while len(polygon) > max_points:
-        polygon = simplify_polygon_rdp(polygon, epsilon)
-        epsilon *= 2
-    return polygon
+    simplified_polygon = []
+    for point in polygon:
+        if len(simplified_polygon) < 2 or not is_point_on_line(simplified_polygon[-2], simplified_polygon[-1], point):
+            simplified_polygon.append(point)        
+    return simplified_polygon
+
+def is_point_on_line(p1, p2, p):
+    x0, y0 = p
+    x1, y1 = p1
+    x2, y2 = p2
+    return (x2 - x1) * (y1 - y0) == (x1 - x0) * (y2 - y1)
 
 def simplify_polygon_rdp(polygon, epsilon):
-    """
-    Recursive implementation of the Ramer-Douglas-Peucker algorithm.
-    """
     if len(polygon) < 3:
         return polygon
     dmax = 0
@@ -66,7 +67,7 @@ def simplify_polygon_rdp(polygon, epsilon):
             index = i
             dmax = d
     if dmax > epsilon:
-        results = simplify_polygon_rdp(polygon[:index+1], epsilon)[:-1] + simplify_polygon_rdp(polygon[index:], epsilon)
+        results = simplify_polygon_rdp(polygon[:index+1], epsilon) + simplify_polygon_rdp(polygon[index:], epsilon)[1:]
     else:
         results = [polygon[0], polygon[-1]]
     return results
@@ -78,13 +79,16 @@ def perpendicular_distance(p1, p2, p):
     x0, y0 = p
     x1, y1 = p1
     x2, y2 = p2
-    return abs((x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1)) / ((x2 - x1)**2 + (y2 - y1)**2)**0.5
+    denominator = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
+    if denominator == 0:
+        return 0  # or some other default value
+    return abs((x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1)) / denominator
 
 def main(lat, lon):
     huc8_polygon = get_huc8_polygon(lat, lon)
     if huc8_polygon:
         simplified_polygon = simplify_polygon(huc8_polygon)
-        logging.debug(f"Simplified polygon: {simplified_polygon}")
+        logging.info(f"Simplified polygon: {simplified_polygon}")
         return simplified_polygon
     else:
         logging.error("No HUC8 polygon found")
@@ -94,4 +98,4 @@ if __name__ == "__main__":
     parser.add_argument('--lat', type=float, required=True, help='Latitude')
     parser.add_argument('--lon', type=float, required=True, help='Longitude')
     args = parser.parse_args()
-    main(args.lat, args.lon, args.date)
+    main(args.lat, args.lon)

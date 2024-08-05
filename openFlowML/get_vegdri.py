@@ -4,6 +4,7 @@ import pandas as pd
 import logging
 from datetime import datetime
 import json
+from get_poly import *
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -76,6 +77,7 @@ def get_vegdri_data(geometry, date):
     logging.info(f"Fetching VegDRI data from: {api_url} with params: {params}")
     try:
         response = requests.get(api_url, params=params)
+        print(response.url)
     except requests.exceptions.RequestException as e:
         logging.error(f"Error making request: {e}")
         return None
@@ -90,24 +92,36 @@ def get_vegdri_data(geometry, date):
         logging.error(f"Error: {response.status_code} - {response.text}")
         return None
 
-def main(geometry, date):
-    data = get_vegdri_data(geometry, date)
-    if data:
-        logging.info(f"Received VegDRI data: {data}")
-        try:
-            df = pd.json_normalize(data)
-            logging.info(f"Data converted to DataFrame: {df.head()}")
-            return df
-        except ValueError:
-            logging.error("Failed to convert data to DataFrame")
+def main(lat, lon, date):
+    huc8_polygon = get_huc8_polygon(lat, lon)
+    if huc8_polygon:
+        simplified_polygon = simplify_polygon(huc8_polygon)
+        logging.debug(f"Simplified polygon: {simplified_polygon}")
+        geometry = json.dumps({
+            "type": "Polygon",
+            "coordinates": [simplified_polygon]
+        })
+        data = get_vegdri_data(geometry, date)
+        if data:
+            logging.info(f"Received VegDRI data: {data}")
+            try:
+                df = pd.json_normalize(data)
+                logging.info(f"Data converted to DataFrame: {df.head()}")
+                return df
+            except ValueError:
+                logging.error("Failed to convert data to DataFrame")
+                return None
+        else:
+            logging.error("No data received")
             return None
     else:
-        logging.error("No data received")
+        logging.error("No HUC8 polygon found")
         return None
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Fetch VegDRI data for a given coordinate or polygon shape and time.')
-    parser.add_argument('--geometry', type=str, required=True, help='GeoJSON object or single coordinate (latitude,longitude)')
+    parser = argparse.ArgumentParser(description='Fetch HUC8 polygon and VegDRI data for a given latitude, longitude, and date.')
+    parser.add_argument('--lat', type=float, required=True, help='Latitude')
+    parser.add_argument('--lon', type=float, required=True, help='Longitude')
     parser.add_argument('--date', type=str, required=True, help='Date in the format YYYY-MM-DD')
     args = parser.parse_args()
-    main(args.geometry, args.date)
+    main(args.lat, args.lon, args.date)
