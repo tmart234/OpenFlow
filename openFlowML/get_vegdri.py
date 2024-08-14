@@ -2,16 +2,20 @@ import requests
 import argparse
 import pandas as pd
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
-from get_poly import *
+from shapely.geometry import Polygon, Point
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from get_poly import get_huc8_polygon, simplify_polygon
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_vegdri_data(geometry, date):
     """
-    Get VegDRI data for a given coordinate or polygon shape and time.
+    Get VegDRI data for a given geometry and date.
     """
     if not (geometry and date):
         logging.error("Missing required parameters")
@@ -20,63 +24,47 @@ def get_vegdri_data(geometry, date):
     try:
         geometry_json = json.loads(geometry)
     except ValueError:
-        # Assume geometry is a single coordinate
-        try:
-            latitude, longitude = map(float, geometry.split(','))
-            geometry_json = {
-                "type": "Point",
-                "coordinates": [longitude, latitude]
-            }
-        except ValueError:
-            logging.error("Invalid geometry. Must be a GeoJSON object or a single coordinate (latitude,longitude)")
-            return None
-
-    if 'type' not in geometry_json:
-        logging.error("Invalid GeoJSON object. Must have a 'type' property")
+        logging.error("Invalid geometry. Must be a GeoJSON object")
         return None
 
     if geometry_json['type'] not in ['Point', 'Polygon']:
         logging.error("Only Point and Polygon geometry types are supported")
         return None
 
+    # Convert geometry to shapely object
     if geometry_json['type'] == 'Point':
-        if 'coordinates' not in geometry_json:
-            logging.error("Invalid GeoJSON Point object. Must have a 'coordinates' property")
-            return None
-        if len(geometry_json['coordinates']) != 2:
-            logging.error("Invalid GeoJSON Point object. Coordinates must be in the format [longitude, latitude]")
-            return None
-        if not (-180 <= geometry_json['coordinates'][0] <= 180):
-            logging.error("Longitude must be between -180 and 180")
-            return None
-        if not (-90 <= geometry_json['coordinates'][1] <= 90):
-            logging.error("Latitude must be between -90 and 90")
-            return None
+        shape = Point(geometry_json['coordinates'])
+    else:  # Polygon
+        shape = Polygon(geometry_json['coordinates'][0])
 
-    if geometry_json['type'] == 'Polygon':
-        if 'coordinates' not in geometry_json:
-            logging.error("Invalid GeoJSON Polygon object. Must have a 'coordinates' property")
-            return None
-        if not isinstance(geometry_json['coordinates'], list):
-            logging.error("Invalid GeoJSON Polygon object. Coordinates must be a list of lists")
-            return None
+    # Get the bounding box
+    minx, miny, maxx, maxy = shape.bounds
 
-    try:
-        datetime.strptime(date, '%Y-%m-%d')
-    except ValueError:
-        logging.error("Invalid date format. Must be YYYY-MM-DD")
-        return None
-
-    api_url = "https://vegdri.cr.usgs.gov/api/v1/data"
+    # Set up the request parameters
+    base_url = "https://vegdri.cr.usgs.gov/arcgis/rest/services/VegDRI/VegDRI_Current/ImageServer/exportImage"
+    
     params = {
-        "geometry": json.dumps(geometry_json),
-        "date": date,
-        "format": "json"
+        "bbox": f"{minx},{miny},{maxx},{maxy}",
+        "bboxSR": 4326,
+        "size": "500,500",
+        "imageSR": 4326,
+        "time": date,
+        "format": "tiff",
+        "pixelType": "F32",
+        "noData": "",
+        "noDataInterpretation": "esriNoDataMatchAny",
+        "interpolation": "RSP_BilinearInterpolation",
+        "compression": "",
+        "compressionQuality": 100,
+        "bandIds": "",
+        "mosaicRule": "",
+        "renderingRule": "",
+        "f": "json"
     }
 
-    logging.info(f"Fetching VegDRI data from: {api_url} with params: {params}")
+    logging.info(f"Fetching VegDRI data from: {base_url} with params: {params}")
     try:
-        response = requests.get(api_url, params=params)
+        response = requests.get(base_url, params=params)
         print(response.url)
     except requests.exceptions.RequestException as e:
         logging.error(f"Error making request: {e}")
@@ -84,7 +72,37 @@ def get_vegdri_data(geometry, date):
 
     if response.status_code == 200:
         try:
-            return response.json()
+            data = response.json()
+            if 'href' in data:
+                # Download the TIFF file
+                tiff_response = requests.get(data['href'])
+                if tiff_response.status_code == 200:
+                    # Save the TIFF file
+                    with open('vegdri_data.tiff', 'wb') as f:
+                        f.write(tiff_response.content)
+                    logging.info("VegDRI data saved as 'vegdri_data.tiff'")
+                    
+                    # Read the TIFF file and extract data for the geometry
+                    with rasterio.open('vegdri_data.tiff') as src:
+                        out_image, out_transform = mask(src, [shape], crop=True)
+                        out_meta = src.meta.copy()
+                        out_meta.update({"driver": "GTiff",
+                                         "height": out_image.shape[1],
+                                         "width": out_image.shape[2],
+                                         "transform": out_transform})
+                    
+                    # Convert the masked data to a pandas DataFrame
+                    df = pd.DataFrame(out_image[0].flatten(), columns=['VegDRI'])
+                    df['latitude'], df['longitude'] = rasterio.transform.xy(out_transform, 
+                                                                            range(out_meta['height']),
+                                                                            range(out_meta['width']))
+                    return df
+                else:
+                    logging.error("Failed to download TIFF file")
+                    return None
+            else:
+                logging.error("No image URL in the response")
+                return None
         except requests.exceptions.JSONDecodeError:
             logging.error("Failed to parse JSON response")
             return None
@@ -102,15 +120,9 @@ def main(lat, lon, date):
             "coordinates": [simplified_polygon]
         })
         data = get_vegdri_data(geometry, date)
-        if data:
-            logging.info(f"Received VegDRI data: {data}")
-            try:
-                df = pd.json_normalize(data)
-                logging.info(f"Data converted to DataFrame: {df.head()}")
-                return df
-            except ValueError:
-                logging.error("Failed to convert data to DataFrame")
-                return None
+        if data is not None:
+            logging.info(f"Received VegDRI data: {data.head()}")
+            return data
         else:
             logging.error("No data received")
             return None

@@ -55,7 +55,7 @@ def get_dwr_coordinates(abbrev):
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
-    parser.add_argument('site_type', type=str, help='site type number')
+    parser.add_argument('site_type', type=str, help='site type (ex: usgs, dwr)')
     parser.add_argument('site_number', type=str, help='site number')
     args = parser.parse_args()
     if args.site_type.lowercase == 'usgs':
