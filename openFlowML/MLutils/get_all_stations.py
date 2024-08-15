@@ -1,5 +1,14 @@
 import json
 import requests
+import logging
+
+# Check if the root logger already has handlers (configured in another module)
+if not logging.getLogger().hasHandlers():
+    # If not, set up basic logging configuration
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
 
 def fetch_and_parse_station_data(url, data_source):
     # Fetch the JSON data from the URL
@@ -65,28 +74,37 @@ def fetch_and_parse_station_data(url, data_source):
             parsed_stations.append(parsed_station)
     
     else:
+        logger.error(f"Unsupported data source: {data_source}. Use 'DWR' or 'USGS'.")
         raise ValueError("Unsupported data source. Use 'DWR' or 'USGS'.")
     
+    logger.info(f"Parsed {len(parsed_stations)} stations from {data_source}")
     return parsed_stations
 
-# Usage
-dwr_url = "https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations/?format=json"
-usgs_url = "https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=CO&parameterCd=00060&siteStatus=active"
+def main():
+    dwr_url = "https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations/?format=json"
+    usgs_url = "https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=CO&parameterCd=00060&siteStatus=active"
 
-dwr_stations = fetch_and_parse_station_data(dwr_url, 'DWR')
-usgs_stations = fetch_and_parse_station_data(usgs_url, 'USGS')
+    logger.info("Fetching DWR station data...")
+    dwr_stations = fetch_and_parse_station_data(dwr_url, 'DWR')
+    logger.info("Fetching USGS station data...")
+    usgs_stations = fetch_and_parse_station_data(usgs_url, 'USGS')
 
-# Combine the lists
-all_stations = dwr_stations + usgs_stations
+    # Combine the lists
+    all_stations = dwr_stations + usgs_stations
 
-# Print examples and total count
-print("Example DWR station:")
-print(dwr_stations[0])
-print("\nExample USGS station:")
-print(usgs_stations[0])
-print(f"\nTotal number of stations: {len(all_stations)}")
+    # Log examples and total count
+    logger.info("Example DWR station:")
+    logger.info(json.dumps(dwr_stations[0], indent=2))
+    logger.info("Example USGS station:")
+    logger.info(json.dumps(usgs_stations[0], indent=2))
+    logger.info(f"Total number of stations: {len(all_stations)}")
 
-# You can now work with the all_stations list
-# For example, you can iterate through all stations:
-for station in all_stations:
-    print(f"Station: {station['name']}, ID: {station['id']}, Lat: {station['latitude']}, Long: {station['longitude']}, Source: {station['data_source']}")
+    # You can now work with the all_stations list
+    # For example, you can iterate through all stations:
+    for station in all_stations:
+        logger.debug(f"Station: {station['name']}, ID: {station['id']}, Lat: {station['latitude']}, Long: {station['longitude']}, Source: {station['data_source']}")
+
+    return all_stations
+
+if __name__ == "__main__":
+    main()
