@@ -63,12 +63,12 @@ def get_dwr_coordinates(abbrev):
 def main():
     parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
     parser.add_argument('site_type', type=str, help='site type (ex: usgs, dwr)')
-    parser.add_argument('site_number', type=str, help='site number')
+    parser.add_argument('site', type=str, help='site number or abbreviation')
     args = parser.parse_args()
     if args.site_type.lower() == 'usgs':
-        result = get_usgs_coordinates(args.site_number)
+        result = get_usgs_coordinates(args.site)
     elif args.site_type.lower() == 'dwr':
-        result = get_dwr_coordinates(args.site_number)
+        result = get_dwr_coordinates(args.site)
     else:
         print("Invalid source. Use 'usgs' or 'dwr'.")
         sys.exit(1)
