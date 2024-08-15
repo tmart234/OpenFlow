@@ -3,13 +3,13 @@ import argparse
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
-import utils.ml_utils as ml_utils
+import dataUtils.ml_utils as ml_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_historical_data(abbrev, start_date, end_date):
-    # need hourly data to get min and max
+    # need hourly data to get daily min and max
     base_url = "https://dwr.state.co.us/Rest/GET/api/v2/telemetrystations/telemetrytimeserieshour/"
     
     params = {

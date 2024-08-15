@@ -1,6 +1,9 @@
 import requests
 import argparse
 import sys
+'''
+TODO: remove? may not need this with get_all_stations.py
+'''
 
 def get_usgs_coordinates(site_number):
     base_url = "https://waterdata.usgs.gov/nwis/inventory"

@@ -5,11 +5,10 @@ import data.get_CODWR_flow as get_CODWR_flow
 import data.get_noaa as get_noaa
 import normalize_data
 import pandas as pd
-import data.utils.get_coordinates as get_coordinates
 import logging
 import re
 import numpy as np
-import data.utils.ml_utils as ml_utils
+import MLutils.ml_utils as ml_utils
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -17,7 +16,8 @@ Takes multiuple individual data components and combindes into a dataset
 scaling/Performance concerns: noaa script, pd.concat
 
 TODO:
-1) check Basin/sub-basin and add its SWE data
+1) Use get_all_stations at first
+2) SWE data
 2) remove station ID one-hot encoding
  """
 
