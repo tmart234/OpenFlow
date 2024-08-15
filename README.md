@@ -1,4 +1,4 @@
-# OpenFlowColorado
+# OpenFlow
 New here? See our wiki 
 [wiki](https://github.com/tmart234/OpenFlow/wiki) to learn more
 
