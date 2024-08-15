@@ -1,16 +1,15 @@
 import os
 from datetime import datetime, timedelta
-import get_flow
-import get_CODWR_flow
-import check_watershed
-import get_noaa
+import data.get_flow as get_flow
+import data.get_CODWR_flow as get_CODWR_flow
+import data.get_noaa as get_noaa
 import normalize_data
 import pandas as pd
-import get_coordinates
+import data.utils.get_coordinates as get_coordinates
 import logging
 import re
 import numpy as np
-import ml_utils
+import data.utils.ml_utils as ml_utils
 
 """ 
 Takes multiuple individual data components and combindes into a dataset

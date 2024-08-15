@@ -1,6 +1,6 @@
 import pytest
 import requests_mock
-from utils.get_coordinates import get_usgs_coordinates, get_dwr_coordinates, main
+from data.utils.get_coordinates import get_usgs_coordinates, get_dwr_coordinates, main
 
 @pytest.fixture
 def mock_requests():
@@ -129,6 +129,6 @@ def test_main_missing_arguments(mock_sys_argv, capsys):
     
     captured = capsys.readouterr()
     assert "error: the following arguments are required: site_type, site_number" in captured.err
-    
+
 if __name__ == "__main__":
     pytest.main()

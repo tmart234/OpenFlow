@@ -8,7 +8,7 @@ from shapely.geometry import Polygon, Point
 import geopandas as gpd
 import rasterio
 from rasterio.mask import mask
-from get_poly import get_huc8_polygon, simplify_polygon
+from utils.get_poly import get_huc8_polygon, simplify_polygon
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

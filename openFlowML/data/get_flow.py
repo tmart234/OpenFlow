@@ -3,7 +3,7 @@ import argparse
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
-import ml_utils
+import utils.ml_utils as ml_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

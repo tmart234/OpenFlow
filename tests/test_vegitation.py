@@ -1,9 +1,9 @@
 import pytest
 import requests_mock
-from get_vegdri import get_vegdri_data
+from data.get_vegdri import get_vegdri_data
 import requests
 import json
-from utils.get_poly import simplify_polygon, get_huc8_polygon
+from data.utils.get_poly import simplify_polygon, get_huc8_polygon
 
 @pytest.fixture
 def mock_response():
