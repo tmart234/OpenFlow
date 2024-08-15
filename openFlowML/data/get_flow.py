@@ -3,7 +3,7 @@ import argparse
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
-import utils.ml_utils as ml_utils
+import dataUtils.data_utils as data_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -50,7 +50,7 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
 
 def main(flow_site_id, start_date, end_date):
     df = get_daily_flow_data(flow_site_id, start_date, end_date)
-    ml_utils.preview_data(df)
+    data_utils.preview_data(df)
     return df
 
 if __name__ == "__main__":

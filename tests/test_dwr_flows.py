@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timedelta
-from get_CODWR_flow import get_historical_data
+from data.get_CODWR_flow import get_historical_data
 import pandas as pd
 import requests_mock
 

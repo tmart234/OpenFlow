@@ -6,7 +6,7 @@ import logging
 import argparse
 from io import BytesIO
 from earthaccess import Auth, DataCollections
-from utils.get_poly import get_huc8_polygon, simplify_polygon
+from dataUtils.get_poly import get_huc8_polygon, simplify_polygon
 
 # Conditionally import matplotlib
 import importlib.util
