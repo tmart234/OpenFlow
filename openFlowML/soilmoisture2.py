@@ -8,7 +8,7 @@ import dask
 from dask.distributed import Client
 import argparse
 import logging
-from get_poly import get_huc8_polygon, simplify_polygon
+from openFlowML.utils.get_poly import get_huc8_polygon, simplify_polygon
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

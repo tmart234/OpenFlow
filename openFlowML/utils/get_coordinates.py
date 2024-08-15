@@ -1,5 +1,6 @@
 import requests
 import argparse
+import sys
 
 def get_usgs_coordinates(site_number):
     base_url = "https://waterdata.usgs.gov/nwis/inventory"
@@ -16,17 +17,21 @@ def get_usgs_coordinates(site_number):
     response = requests.get(base_url, params=params)
     lines = response.text.splitlines()
     
-    # Filter out comment lines and retrieve relevant data
-    data_lines = [line for line in lines if not line.startswith('#')]
-    data = data_lines[2]  # Since we're skipping the first two lines after comments
-    
-    fields = data.split('\t')
-    site_no, station_nm, dec_lat_va, dec_long_va = fields[0], fields[1], fields[2], fields[3]
-    
-    return {
-        'latitude': dec_lat_va,
-        'longitude': dec_long_va
-    }
+    try:
+         # Filter out comment lines and retrieve relevant data
+        data_lines = [line for line in lines if not line.startswith('#')]
+        if len(data_lines) < 3:
+            return None
+        data = next((line for line in data_lines[2:] if line.split('\t')[0] == site_number), None)
+        if data is None:
+            return None
+        fields = data.split('\t')
+        return {
+            'latitude': fields[2],
+            'longitude': fields[3]
+        }
+    except Exception:
+        return None
 
 def get_dwr_coordinates(abbrev):
     base_url = "https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations"
@@ -41,27 +46,32 @@ def get_dwr_coordinates(abbrev):
     response = requests.get(base_url, params=params)
     lines = response.text.splitlines()
     
-    # Filter out comment lines and retrieve relevant data
-    data_lines = [line for line in lines if not line.startswith('#')]
-    data = data_lines[2]  # Since we're skipping the first two lines after comments
-    
-    fields = data.split('\t')
-    station_nm, dec_lat_va, dec_long_va = fields[0], fields[1], fields[2]
-    
-    return {
-        'latitude': dec_lat_va,
-        'longitude': dec_long_va
-    }
+    try:
+        # Filter out comment lines and retrieve relevant data
+        data_lines = [line for line in lines if not line.startswith('#')]
+        if len(data_lines) < 3:
+            return None
+        data = data_lines[2]
+        fields = data.split('\t')
+        return {
+            'latitude': fields[1],
+            'longitude': fields[2]
+        }
+    except Exception:
+        return None
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
     parser.add_argument('site_type', type=str, help='site type (ex: usgs, dwr)')
     parser.add_argument('site_number', type=str, help='site number')
     args = parser.parse_args()
-    if args.site_type.lowercase == 'usgs':
-        result = get_usgs_coordinates(args.site_type, args.site_number)
-    elif args.site_type.lowercase == 'dwr':
-        result = get_dwr_coordinates(args.site_type, args.site_number)
+    if args.site_type.lower() == 'usgs':
+        result = get_usgs_coordinates(args.site_number)
+    elif args.site_type.lower() == 'dwr':
+        result = get_dwr_coordinates(args.site_number)
+    else:
+        print("Invalid source. Use 'usgs' or 'dwr'.")
+        sys.exit(1)
     print(result)
 
 if __name__ == '__main__':

@@ -5,6 +5,7 @@ numpy>=1.17.3
 scipy>=1.5.0
 tensorflow==2.13
 u8darts>=0.29.0
+geopandas>=1.0.1
 
 #onnx==1.14.1
 #tf2onnx>=1.15.1

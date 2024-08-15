@@ -1,6 +1,4 @@
-from test_utils import set_ml_pypath
-set_ml_pypath()
-from get_poly import  *
+from utils.get_poly import  get_huc8_polygon, simplify_polygon, main # type: ignore
 import pytest
 import requests_mock
 

@@ -1,5 +1,3 @@
-from test_utils import set_ml_pypath
-set_ml_pypath()
 import pytest
 import requests_mock
 from nasa_moisture import search_smap_data, get_smap_soil_moisture_data, process_smap_data, get_smap_timeseries, main

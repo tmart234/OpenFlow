@@ -1,5 +1,3 @@
-from .test_utils import set_ml_pypath
-set_ml_pypath()
 import pytest
 from datetime import datetime, timedelta
 from get_CODWR_flow import get_historical_data

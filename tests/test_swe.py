@@ -1,5 +1,3 @@
-from .test_utils import set_ml_pypath
-set_ml_pypath()
 import pytest
 from datetime import datetime, timedelta
 import get_swe  # Assuming get_swe is your script with the main function

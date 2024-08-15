@@ -1,11 +1,9 @@
-from test_utils import set_ml_pypath
-set_ml_pypath()
 import pytest
 import requests_mock
 from get_vegdri import get_vegdri_data
 import requests
 import json
-from get_poly import simplify_polygon, get_huc8_polygon
+from utils.get_poly import simplify_polygon, get_huc8_polygon
 
 @pytest.fixture
 def mock_response():
