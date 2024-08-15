@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timedelta
-import get_swe  # Assuming get_swe is your script with the main function
+import data.get_swe as get_swe  # Assuming get_swe is your script with the main function
 
 def test_date_validation():
     """Test that end date must be greater than start date."""
