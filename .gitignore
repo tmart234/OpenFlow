@@ -52,3 +52,4 @@ WW-app.xcodeproj/xcuserdata/tylermartin.xcuserdatad/xcdebugger/Breakpoints_v2.xc
 *.pyc
 *.h5
 /.vscode
+*.env
