@@ -4,10 +4,10 @@ import h5py
 from shapely.geometry import Polygon, Point
 import logging
 import argparse
-from dotenv import load_dotenv
 from io import BytesIO
-from earthaccess import Auth, DataCollections, DataGranules, download
+from earthaccess import *
 from dataUtils.get_poly import get_huc8_polygon, simplify_polygon
+from dataUtils.data_utils import load_earthdata_vars
 import os
 import tempfile
 import requests
@@ -19,8 +19,7 @@ matplotlib_available = matplotlib_spec is not None
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load environment variables
-load_dotenv()
+load_earthdata_vars()
 
 def get_earthdata_auth():
     """
@@ -28,10 +27,19 @@ def get_earthdata_auth():
     """
     auth = Auth()
     
-    # Try to authenticate using environment variables first
-    if auth.login(strategy="environment"):
-        logging.info("Successfully authenticated using environment variables")
-        return auth
+    username = os.getenv("EARTHDATA_USERNAME")
+    password = os.getenv("EARTHDATA_PASSWORD")
+    
+    logging.info(f"Attempting to authenticate with username: {username}")
+    
+    if username and password:
+        if auth.login(strategy="environment"):
+            logging.info("Successfully authenticated using environment variables")
+            return auth
+        else:
+            logging.warning("Authentication failed using environment variables")
+    else:
+        logging.warning("Environment variables not set or empty")
     
     # If environment variables fail, try .netrc file
     if auth.login(strategy="netrc"):
@@ -45,34 +53,19 @@ def get_earthdata_auth():
     
     raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
 
-def download_file(url, auth, local_filename=None):
+def search_and_download_smap_data(start_date, end_date, auth):
     """
-    Download a file from the given URL using the provided earthaccess Auth instance.
+    Search for SMAP L3 data between the given dates and download it to a temporary directory.
     """
-    if not local_filename:
-        local_filename = url.split('/')[-1]
+    try:
+        # Check if we're already logged in
+        if not auth.authenticated:
+            logging.info("Not logged in, attempting to log in...")
+            if not auth.login(strategy="environment"):  # Explicitly use environment strategy
+                raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
+        else:
+            logging.info("Already authenticated, proceeding with search and download")
 
-    try:
-        session = auth.get_session()
-        with session.get(url, stream=True) as r:
-            r.raise_for_status()
-            with open(local_filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        logging.info(f"Successfully downloaded {local_filename}")
-        return local_filename
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error downloading file: {e}")
-        return None
-    
-def search_and_download_smap_data(date, auth):
-    """
-    Search for the most recent SMAP L3 data up to the given date and download it to a temporary directory.
-    """
-    end_date = date
-    start_date = end_date - datetime.timedelta(days=7)  # Look for data up to a week before the specified date
-    
-    try:
         # Create DataCollections instance
         collections = DataCollections(auth)
         
@@ -88,6 +81,7 @@ def search_and_download_smap_data(date, auth):
         
         # Log collection details using available attributes
         logging.info(f"Using collection: {collection.concept_id()}")
+
         # Create DataGranules instance
         granules = DataGranules(auth)
 
@@ -96,42 +90,27 @@ def search_and_download_smap_data(date, auth):
                          .concept_id(collection.concept_id())
                          .temporal(start_date, end_date))
         
-        # Check if there are any results
-        if granule_query.hits() == 0:
+        # Get all granules
+        all_granules = granule_query.get_all()
+        
+        if not all_granules:
             logging.error(f"No SMAP data found from {start_date} to {end_date}")
             return None
-        
-        print(granule_query.get_all())
-
-        # Get the first granule
-        granule_results = granule_query.get(limit=1)
-        if not granule_results:
-            logging.error(f"Failed to retrieve SMAP data from {start_date} to {end_date}")
-            return None
-        
-        granule = granule_results[0]
-        
-        # Log granule details using available attributes
-        granule_date = granule['meta'].get('native-id', 'Unknown date')
-        logging.info(f"Found SMAP data: {granule_date}")
         
         # Create a temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             logging.info(f"Created temporary directory: {temp_dir}")
             
             # Download the data
-            downloaded_files = download(granule, local_path=temp_dir)
+            try:
+                downloaded_files = download(all_granules, local_path=temp_dir)
+            except Exception as e:
+                logging.error(f"Error during download: {str(e)}")
+                return None
             
             if downloaded_files:
                 logging.info(f"Successfully downloaded: {downloaded_files}")
-                
-                # Move the file to a more permanent location if needed
-                # For this example, we'll just return the path of the first downloaded file
-                temp_file_path = downloaded_files[0]
-                
-                # You might want to copy this file to a more permanent location here
-                # For now, we'll just return the temporary file path
-                return temp_file_path
+                return downloaded_files
             else:
                 logging.error("Failed to download SMAP data")
                 return None
@@ -200,7 +179,7 @@ def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_mois
     
     plt.show()
 
-def main(date, lat, lon, visual):
+def main(start_date, end_date, lat, lon, visual):
     auth = get_earthdata_auth()
     # The function will raise an exception if authentication fails, so we don't need to check if auth is None
 
@@ -212,11 +191,11 @@ def main(date, lat, lon, visual):
 
     simplified_polygon = simplify_polygon(huc8_polygon)
 
-    temp_file_path = search_and_download_smap_data(date, auth)
+    temp_file_path = search_and_download_smap_data(start_date, end_date, auth)
     if temp_file_path:
         soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(temp_file_path, simplified_polygon)
         if soil_moisture is not None:
-            logging.info(f"Average soil moisture for the given polygon on or before {date}: {soil_moisture:.4f}")
+            logging.info(f"Average soil moisture for the given polygon between {start_date} and {end_date}: {soil_moisture:.4f}")
             
             if visual:
                 if matplotlib_available:
@@ -230,10 +209,11 @@ def main(date, lat, lon, visual):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Calculate average soil moisture for a HUC8 polygon from SMAP L3 data.')
-    parser.add_argument('--date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='Date in YYYY-MM-DD format')
+    parser.add_argument('--start-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='Start Date in YYYY-MM-DD format')
+    parser.add_argument('--end-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='End Date in YYYY-MM-DD format')
     parser.add_argument('--lat', type=float, required=True, help='Latitude of the point within the desired HUC8 polygon')
     parser.add_argument('--lon', type=float, required=True, help='Longitude of the point within the desired HUC8 polygon')
     parser.add_argument('--visual', action='store_true', help='Enable matplotlib visualization')
     args = parser.parse_args()
 
-    main(args.date, args.lat, args.lon, args.visual)
+    main(args.start_date, args.end_date, args.lat, args.lon, args.visual)
