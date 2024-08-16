@@ -70,25 +70,30 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
         else:
             logging.info("Already authenticated, proceeding with search and download")
 
-        # Search for SMAP L3 collection
-        collection_query = earthaccess.collection_query().short_name("SMAP_L4_SM_ANC_CLIM")
+        # Search for SPL3SMP_E collection
+        collection_query = earthaccess.DataCollections().short_name("SPL3SMP_E").version("006")
         collections = collection_query.get()
 
         if not collections:
-            logging.error("No SMAP L4 collection found")
+            logging.error("SMAP L3 SM_P_E collection not found")
             return None
 
-        # Get the concept_id of the first (and hopefully only) collection
-        concept_id = collections[0].concept_id()
-        logging.info(f"Found SMAP L4 collection with concept_id: {concept_id}")
+        collection = collections[0]
+        concept_id = collection.concept_id()
+        logging.info(f"Found SMAP_L3_SM_P_E collection with concept_id: {concept_id}")
 
-        start_iso = datetime.datetime.combine(start_date, datetime.time()).replace(tzinfo=pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end_iso = datetime.datetime.combine(end_date, datetime.time()).replace(tzinfo=pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # Now search for granules
-        granule_query = (earthaccess.granule_query()
-                         .concept_id(concept_id)
-                         .temporal(start_iso, end_iso))
 
+        # Calculate bounding box from simplified_polygon
+        lons, lats = zip(*simplified_polygon)
+        min_lon, max_lon = min(lons), max(lons)
+        min_lat, max_lat = min(lats), max(lats)
+
+        # Now search for granules using DataGranules
+        granule_query = (earthaccess.DataGranules()
+                         .concept_id(concept_id) 
+                         .temporal(start_date, end_date)
+                         .bounding_box(min_lon, min_lat, max_lon, max_lat))
+                
         granule_hits = granule_query.hits()
         logging.info(f"Number of granules found: {granule_hits}")
 
@@ -96,7 +101,7 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
             logging.warning(f"No SMAP data found from {start_date} to {end_date}")
             return None
 
-        granules = granule_query.get(limit=granule_hits)
+        granules = granule_query.get_all()
 
         if not granules:
             logging.warning(f"No granules retrieved despite positive hit count")
@@ -109,23 +114,33 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
         smallest_granule = min(granules, key=lambda g: g.size())
         logging.info(f"Smallest intersecting granule size: {smallest_granule.size()} MB")
 
-        # Create a temporary directory for download
-        with tempfile.TemporaryDirectory() as temp_dir:
-            logging.info(f"Created temporary directory: {temp_dir}")
+        # Create a temporary directory that won't be automatically deleted
+        temp_dir = tempfile.mkdtemp()
+        logging.info(f"Created temporary directory: {temp_dir}")
 
-            # Download only the smallest granule
-            try:
-                downloaded_files = earthaccess.download(smallest_granule, local_path=temp_dir)
-            except Exception as e:
-                logging.error(f"Error during download: {str(e)}")
-                return None
+        # Download the smallest granule
+        try:
+            downloaded_files = earthaccess.download(smallest_granule, local_path=temp_dir)
+        except Exception as e:
+            logging.error(f"Error during download: {str(e)}")
+            return None
 
-            if downloaded_files:
-                logging.info(f"Successfully downloaded: {downloaded_files[0]}")
-                return downloaded_files[0]
+        if downloaded_files:
+            downloaded_file = downloaded_files[0]
+            logging.info(f"Successfully downloaded: {downloaded_file}")
+            
+            # Verify that the file exists
+            if os.path.exists(downloaded_file):
+                logging.info(f"File exists at {downloaded_file}")
+                file_size = os.path.getsize(downloaded_file)
+                logging.info(f"File size: {file_size} bytes")
             else:
-                logging.error("Failed to download SMAP data")
-                return None
+                logging.error(f"File does not exist at {downloaded_file}")
+            
+            return downloaded_file
+        else:
+            logging.error("Failed to download SMAP data")
+            return None
 
     except Exception as e:
         logging.error(f"Error searching or downloading SMAP data: {e}")
@@ -137,24 +152,35 @@ def extract_soil_moisture(hdf_file, polygon):
     Extract soil moisture data for the given polygon from the HDF file.
     """
     try:
+        logging.info(f"Attempting to open file: {hdf_file}")
+        
+        if not os.path.exists(hdf_file):
+            logging.error(f"File does not exist: {hdf_file}")
+            return None, None, None, None, None
+
         with h5py.File(hdf_file, 'r') as file:
-            soil_moisture = file['Soil_Moisture_Retrieval_Data']['soil_moisture'][:]
-            lat = file['cell_lat'][:]
-            lon = file['cell_lon'][:]
+            logging.info("Successfully opened HDF5 file")
             
-            shape = Polygon(polygon)
-            mask = np.zeros_like(soil_moisture, dtype=bool)
-            
-            for i in range(soil_moisture.shape[0]):
-                for j in range(soil_moisture.shape[1]):
-                    if shape.contains(Point(lon[j], lat[i])):
-                        mask[i, j] = True
-            
-            valid_data = soil_moisture[mask & (soil_moisture != -9999)]
-            if len(valid_data) > 0:
-                return np.mean(valid_data), soil_moisture, lat, lon, mask
-            else:
-                logging.warning("No valid soil moisture data found within the polygon")
+            # List all groups in the file
+            logging.info("Groups in the HDF5 file:")
+            file.visit(lambda name: logging.info(name))
+
+            # Attempt to access the soil moisture dataset
+            try:
+                soil_moisture = file['Soil_Moisture_Retrieval_Data']['soil_moisture'][:]
+                logging.info(f"Soil moisture data shape: {soil_moisture.shape}")
+            except KeyError:
+                logging.error("Could not find 'Soil_Moisture_Retrieval_Data/soil_moisture' in the file")
+                return None, None, None, None, None
+
+            # Attempt to access latitude and longitude datasets
+            try:
+                lat = file['cell_lat'][:]
+                lon = file['cell_lon'][:]
+                logging.info(f"Latitude data shape: {lat.shape}")
+                logging.info(f"Longitude data shape: {lon.shape}")
+            except KeyError:
+                logging.error("Could not find 'cell_lat' or 'cell_lon' in the file")
                 return None, None, None, None, None
     except Exception as e:
         logging.error(f"Error extracting soil moisture data: {e}")
@@ -207,6 +233,8 @@ def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_mois
 
 def main(start_date, end_date, lat, lon, visual):
     auth = get_earthdata_auth()
+
+    #list_nsidc_collections()
 
     # Get the HUC8 polygon
     huc8_polygon = get_huc8_polygon(lat, lon)
