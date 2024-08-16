@@ -3,7 +3,10 @@ import argparse
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logger = logging.getLogger(__name__)
 
 def get_huc8_polygon(lat, lon):
     """
@@ -88,7 +91,7 @@ def main(lat, lon):
     huc8_polygon = get_huc8_polygon(lat, lon)
     if huc8_polygon:
         simplified_polygon = simplify_polygon(huc8_polygon)
-        logging.info(f"Simplified polygon: {simplified_polygon}")
+        logging.debug(f"Simplified polygon: {simplified_polygon}")
         return simplified_polygon
     else:
         logging.error("No HUC8 polygon found")

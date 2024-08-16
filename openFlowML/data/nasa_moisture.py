@@ -4,10 +4,13 @@ import h5py
 from shapely.geometry import Polygon, Point
 import logging
 import argparse
+from dotenv import load_dotenv
 from io import BytesIO
-from earthaccess import Auth, DataCollections
+from earthaccess import Auth, DataCollections, DataGranules, download
 from dataUtils.get_poly import get_huc8_polygon, simplify_polygon
-
+import os
+import tempfile
+import requests
 # Conditionally import matplotlib
 import importlib.util
 matplotlib_spec = importlib.util.find_spec("matplotlib")
@@ -16,35 +19,126 @@ matplotlib_available = matplotlib_spec is not None
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Load environment variables
+load_dotenv()
+
+def get_earthdata_auth():
+    """
+    Create and return an authenticated earthaccess Auth instance.
+    """
+    auth = Auth()
+    
+    # Try to authenticate using environment variables first
+    if auth.login(strategy="environment"):
+        logging.info("Successfully authenticated using environment variables")
+        return auth
+    
+    # If environment variables fail, try .netrc file
+    if auth.login(strategy="netrc"):
+        logging.info("Successfully authenticated using .netrc file")
+        return auth
+    
+    # If both methods fail, fall back to interactive login
+    if auth.login(strategy="interactive"):
+        logging.info("Successfully authenticated interactively")
+        return auth
+    
+    raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
+
+def download_file(url, auth, local_filename=None):
+    """
+    Download a file from the given URL using the provided earthaccess Auth instance.
+    """
+    if not local_filename:
+        local_filename = url.split('/')[-1]
+
+    try:
+        session = auth.get_session()
+        with session.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(local_filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        logging.info(f"Successfully downloaded {local_filename}")
+        return local_filename
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error downloading file: {e}")
+        return None
+    
 def search_and_download_smap_data(date, auth):
     """
-    Search for the most recent SMAP L3 data up to the given date and download it.
+    Search for the most recent SMAP L3 data up to the given date and download it to a temporary directory.
     """
-    collection = DataCollections.smap_l3_soil_moisture
     end_date = date
     start_date = end_date - datetime.timedelta(days=7)  # Look for data up to a week before the specified date
     
     try:
-        granules = collection.search(
-            temporal=(start_date, end_date),
-            bounding_box=(-180, -90, 180, 90),  # Global coverage
-            limit=1,
-            sort_key="-start_date"
-        )
+        # Create DataCollections instance
+        collections = DataCollections(auth)
         
-        if not granules:
+        # Search for SMAP L3 soil moisture collections
+        smap_collections = collections.keyword("SMAP L3 Soil Moisture").get()
+        
+        if not smap_collections:
+            logging.error("No SMAP L3 Soil Moisture collections found")
+            return None
+
+        # Use the first collection found
+        collection = smap_collections[0]
+        
+        # Log collection details using available attributes
+        logging.info(f"Using collection: {collection.concept_id()}")
+        # Create DataGranules instance
+        granules = DataGranules(auth)
+
+        # Search for granules using the collection's concept_id
+        granule_query = (granules
+                         .concept_id(collection.concept_id())
+                         .temporal(start_date, end_date))
+        
+        # Check if there are any results
+        if granule_query.hits() == 0:
             logging.error(f"No SMAP data found from {start_date} to {end_date}")
             return None
         
-        granule = granules[0]
-        logging.info(f"Found SMAP data for date: {granule.date}")
+        print(granule_query.get_all())
+
+        # Get the first granule
+        granule_results = granule_query.get(limit=1)
+        if not granule_results:
+            logging.error(f"Failed to retrieve SMAP data from {start_date} to {end_date}")
+            return None
         
-        # Download the data
-        data = granule.download(auth)
-        return BytesIO(data)
+        granule = granule_results[0]
+        
+        # Log granule details using available attributes
+        granule_date = granule['meta'].get('native-id', 'Unknown date')
+        logging.info(f"Found SMAP data: {granule_date}")
+        
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logging.info(f"Created temporary directory: {temp_dir}")
+            
+            # Download the data
+            downloaded_files = download(granule, local_path=temp_dir)
+            
+            if downloaded_files:
+                logging.info(f"Successfully downloaded: {downloaded_files}")
+                
+                # Move the file to a more permanent location if needed
+                # For this example, we'll just return the path of the first downloaded file
+                temp_file_path = downloaded_files[0]
+                
+                # You might want to copy this file to a more permanent location here
+                # For now, we'll just return the temporary file path
+                return temp_file_path
+            else:
+                logging.error("Failed to download SMAP data")
+                return None
     
     except Exception as e:
         logging.error(f"Error searching or downloading SMAP data: {e}")
+        logging.error("Traceback: ", exc_info=True)
         return None
 
 def extract_soil_moisture(hdf_file, polygon):
@@ -107,9 +201,8 @@ def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_mois
     plt.show()
 
 def main(date, lat, lon, visual):
-    # Set up authentication
-    auth = Auth()
-    auth.login()
+    auth = get_earthdata_auth()
+    # The function will raise an exception if authentication fails, so we don't need to check if auth is None
 
     # Get and simplify the HUC8 polygon
     huc8_polygon = get_huc8_polygon(lat, lon)
@@ -118,11 +211,10 @@ def main(date, lat, lon, visual):
         return
 
     simplified_polygon = simplify_polygon(huc8_polygon)
-    logging.info(f"Simplified polygon: {simplified_polygon}")
 
-    hdf_file = search_and_download_smap_data(date, auth)
-    if hdf_file:
-        soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(hdf_file, simplified_polygon)
+    temp_file_path = search_and_download_smap_data(date, auth)
+    if temp_file_path:
+        soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(temp_file_path, simplified_polygon)
         if soil_moisture is not None:
             logging.info(f"Average soil moisture for the given polygon on or before {date}: {soil_moisture:.4f}")
             
