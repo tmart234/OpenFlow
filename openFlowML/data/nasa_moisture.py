@@ -1,7 +1,7 @@
 import datetime
 import numpy as np
 import h5py
-import pytz
+import shutil
 from shapely.geometry import Polygon, Point, box
 import logging
 import argparse
@@ -118,12 +118,14 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
         temp_dir = tempfile.mkdtemp()
         logging.info(f"Created temporary directory: {temp_dir}")
 
-        # Download the smallest granule
+        # Download only the smallest granule
         try:
             downloaded_files = earthaccess.download(smallest_granule, local_path=temp_dir)
         except Exception as e:
             logging.error(f"Error during download: {str(e)}")
-            return None
+            if temp_dir:
+                shutil.rmtree(temp_dir)
+            return None, None
 
         if downloaded_files:
             downloaded_file = downloaded_files[0]
@@ -136,16 +138,23 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
                 logging.info(f"File size: {file_size} bytes")
             else:
                 logging.error(f"File does not exist at {downloaded_file}")
+                if temp_dir:
+                    shutil.rmtree(temp_dir)
+                return None, None
             
-            return downloaded_file
+            return downloaded_file, temp_dir
         else:
             logging.error("Failed to download SMAP data")
-            return None
+            if temp_dir:
+                shutil.rmtree(temp_dir)
+            return None, None
 
     except Exception as e:
         logging.error(f"Error searching or downloading SMAP data: {e}")
         logging.error("Traceback: ", exc_info=True)
-        return None
+        if temp_dir:
+            shutil.rmtree(temp_dir)
+        return None, None
     
 def extract_soil_moisture(hdf_file, polygon):
     """
@@ -161,29 +170,46 @@ def extract_soil_moisture(hdf_file, polygon):
         with h5py.File(hdf_file, 'r') as file:
             logging.info("Successfully opened HDF5 file")
             
-            # List all groups in the file
-            logging.info("Groups in the HDF5 file:")
-            file.visit(lambda name: logging.info(name))
+            # Attempt to access the soil moisture dataset (try both AM and PM)
+            soil_moisture = None
+            lat = None
+            lon = None
+            for time_of_day in ['AM', 'PM']:
+                try:
+                    soil_moisture = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/soil_moisture'][:]
+                    lat = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/latitude'][:]
+                    lon = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/longitude'][:]
+                    logging.info(f"Found soil moisture data for {time_of_day}")
+                    break
+                except KeyError:
+                    logging.warning(f"Could not find soil moisture data for {time_of_day}")
 
-            # Attempt to access the soil moisture dataset
-            try:
-                soil_moisture = file['Soil_Moisture_Retrieval_Data']['soil_moisture'][:]
-                logging.info(f"Soil moisture data shape: {soil_moisture.shape}")
-            except KeyError:
-                logging.error("Could not find 'Soil_Moisture_Retrieval_Data/soil_moisture' in the file")
+            if soil_moisture is None or lat is None or lon is None:
+                logging.error("Could not find soil moisture, latitude, or longitude data in the file")
                 return None, None, None, None, None
 
-            # Attempt to access latitude and longitude datasets
-            try:
-                lat = file['cell_lat'][:]
-                lon = file['cell_lon'][:]
-                logging.info(f"Latitude data shape: {lat.shape}")
-                logging.info(f"Longitude data shape: {lon.shape}")
-            except KeyError:
-                logging.error("Could not find 'cell_lat' or 'cell_lon' in the file")
+            logging.info(f"Soil moisture data shape: {soil_moisture.shape}")
+            logging.info(f"Latitude data shape: {lat.shape}")
+            logging.info(f"Longitude data shape: {lon.shape}")
+
+            shape = Polygon(polygon)
+            mask = np.zeros_like(soil_moisture, dtype=bool)
+            
+            for i in range(soil_moisture.shape[0]):
+                for j in range(soil_moisture.shape[1]):
+                    if shape.contains(Point(lon[i, j], lat[i, j])):
+                        mask[i, j] = True
+            
+            valid_data = soil_moisture[mask & (soil_moisture != -9999)]
+            if len(valid_data) > 0:
+                return np.mean(valid_data), soil_moisture, lat, lon, mask
+            else:
+                logging.warning("No valid soil moisture data found within the polygon")
                 return None, None, None, None, None
+
     except Exception as e:
         logging.error(f"Error extracting soil moisture data: {e}")
+        logging.error("Traceback: ", exc_info=True)
         return None, None, None, None, None
 
 def list_nsidc_collections():
@@ -234,8 +260,6 @@ def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_mois
 def main(start_date, end_date, lat, lon, visual):
     auth = get_earthdata_auth()
 
-    #list_nsidc_collections()
-
     # Get the HUC8 polygon
     huc8_polygon = get_huc8_polygon(lat, lon)
     if not huc8_polygon:
@@ -247,20 +271,28 @@ def main(start_date, end_date, lat, lon, visual):
     logging.debug(f"Simplified polygon: {simplified_polygon}")
 
     # Pass the simplified_polygon to the search_and_download_smap_data function
-    downloaded_file = search_and_download_smap_data(start_date, end_date, auth, simplified_polygon)
+    downloaded_file, temp_dir = search_and_download_smap_data(start_date, end_date, auth, simplified_polygon)
     
-    if downloaded_file:
-        soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(downloaded_file, simplified_polygon)
-        if soil_moisture is not None:
-            logging.info(f"Average soil moisture for the given polygon between {start_date} and {end_date}: {soil_moisture:.4f}")
-            
-            if visual:
-                if matplotlib_available:
-                    visualize_soil_moisture(simplified_polygon, full_soil_moisture, lat_data, lon_data, mask, soil_moisture)
-                else:
-                    logging.warning("Matplotlib is not installed. Skipping visualization.")
-        else:
-            logging.error("Failed to calculate soil moisture")
+    if downloaded_file and temp_dir:
+        try:
+            soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(downloaded_file, simplified_polygon)
+            if soil_moisture is not None:
+                logging.info(f"Average soil moisture for the given polygon between {start_date} and {end_date}: {soil_moisture:.4f}")
+                
+                if visual:
+                    if matplotlib_available:
+                        visualize_soil_moisture(simplified_polygon, full_soil_moisture, lat_data, lon_data, mask, soil_moisture)
+                    else:
+                        logging.warning("Matplotlib is not installed. Skipping visualization.")
+            else:
+                logging.error("Failed to calculate soil moisture. Check if the polygon intersects with available data.")
+        finally:
+            # Clean up: remove the temporary directory
+            try:
+                shutil.rmtree(temp_dir)
+                logging.info(f"Removed temporary directory: {temp_dir}")
+            except Exception as e:
+                logging.warning(f"Failed to remove temporary directory: {e}")
     else:
         logging.error("Failed to find or download SMAP data")
 
