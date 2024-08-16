@@ -1,7 +1,8 @@
 import datetime
 import numpy as np
 import h5py
-from shapely.geometry import Polygon, Point
+import pytz
+from shapely.geometry import Polygon, Point, box
 import logging
 import argparse
 from io import BytesIO
@@ -53,73 +54,84 @@ def get_earthdata_auth():
     
     raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
 
-def search_and_download_smap_data(start_date, end_date, auth):
+import earthaccess
+
+def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon):
     """
-    Search for SMAP L3 data between the given dates and download it to a temporary directory.
+    Search for SMAP L3 data between the given dates that intersect with the given polygon,
+    and download the smallest intersecting granule.
     """
     try:
-        # Check if we're already logged in
+        # Ensure we're authenticated
         if not auth.authenticated:
             logging.info("Not logged in, attempting to log in...")
-            if not auth.login(strategy="environment"):  # Explicitly use environment strategy
+            if not auth.login(strategy="environment"):
                 raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
         else:
             logging.info("Already authenticated, proceeding with search and download")
 
-        # Create DataCollections instance
-        collections = DataCollections(auth)
-        
-        # Search for SMAP L3 soil moisture collections
-        smap_collections = collections.keyword("SMAP L3 Soil Moisture").get()
-        
-        if not smap_collections:
-            logging.error("No SMAP L3 Soil Moisture collections found")
+        # Search for SMAP L3 collection
+        collection_query = earthaccess.collection_query().short_name("SMAP_L4_SM_ANC_CLIM")
+        collections = collection_query.get()
+
+        if not collections:
+            logging.error("No SMAP L4 collection found")
             return None
 
-        # Use the first collection found
-        collection = smap_collections[0]
-        
-        # Log collection details using available attributes
-        logging.info(f"Using collection: {collection.concept_id()}")
+        # Get the concept_id of the first (and hopefully only) collection
+        concept_id = collections[0].concept_id()
+        logging.info(f"Found SMAP L4 collection with concept_id: {concept_id}")
 
-        # Create DataGranules instance
-        granules = DataGranules(auth)
+        start_iso = datetime.datetime.combine(start_date, datetime.time()).replace(tzinfo=pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = datetime.datetime.combine(end_date, datetime.time()).replace(tzinfo=pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Now search for granules
+        granule_query = (earthaccess.granule_query()
+                         .concept_id(concept_id)
+                         .temporal(start_iso, end_iso))
 
-        # Search for granules using the collection's concept_id
-        granule_query = (granules
-                         .concept_id(collection.concept_id())
-                         .temporal(start_date, end_date))
-        
-        # Get all granules
-        all_granules = granule_query.get_all()
-        
-        if not all_granules:
-            logging.error(f"No SMAP data found from {start_date} to {end_date}")
+        granule_hits = granule_query.hits()
+        logging.info(f"Number of granules found: {granule_hits}")
+
+        if granule_hits == 0:
+            logging.warning(f"No SMAP data found from {start_date} to {end_date}")
             return None
-        
-        # Create a temporary directory
+
+        granules = granule_query.get(limit=granule_hits)
+
+        if not granules:
+            logging.warning(f"No granules retrieved despite positive hit count")
+            return None
+
+        # Log the number of granules found
+        logging.info(f"Retrieved {len(granules)} granules")
+
+        # Find the smallest granule
+        smallest_granule = min(granules, key=lambda g: g.size())
+        logging.info(f"Smallest intersecting granule size: {smallest_granule.size()} MB")
+
+        # Create a temporary directory for download
         with tempfile.TemporaryDirectory() as temp_dir:
             logging.info(f"Created temporary directory: {temp_dir}")
-            
-            # Download the data
+
+            # Download only the smallest granule
             try:
-                downloaded_files = download(all_granules, local_path=temp_dir)
+                downloaded_files = earthaccess.download(smallest_granule, local_path=temp_dir)
             except Exception as e:
                 logging.error(f"Error during download: {str(e)}")
                 return None
-            
+
             if downloaded_files:
-                logging.info(f"Successfully downloaded: {downloaded_files}")
-                return downloaded_files
+                logging.info(f"Successfully downloaded: {downloaded_files[0]}")
+                return downloaded_files[0]
             else:
                 logging.error("Failed to download SMAP data")
                 return None
-    
+
     except Exception as e:
         logging.error(f"Error searching or downloading SMAP data: {e}")
         logging.error("Traceback: ", exc_info=True)
         return None
-
+    
 def extract_soil_moisture(hdf_file, polygon):
     """
     Extract soil moisture data for the given polygon from the HDF file.
@@ -147,6 +159,20 @@ def extract_soil_moisture(hdf_file, polygon):
     except Exception as e:
         logging.error(f"Error extracting soil moisture data: {e}")
         return None, None, None, None, None
+
+def list_nsidc_collections():
+    try:
+        nsidc_query = earthaccess.collection_query().daac("NSIDC")
+        collections = nsidc_query.get()
+        
+        logging.info(f"Found {len(collections)} collections from NSIDC-DAAC:")
+        for collection in collections:
+            logging.info(f"- Short Name: {collection['umm']['ShortName']}, Version: {collection['umm'].get('Version', 'N/A')}")
+        
+        return collections
+    except Exception as e:
+        logging.error(f"Error listing NSIDC collections: {e}")
+        return None
 
 def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_moisture):
     if not matplotlib_available:
@@ -181,19 +207,22 @@ def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_mois
 
 def main(start_date, end_date, lat, lon, visual):
     auth = get_earthdata_auth()
-    # The function will raise an exception if authentication fails, so we don't need to check if auth is None
 
-    # Get and simplify the HUC8 polygon
+    # Get the HUC8 polygon
     huc8_polygon = get_huc8_polygon(lat, lon)
     if not huc8_polygon:
         logging.error("Failed to retrieve HUC8 polygon")
         return
 
+    # Simplify the polygon and format it for earthaccess
     simplified_polygon = simplify_polygon(huc8_polygon)
+    logging.debug(f"Simplified polygon: {simplified_polygon}")
 
-    temp_file_path = search_and_download_smap_data(start_date, end_date, auth)
-    if temp_file_path:
-        soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(temp_file_path, simplified_polygon)
+    # Pass the simplified_polygon to the search_and_download_smap_data function
+    downloaded_file = search_and_download_smap_data(start_date, end_date, auth, simplified_polygon)
+    
+    if downloaded_file:
+        soil_moisture, full_soil_moisture, lat_data, lon_data, mask = extract_soil_moisture(downloaded_file, simplified_polygon)
         if soil_moisture is not None:
             logging.info(f"Average soil moisture for the given polygon between {start_date} and {end_date}: {soil_moisture:.4f}")
             

@@ -1,6 +1,8 @@
 import requests
 import argparse
 import logging
+from shapely.geometry import Polygon
+import numpy as np
 
 # Configure logging
 if not logging.getLogger().hasHandlers():
@@ -44,14 +46,45 @@ def get_huc8_polygon(lat, lon):
         logging.error("Failed to parse response")
         return None
 
-def simplify_polygon(polygon, max_points=100):
-    if len(polygon) <= max_points:
-        return polygon
-    simplified_polygon = []
-    for point in polygon:
-        if len(simplified_polygon) < 2 or not is_point_on_line(simplified_polygon[-2], simplified_polygon[-1], point):
-            simplified_polygon.append(point)        
-    return simplified_polygon
+from shapely.geometry import Polygon
+import numpy as np
+
+def simplify_polygon(polygon, max_points=100, tolerance=0.001):
+    # Create a Shapely polygon
+    shapely_polygon = Polygon(polygon)
+    
+    # Simplify the polygon
+    simplified = shapely_polygon.simplify(tolerance=tolerance, preserve_topology=True)
+    
+    # Extract coordinates
+    coords = list(simplified.exterior.coords)
+    
+    # Ensure counter-clockwise orientation
+    if not is_ccw(coords):
+        coords = coords[::-1]
+    
+    # If the first and last points are not the same, add the first point at the end
+    if coords[0] != coords[-1]:
+        coords.append(coords[0])
+    
+    # Limit the number of points if necessary
+    if len(coords) > max_points:
+        coords = coords[:max_points]
+        coords.append(coords[0])  # Ensure it's still closed
+    
+    # Round coordinates to 6 decimal places and convert to list of (lon, lat) tuples
+    coords = [(round(float(lon), 6), round(float(lat), 6)) for lon, lat in coords]
+    
+    return coords
+
+def is_ccw(coords):
+    """Check if coordinates are in counter-clockwise order."""
+    s = 0
+    for i in range(len(coords) - 1):
+        x1, y1 = coords[i]
+        x2, y2 = coords[i + 1]
+        s += (x2 - x1) * (y2 + y1)
+    return s < 0
 
 def is_point_on_line(p1, p2, p):
     x0, y0 = p
