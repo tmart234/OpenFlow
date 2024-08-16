@@ -2,16 +2,14 @@ import datetime
 import numpy as np
 import h5py
 import shutil
-from shapely.geometry import Polygon, Point, box
+from shapely.geometry import Polygon, Point
 import logging
 import argparse
-from io import BytesIO
 from earthaccess import *
 from dataUtils.get_poly import get_huc8_polygon, simplify_polygon
 from dataUtils.data_utils import load_earthdata_vars
 import os
 import tempfile
-import requests
 # Conditionally import matplotlib
 import importlib.util
 matplotlib_spec = importlib.util.find_spec("matplotlib")
@@ -191,17 +189,26 @@ def extract_soil_moisture(hdf_file, polygon):
             logging.info(f"Soil moisture data shape: {soil_moisture.shape}")
             logging.info(f"Latitude data shape: {lat.shape}")
             logging.info(f"Longitude data shape: {lon.shape}")
+            
+            # Log the range of latitudes and longitudes in the data
+            logging.info(f"Latitude range: {np.min(lat)} to {np.max(lat)}")
+            logging.info(f"Longitude range: {np.min(lon)} to {np.max(lon)}")
 
             shape = Polygon(polygon)
             mask = np.zeros_like(soil_moisture, dtype=bool)
             
+            points_in_polygon = 0
             for i in range(soil_moisture.shape[0]):
                 for j in range(soil_moisture.shape[1]):
                     if shape.contains(Point(lon[i, j], lat[i, j])):
                         mask[i, j] = True
+                        points_in_polygon += 1
+
+            logging.info(f"Number of points found inside the polygon: {points_in_polygon}")
             
             valid_data = soil_moisture[mask & (soil_moisture != -9999)]
             if len(valid_data) > 0:
+                logging.info(f"Number of valid soil moisture data points: {len(valid_data)}")
                 return np.mean(valid_data), soil_moisture, lat, lon, mask
             else:
                 logging.warning("No valid soil moisture data found within the polygon")
