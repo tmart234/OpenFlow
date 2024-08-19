@@ -4,10 +4,52 @@ import logging
 from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
 import numpy as np
+import matplotlib.pyplot as plt
+import contextily as ctx
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon as mplPolygon
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def visualize_polygon(polygon, lat, lon):
+    """
+    Visualize the polygon using matplotlib with a map overlay.
+    """
+    fig, ax = plt.subplots(figsize=(12, 12))
+    
+    # Extract x and y coordinates
+    x, y = zip(*polygon)
+    
+    # Create a Polygon patch
+    poly_patch = mplPolygon(polygon, closed=True, facecolor='blue', edgecolor='black', alpha=0.3)
+    ax.add_patch(poly_patch)
+    
+    # Plot the input point
+    ax.plot(lon, lat, 'ro', markersize=10)
+    
+    # Set labels and title
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    ax.set_title(f'HUC8 Polygon for ({lat}, {lon})')
+    
+    # Set the extent of the plot
+    buffer = 0.05  # Add a small buffer around the polygon
+    ax.set_xlim(min(x) - buffer, max(x) + buffer)
+    ax.set_ylim(min(y) - buffer, max(y) + buffer)
+    
+    # Add the map tiles
+    ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.OpenStreetMap.Mapnik)
+    
+    # Remove axis ticks for a cleaner look
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Show the plot
+    plt.tight_layout()
+    plt.show()
 
 def validate_polygon(polygon):
     """
@@ -28,21 +70,6 @@ def validate_polygon(polygon):
         cleaned = cleaned[::-1]
     
     return cleaned
-
-def visualize_data_and_polygon(lat, lon, soil_moisture, polygon):
-    import matplotlib.pyplot as plt
-    
-    plt.figure(figsize=(12, 8))
-    plt.scatter(lon, lat, c=soil_moisture, cmap='viridis', s=1)
-    plt.colorbar(label='Soil Moisture')
-    
-    poly = Polygon(polygon, facecolor='none', edgecolor='red')
-    plt.gca().add_patch(poly)
-    
-    plt.xlabel('Longitude')
-    plt.ylabel('Latitude')
-    plt.title('SMAP Data and HUC8 Polygon')
-    plt.show()
 
 def get_huc8_polygon(lat, lon):
     """
@@ -77,22 +104,15 @@ def get_huc8_polygon(lat, lon):
         logger.error(f"Error retrieving HUC8 polygon: {e}")
         return None
 
-def simplify_polygon(polygon, max_points=200, tolerance=0.0001):
+def simplify_polygon(polygon, tolerance=0.005):
     """
-    Simplify the polygon using Shapely's simplify method and ensure it's properly closed.
+    Simplify the polygon using Shapely's simplify method.
     """
     shapely_polygon = Polygon(polygon)
     simplified = shapely_polygon.simplify(tolerance=tolerance, preserve_topology=True)
     
-    # Extract coordinates and ensure the polygon is closed
+    # Extract coordinates
     coords = list(simplified.exterior.coords)
-    if coords[0] != coords[-1]:
-        coords.append(coords[0])
-    
-    # Limit the number of points if necessary
-    if len(coords) > max_points:
-        coords = coords[:max_points]
-        coords.append(coords[0])  # Ensure it's still closed
     
     # Round coordinates to 6 decimal places
     coords = [(round(float(lon), 6), round(float(lat), 6)) for lon, lat in coords]
@@ -168,6 +188,9 @@ def main(lat, lon, data_bounds=None):
             intersects = check_polygon_intersection(simplified_polygon, data_bounds)
             if not intersects:
                 logger.warning("The polygon does not intersect with the SMAP data. No soil moisture data may be available for this area.")
+        
+        # Visualize the polygon
+        visualize_polygon(simplified_polygon, lat, lon)
         
         return simplified_polygon
     else:
