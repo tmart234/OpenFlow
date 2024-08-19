@@ -6,19 +6,21 @@ from shapely.geometry import Polygon, Point
 import logging
 import argparse
 from earthaccess import *
-from dataUtils.get_poly import get_huc8_polygon, simplify_polygon
-from dataUtils.data_utils import load_earthdata_vars
+from dataUtils.get_poly import visualize_data_and_polygon, get_huc8_polygon, validate_polygon, simplify_polygon
+from dataUtils.data_utils import load_vars
 import os
 import tempfile
 # Conditionally import matplotlib
 import importlib.util
+from shapely.ops import transform
+import pyproj
 matplotlib_spec = importlib.util.find_spec("matplotlib")
 matplotlib_available = matplotlib_spec is not None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-load_earthdata_vars()
+load_vars()
 
 def get_earthdata_auth():
     """
@@ -153,7 +155,7 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
         if temp_dir:
             shutil.rmtree(temp_dir)
         return None, None
-    
+
 def extract_soil_moisture(hdf_file, polygon):
     """
     Extract soil moisture data for the given polygon from the HDF file.
@@ -186,30 +188,51 @@ def extract_soil_moisture(hdf_file, polygon):
                 logging.error("Could not find soil moisture, latitude, or longitude data in the file")
                 return None, None, None, None, None
 
-            logging.info(f"Soil moisture data shape: {soil_moisture.shape}")
-            logging.info(f"Latitude data shape: {lat.shape}")
-            logging.info(f"Longitude data shape: {lon.shape}")
-            
-            # Log the range of latitudes and longitudes in the data
-            logging.info(f"Latitude range: {np.min(lat)} to {np.max(lat)}")
-            logging.info(f"Longitude range: {np.min(lon)} to {np.max(lon)}")
+            logging.info(f"Original shapes - Soil moisture: {soil_moisture.shape}, Lat: {lat.shape}, Lon: {lon.shape}")
 
-            shape = Polygon(polygon)
-            mask = np.zeros_like(soil_moisture, dtype=bool)
-            
+            # Filter out fill values
+            valid_mask = (lat != -9999.0) & (lon != -9999.0) & (soil_moisture != -9999.0)
+            lat_valid = lat[valid_mask]
+            lon_valid = lon[valid_mask]
+            soil_moisture_valid = soil_moisture[valid_mask]
+
+            logging.info(f"Shapes after filtering - Soil moisture: {soil_moisture_valid.shape}, Lat: {lat_valid.shape}, Lon: {lon_valid.shape}")
+
+            # Ensure we're working with 1D arrays
+            lat_valid = lat_valid.flatten()
+            lon_valid = lon_valid.flatten()
+            soil_moisture_valid = soil_moisture_valid.flatten()
+
+            logging.info(f"Shapes after flattening - Soil moisture: {soil_moisture_valid.shape}, Lat: {lat_valid.shape}, Lon: {lon_valid.shape}")
+            logging.info(f"Latitude range: {np.min(lat_valid)} to {np.max(lat_valid)}")
+            logging.info(f"Longitude range: {np.min(lon_valid)} to {np.max(lon_valid)}")
+
+            # Log the coordinates of the polygon
+            logging.info(f"Polygon coordinates: {polygon}")
+
+            # Create a transformer object for converting between coordinate systems
+            transformer = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+
+            # Transform the polygon to the same coordinate system as the data
+            polygon_transformed = transform(transformer.transform, Polygon(polygon))
+
+            mask = np.zeros_like(soil_moisture_valid, dtype=bool)
             points_in_polygon = 0
-            for i in range(soil_moisture.shape[0]):
-                for j in range(soil_moisture.shape[1]):
-                    if shape.contains(Point(lon[i, j], lat[i, j])):
-                        mask[i, j] = True
-                        points_in_polygon += 1
+
+            # Sample a subset of points to check (e.g., every 10th point)
+            step = 10
+            for i in range(0, len(lat_valid), step):
+                point = Point(transformer.transform(lon_valid[i], lat_valid[i]))
+                if polygon_transformed.contains(point):
+                    mask[i:i+step] = True
+                    points_in_polygon += step
 
             logging.info(f"Number of points found inside the polygon: {points_in_polygon}")
-            
-            valid_data = soil_moisture[mask & (soil_moisture != -9999)]
+
+            valid_data = soil_moisture_valid[mask]
             if len(valid_data) > 0:
                 logging.info(f"Number of valid soil moisture data points: {len(valid_data)}")
-                return np.mean(valid_data), soil_moisture, lat, lon, mask
+                return np.mean(valid_data), soil_moisture_valid, lat_valid, lon_valid, mask
             else:
                 logging.warning("No valid soil moisture data found within the polygon")
                 return None, None, None, None, None
@@ -267,16 +290,21 @@ def visualize_soil_moisture(polygon, soil_moisture, lat, lon, mask, average_mois
 def main(start_date, end_date, lat, lon, visual):
     auth = get_earthdata_auth()
 
+    # for debugging collections
+    #list_nsidc_collections()
+
     # Get the HUC8 polygon
     huc8_polygon = get_huc8_polygon(lat, lon)
     if not huc8_polygon:
         logging.error("Failed to retrieve HUC8 polygon")
         return
 
-    # Simplify the polygon and format it for earthaccess
+    # Simplify & validate the polygon and format it for earthaccess
     simplified_polygon = simplify_polygon(huc8_polygon)
     logging.debug(f"Simplified polygon: {simplified_polygon}")
-
+    simplified_polygon = validate_polygon(huc8_polygon)
+    logging.info(f"Validated polygon coordinates: {simplified_polygon}")
+    
     # Pass the simplified_polygon to the search_and_download_smap_data function
     downloaded_file, temp_dir = search_and_download_smap_data(start_date, end_date, auth, simplified_polygon)
     
