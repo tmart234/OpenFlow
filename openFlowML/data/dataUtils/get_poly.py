@@ -9,12 +9,11 @@ import contextily as ctx
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon as mplPolygon
 
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def visualize_polygon(polygon, lat, lon):
+def visualize_polygon(polygon, lat, lon, huc_level):
     """
     Visualize the polygon using matplotlib with a map overlay.
     """
@@ -33,7 +32,7 @@ def visualize_polygon(polygon, lat, lon):
     # Set labels and title
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
-    ax.set_title(f'HUC8 Polygon for ({lat}, {lon})')
+    ax.set_title(f'HUC{huc_level} Polygon for ({lat}, {lon})')
     
     # Set the extent of the plot
     buffer = 0.05  # Add a small buffer around the polygon
@@ -71,11 +70,17 @@ def validate_polygon(polygon):
     
     return cleaned
 
-def get_huc8_polygon(lat, lon):
+def get_huc_polygon(lat, lon, huc_level):
     """
-    Get the HUC8 polygon for a given latitude and longitude.
+    Get the HUC polygon for a given latitude, longitude, and HUC level.
     """
-    url = "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/4/query"
+    if huc_level not in [4, 6, 8]:
+        raise ValueError("HUC level must be either 4, 6, or 8")
+    
+    layer_mapping = {4: 1, 6: 2, 8: 4}
+    layer_id = layer_mapping[huc_level]
+
+    url = f"https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/{layer_id}/query"
     params = {
         "f": "json",
         "geometry": "{},{}".format(lon, lat),
@@ -87,27 +92,46 @@ def get_huc8_polygon(lat, lon):
         "inSR": 4326
     }
 
+    logger.info(f"Requesting HUC{huc_level} polygon from URL: {url}")
+
     try:
         response = requests.get(url, params=params)
         response.raise_for_status()
         data = response.json()
+        
         features = data.get("features", [])
         if features:
             feature = features[0]
             polygon = feature["geometry"]["rings"][0]
-            logger.info(f"Retrieved HUC8 polygon with {len(polygon)} points")
-            return polygon
+            attributes = feature.get("attributes", {})
+            
+            if huc_level == 4:
+                huc2 = attributes.get("huc2", "")
+                name = attributes.get("name", "")
+                name_prefix = name.split()[0].upper()[:2]
+                huc_id = f"{huc2}{name_prefix}"
+            else:
+                huc_id = attributes.get(f"huc{huc_level}", "Unknown")
+            
+            logger.info(f"Retrieved HUC{huc_level} polygon with {len(polygon)} points")
+            logger.info(f"HUC{huc_level} ID: {huc_id}")
+            return polygon, huc_id, attributes
         else:
-            logger.warning("No HUC8 polygon found for the given coordinates")
-            return None
-    except Exception as e:
-        logger.error(f"Error retrieving HUC8 polygon: {e}")
-        return None
+            logger.warning(f"No HUC{huc_level} polygon found for the given coordinates")
+            return None, None, None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error retrieving HUC{huc_level} polygon: {e}")
+        return None, None, None
 
 def simplify_polygon(polygon, tolerance=0.005):
     """
     Simplify the polygon using Shapely's simplify method.
     """
+    # Check if polygon is a list of lists (multi-ring polygon)
+    if isinstance(polygon[0][0], list):
+        # Take only the first ring (outer boundary)
+        polygon = polygon[0]
+    
     shapely_polygon = Polygon(polygon)
     simplified = shapely_polygon.simplify(tolerance=tolerance, preserve_topology=True)
     
@@ -178,36 +202,37 @@ def perpendicular_distance(p1, p2, p):
         return 0  # or some other default value
     return abs((x2 - x1) * (y1 - y0) - (x1 - x0) * (y2 - y1)) / denominator
 
-def main(lat, lon, data_bounds=None):
-    huc8_polygon = get_huc8_polygon(lat, lon)
-    if huc8_polygon:
-        simplified_polygon = simplify_polygon(huc8_polygon)
+def main(lat, lon, huc_level, data_bounds=None):
+    huc_polygon = get_huc_polygon(lat, lon, huc_level)
+    if huc_polygon:
+        simplified_polygon = simplify_polygon(huc_polygon)
         logger.debug(f"Simplified polygon: {simplified_polygon}")
         
         if data_bounds:
             intersects = check_polygon_intersection(simplified_polygon, data_bounds)
             if not intersects:
-                logger.warning("The polygon does not intersect with the SMAP data. No soil moisture data may be available for this area.")
+                logger.warning(f"The HUC{huc_level} polygon does not intersect with the SMAP data. No soil moisture data may be available for this area.")
         
         # Visualize the polygon
-        visualize_polygon(simplified_polygon, lat, lon)
+        visualize_polygon(simplified_polygon, lat, lon, huc_level)
         
         return simplified_polygon
     else:
-        logger.error("No HUC8 polygon found")
+        logger.error(f"No HUC{huc_level} polygon found")
         return None
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Fetch and simplify HUC8 polygon for a given latitude and longitude.')
+    parser = argparse.ArgumentParser(description='Fetch and simplify HUC polygon for a given latitude and longitude.')
     parser.add_argument('--lat', type=float, required=True, help='Latitude')
     parser.add_argument('--lon', type=float, required=True, help='Longitude')
+    parser.add_argument('--huc', type=int, choices=[4, 6, 8], default=8, help='HUC level (4, 6, or 8, default: 8)')
     args = parser.parse_args()
     
     # Example SMAP data bounds (you should replace these with actual bounds from your SMAP data)
     smap_data_bounds = (-180, -90, 180, 90)
     
-    result = main(args.lat, args.lon, smap_data_bounds)
+    result = main(args.lat, args.lon, args.huc, smap_data_bounds)
     if result:
-        print(f"Simplified HUC8 polygon: {result}")
+        print(f"Simplified HUC{args.huc} polygon: {result}")
     else:
-        print("Failed to retrieve or process HUC8 polygon")
+        print(f"Failed to retrieve or process HUC{args.huc} polygon")
