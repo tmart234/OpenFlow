@@ -1,11 +1,18 @@
 import requests
 import json
 import os
+import tempfile
 import time
+import shutil
 from datetime import datetime, timedelta
 from dataUtils.data_utils import load_vars
+import logging
 
 load_vars()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Configuration
 SERVICE_URL = "https://m2m.cr.usgs.gov/api/api/json/stable/"
@@ -20,9 +27,17 @@ def send_request(endpoint, data, api_key=None):
     url = SERVICE_URL + endpoint
     headers = {'X-Auth-Token': api_key} if api_key else None
     
+    logger.info(f"Sending request to URL: {url}")
+    logger.debug(f"Headers: {headers}")
+    logger.debug(f"Data: {data}")
+    
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(url, json=data, headers=headers)
+            logger.debug(f"Response status code: {response.status_code}")
+            logger.debug(f"Response headers: {response.headers}")
+            logger.debug(f"Response content: {response.text}")
+            
             response.raise_for_status()
             result = response.json()
             
@@ -31,12 +46,12 @@ def send_request(endpoint, data, api_key=None):
             
             return result['data']
         except requests.exceptions.RequestException as e:
-            print(f"Attempt {attempt + 1} failed: {str(e)}")
+            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
             if attempt < MAX_RETRIES - 1:
-                print(f"Retrying in {RETRY_DELAY} seconds...")
+                logger.info(f"Retrying in {RETRY_DELAY} seconds...")
                 time.sleep(RETRY_DELAY)
             else:
-                print("Max retries reached. Unable to complete the request.")
+                logger.error("Max retries reached. Unable to complete the request.")
                 raise
 
 def login():
@@ -45,12 +60,12 @@ def login():
     
     payload = {'username': USERNAME, 'password': PASSWORD}
     api_key = send_request("login", payload)
-    print("Logged in successfully")
+    logger.info(f"Logged in successfully. API Key: {api_key}")
     return api_key
 
 def logout(api_key):
     send_request("logout", None, api_key)
-    print("Logged out successfully")
+    logger.info("Logged out successfully")
 
 def search_scenes(api_key):
     end_date = datetime.now().strftime("%Y-%m-%d")
@@ -77,7 +92,14 @@ def get_download_options(api_key, entity_id):
         'datasetName': DATASET_NAME,
         'entityIds': [entity_id]
     }
-    return send_request("download-options", payload, api_key)
+    try:
+        return send_request("download-options", payload, api_key)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            logger.warning("Unable to access download options. Your account may not have the necessary permissions.")
+            return None
+        else:
+            raise
 
 def request_download(api_key, downloads):
     payload = {
@@ -86,14 +108,22 @@ def request_download(api_key, downloads):
     }
     return send_request("download-request", payload, api_key)
 
-def download_file(url, filename):
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    
-    with open(filename, 'wb') as file:
+def download_file(url, final_filename):
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_file:
+        logger.info(f"Downloading to temporary file: {temp_file.name}")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
         for chunk in response.iter_content(chunk_size=8192):
-            file.write(chunk)
-    print(f"Downloaded: {filename}")
+            temp_file.write(chunk)
+    
+    try:
+        shutil.move(temp_file.name, final_filename)
+        logger.info(f"File successfully moved to: {final_filename}")
+    except Exception as e:
+        logger.error(f"Failed to move file: {str(e)}")
+        os.unlink(temp_file.name)
+        raise
 
 def main():
     api_key = login()
@@ -101,7 +131,7 @@ def main():
     try:
         scenes = search_scenes(api_key)
         if not scenes:
-            print("No scenes found.")
+            logger.info("No scenes found.")
             return
         
         latest_scene = scenes[0]
@@ -109,7 +139,7 @@ def main():
         
         download_options = get_download_options(api_key, entity_id)
         if not download_options:
-            print("No download options available.")
+            logger.info("No download options available.")
             return
         
         downloads = [{
@@ -124,10 +154,10 @@ def main():
             filename = f"VEGDRI_{latest_scene['acquisitionDate']}.zip"
             download_file(url, filename)
         else:
-            print("Download not immediately available. Please check the USGS Earth Explorer site later.")
+            logger.info("Download not immediately available. Please check the USGS Earth Explorer site later.")
     
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
+        logger.exception(f"An error occurred: {str(e)}")
     finally:
         if 'api_key' in locals():
             logout(api_key)
