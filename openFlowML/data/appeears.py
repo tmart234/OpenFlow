@@ -1,7 +1,8 @@
 import shutil
 import logging
-from data.dataUtils.get_poly import simplify_polygon, validate_polygon, get_huc_polygon
+from dataUtils.get_poly import simplify_polygon, validate_polygon, get_huc_polygon
 import os
+import datetime
 import rasterio
 from rasterio.plot import show
 import numpy as np
@@ -11,6 +12,7 @@ from dataUtils.get_poly import check_polygon_intersection, get_huc_polygon, vali
 from dataUtils.data_utils import load_vars, get_earthdata_auth, get_smap_data_bounds
 import time
 import tempfile
+import argparse
 import requests
 import json
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -265,3 +267,14 @@ def main(start_date, end_date, lat, lon, visual):
 
     # Clean up
     shutil.rmtree(output_dir)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Calculate average soil moisture for a HUC8 polygon from SMAP L3 data.')
+    parser.add_argument('--start-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='Start Date in YYYY-MM-DD format')
+    parser.add_argument('--end-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='End Date in YYYY-MM-DD format')
+    parser.add_argument('--lat', type=float, required=True, help='Latitude of the point within the desired HUC8 polygon')
+    parser.add_argument('--lon', type=float, required=True, help='Longitude of the point within the desired HUC8 polygon')
+    parser.add_argument('--visual', action='store_true', help='Enable matplotlib visualization')
+    args = parser.parse_args()
+
+    main(args.start_date, args.end_date, args.lat, args.lon, args.visual)

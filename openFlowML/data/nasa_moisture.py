@@ -4,7 +4,7 @@ import h5py
 import shutil
 from scipy.spatial import cKDTree
 from shapely.ops import transform
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon
 import logging
 import argparse
 from earthaccess import *
@@ -16,7 +16,6 @@ import tempfile
 import importlib.util
 from shapely.ops import transform
 import earthaccess
-import pyproj
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as mplPolygon
 matplotlib_spec = importlib.util.find_spec("matplotlib")
