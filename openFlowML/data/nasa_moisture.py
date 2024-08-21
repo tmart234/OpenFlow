@@ -2,19 +2,23 @@ import datetime
 import numpy as np
 import h5py
 import shutil
+from scipy.spatial import cKDTree
 from shapely.ops import transform
 from shapely.geometry import Polygon, Point
 import logging
 import argparse
 from earthaccess import *
-from dataUtils.get_poly import check_polygon_intersection, get_huc8_polygon, validate_polygon, simplify_polygon
-from dataUtils.data_utils import load_vars, get_smap_data_bounds
+from dataUtils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
+from dataUtils.data_utils import load_vars, get_earthdata_auth, get_smap_data_bounds
 import os
 import tempfile
 # Conditionally import matplotlib
 import importlib.util
 from shapely.ops import transform
+import earthaccess
 import pyproj
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon as mplPolygon
 matplotlib_spec = importlib.util.find_spec("matplotlib")
 matplotlib_available = matplotlib_spec is not None
 
@@ -22,41 +26,6 @@ matplotlib_available = matplotlib_spec is not None
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 load_vars()
-
-
-def get_earthdata_auth():
-    """
-    Create and return an authenticated earthaccess Auth instance.
-    """
-    auth = Auth()
-    
-    username = os.getenv("EARTHDATA_USERNAME")
-    password = os.getenv("EARTHDATA_PASSWORD")
-    
-    logging.info(f"Attempting to authenticate with username: {username}")
-    
-    if username and password:
-        if auth.login(strategy="environment"):
-            logging.info("Successfully authenticated using environment variables")
-            return auth
-        else:
-            logging.warning("Authentication failed using environment variables")
-    else:
-        logging.warning("Environment variables not set or empty")
-    
-    # If environment variables fail, try .netrc file
-    if auth.login(strategy="netrc"):
-        logging.info("Successfully authenticated using .netrc file")
-        return auth
-    
-    # If both methods fail, fall back to interactive login
-    if auth.login(strategy="interactive"):
-        logging.info("Successfully authenticated interactively")
-        return auth
-    
-    raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
-
-import earthaccess
 
 def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon):
     """
@@ -158,103 +127,61 @@ def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon
             shutil.rmtree(temp_dir)
         return None, None
 
-def extract_soil_moisture(hdf_file, polygon):
-    """
-    Extract soil moisture data for the given polygon from the HDF file.
-    """
+def extract_soil_moisture(hdf_file, polygon, max_distance=0.1):
     try:
-        logging.info(f"Attempting to open file: {hdf_file}")
-        
-        if not os.path.exists(hdf_file):
-            logging.error(f"File does not exist: {hdf_file}")
-            return None
-
         with h5py.File(hdf_file, 'r') as file:
-            logging.info("Successfully opened HDF5 file")
-            
-            # Attempt to access the soil moisture dataset (try both AM and PM)
-            for time_of_day in ['AM', 'PM']:
-                try:
-                    soil_moisture_dataset = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/soil_moisture']
-                    lat_dataset = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/latitude']
-                    lon_dataset = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/longitude']
-                    logging.info(f"Found soil moisture data for {time_of_day}")
+            for dataset_name in file:
+                if 'Soil_Moisture_Retrieval_Data' in dataset_name:
+                    soil_moisture = file[f'{dataset_name}/soil_moisture'][:]
+                    lat = file[f'{dataset_name}/latitude'][:]
+                    lon = file[f'{dataset_name}/longitude'][:]
+                    logging.info(f"Found soil moisture data in {dataset_name}")
                     break
-                except KeyError:
-                    logging.warning(f"Could not find soil moisture data for {time_of_day}")
             else:
-                logging.error("Could not find soil moisture, latitude, or longitude data in the file")
+                logging.error("Could not find soil moisture data in the file")
                 return None
 
-            # Get dataset shapes and create a polygon object
-            shape = soil_moisture_dataset.shape
-            polygon_obj = Polygon(polygon)
+        polygon_obj = Polygon(polygon)
+        minx, miny, maxx, maxy = polygon_obj.bounds
 
-            # Log the resolution of the data
-            lat_res = (lat_dataset[:].max() - lat_dataset[:].min()) / shape[0]
-            lon_res = (lon_dataset[:].max() - lon_dataset[:].min()) / shape[1]
-            logging.info(f"SMAP data resolution: {lat_res:.6f} degrees latitude, {lon_res:.6f} degrees longitude")
+        # Start with the polygon bounds and gradually expand
+        for distance in np.linspace(0, max_distance, 5):
+            expanded_bounds = (minx-distance, miny-distance, maxx+distance, maxy+distance)
+            mask = (lon >= expanded_bounds[0]) & (lon <= expanded_bounds[2]) & \
+                   (lat >= expanded_bounds[1]) & (lat <= expanded_bounds[3])
+            
+            lons = lon[mask]
+            lats = lat[mask]
+            soil_moisture_masked = soil_moisture[mask]
 
-            # Calculate the approximate size of the polygon
-            poly_bounds = polygon_obj.bounds
-            poly_width = poly_bounds[2] - poly_bounds[0]
-            poly_height = poly_bounds[3] - poly_bounds[1]
-            logging.info(f"Polygon size: {poly_width:.6f} degrees longitude, {poly_height:.6f} degrees latitude")
+            valid = (soil_moisture_masked != -9999.0) & (lons != -9999.0) & (lats != -9999.0)
+            lons = lons[valid]
+            lats = lats[valid]
+            soil_moisture_valid = soil_moisture_masked[valid]
 
-            # Create a transformer object for converting between coordinate systems
-            transformer = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+            logging.info(f"Found {len(lons)} valid points within expanded bounds (distance: {distance})")
 
-            # Transform the polygon to the same coordinate system as the data
-            polygon_transformed = transform(transformer.transform, polygon_obj)
+            if len(lons) > 0:
+                tree = cKDTree(np.column_stack((lons, lats)))
+                expanded_polygon = polygon_obj.buffer(distance)
+                mask_polygon = tree.query_ball_point(expanded_polygon.exterior.coords, r=0.01)
+                mask_polygon = np.unique(np.concatenate(mask_polygon))
 
-            # Initialize variables for calculation
-            total_moisture = 0
-            count = 0
+                soil_moisture_in_polygon = soil_moisture_valid[mask_polygon]
 
-            # Process data in chunks to reduce memory usage
-            chunk_size = 1000
-            for i in range(0, shape[0], chunk_size):
-                for j in range(0, shape[1], chunk_size):
-                    # Load data in chunks
-                    lat_chunk = lat_dataset[i:i+chunk_size, j:j+chunk_size]
-                    lon_chunk = lon_dataset[i:i+chunk_size, j:j+chunk_size]
-                    soil_moisture_chunk = soil_moisture_dataset[i:i+chunk_size, j:j+chunk_size]
+                if len(soil_moisture_in_polygon) > 0:
+                    average_moisture = np.mean(soil_moisture_in_polygon)
+                    logging.info(f"Found {len(soil_moisture_in_polygon)} points inside or near the polygon")
+                    logging.info(f"Average soil moisture: {average_moisture:.4f}")
+                    return average_moisture, expanded_polygon
 
-                    # Create masks for valid data
-                    valid_mask = (lat_chunk != -9999.0) & (lon_chunk != -9999.0) & (soil_moisture_chunk != -9999.0)
-                    
-                    # Apply masks
-                    lat_valid = lat_chunk[valid_mask]
-                    lon_valid = lon_chunk[valid_mask]
-                    soil_moisture_valid = soil_moisture_chunk[valid_mask]
-
-                    # Log the number of valid points in this chunk
-                    logging.info(f"Valid points in chunk {i}/{shape[0]}, {j}/{shape[1]}: {np.sum(valid_mask)}")
-
-                    # Check points against the polygon
-                    for lat, lon, moisture in zip(lat_valid.flat, lon_valid.flat, soil_moisture_valid.flat):
-                        point = Point(transformer.transform(lon, lat))
-                        if polygon_transformed.contains(point):
-                            total_moisture += moisture
-                            count += 1
-
-                    # Log progress and intermediate results
-                    if count > 0:
-                        logging.info(f"Processed chunk {i}/{shape[0]}, {j}/{shape[1]}. Points in polygon so far: {count}")
-
-            if count > 0:
-                average_moisture = total_moisture / count
-                logging.info(f"Number of points found inside the polygon: {count}")
-                logging.info(f"Average soil moisture: {average_moisture:.4f}")
-                return average_moisture
-            else:
-                logging.warning("No valid soil moisture data found within the polygon")
-                return None
+        logging.warning("No valid soil moisture data found within or near the polygon")
+        return None, None
 
     except Exception as e:
         logging.error(f"Error extracting soil moisture data: {e}")
         logging.error("Traceback: ", exc_info=True)
-        return None
+        return None, None
 
 # Add this function to check data availability in the polygon area
 def check_data_availability(hdf_file, polygon):
@@ -273,20 +200,32 @@ def check_data_availability(hdf_file, polygon):
                 return
 
         # Get polygon bounds
-        min_lon, min_lat, max_lon, max_lat = Polygon(polygon).bounds
+        poly = Polygon(polygon)
+        min_lon, min_lat, max_lon, max_lat = poly.bounds
 
-        # Create a mask for the area of interest
+        # Create masks for the area of interest and its surroundings
         area_mask = (lat >= min_lat) & (lat <= max_lat) & (lon >= min_lon) & (lon <= max_lon)
+        surrounding_mask = (lat >= min_lat-1) & (lat <= max_lat+1) & (lon >= min_lon-1) & (lon <= max_lon+1)
 
-        # Check for valid data in the area of interest
-        valid_data_mask = (soil_moisture != -9999.0) & area_mask
+        # Check for valid data
+        valid_data_mask = (soil_moisture != -9999.0)
 
+        # Calculate statistics
         total_points = np.sum(area_mask)
-        valid_points = np.sum(valid_data_mask)
+        valid_points = np.sum(valid_data_mask & area_mask)
+        surrounding_valid_points = np.sum(valid_data_mask & surrounding_mask)
 
         logging.info(f"Total points in area of interest: {total_points}")
         logging.info(f"Valid data points in area of interest: {valid_points}")
-        logging.info(f"Percentage of valid data: {valid_points/total_points*100:.2f}%")
+        logging.info(f"Percentage of valid data in area: {valid_points/total_points*100:.2f}%")
+        logging.info(f"Valid data points in surrounding area: {surrounding_valid_points}")
+
+        if valid_points == 0:
+            logging.warning("No valid data points found within the polygon.")
+            if surrounding_valid_points > 0:
+                logging.info("However, valid data points found in the surrounding area.")
+            else:
+                logging.warning("No valid data points found in the surrounding area either.")
 
     except Exception as e:
         logging.error(f"Error checking data availability: {e}")
@@ -305,94 +244,81 @@ def list_nsidc_collections():
         logging.error(f"Error listing NSIDC collections: {e}")
         return None
 
-def visualize_soil_moisture_simple(polygon, average_moisture):
-    """
-    Create a simple visualization of the polygon and average soil moisture.
-    """
-    if not matplotlib_available:
-        logging.error("Matplotlib is not installed. Cannot create visualization.")
-        return
+def visualize_smap_and_polygon(hdf_file, polygon):
+    try:
+        with h5py.File(hdf_file, 'r') as file:
+            for dataset_name in file:
+                if 'Soil_Moisture_Retrieval_Data' in dataset_name:
+                    soil_moisture = file[f'{dataset_name}/soil_moisture'][:]
+                    lat = file[f'{dataset_name}/latitude'][:]
+                    lon = file[f'{dataset_name}/longitude'][:]
+                    break
+            else:
+                logging.error("Could not find soil moisture data in the file")
+                return
 
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Polygon as mplPolygon
-    
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Plot the polygon
-    poly = mplPolygon(polygon, facecolor='none', edgecolor='red', linewidth=2)
-    ax.add_patch(poly)
-    
-    # Set the extent to focus on the polygon
-    min_lon, min_lat = np.min(polygon, axis=0)
-    max_lon, max_lat = np.max(polygon, axis=0)
-    ax.set_xlim(min_lon - 0.1, max_lon + 0.1)
-    ax.set_ylim(min_lat - 0.1, max_lat + 0.1)
-    
-    plt.title(f'HUC8 Polygon\nAverage Soil Moisture: {average_moisture:.4f}')
-    plt.xlabel('Longitude')
-    plt.ylabel('Latitude')
-    
-    plt.show()
+        # Create a mask for valid data
+        valid_mask = (soil_moisture != -9999.0) & (lat != -9999.0) & (lon != -9999.0)
+        
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Plot SMAP data points
+        sc = ax.scatter(lon[valid_mask], lat[valid_mask], c=soil_moisture[valid_mask], 
+                        cmap='viridis', s=1, alpha=0.5)
+        plt.colorbar(sc, label='Soil Moisture')
+        
+        # Plot the polygon
+        poly = mplPolygon(polygon, facecolor='none', edgecolor='red', linewidth=2)
+        ax.add_patch(poly)
+        
+        # Set the extent to focus on the area around the polygon
+        poly_bounds = Polygon(polygon).bounds
+        ax.set_xlim(poly_bounds[0] - 1, poly_bounds[2] + 1)
+        ax.set_ylim(poly_bounds[1] - 1, poly_bounds[3] + 1)
+        
+        plt.title('SMAP Data and Polygon')
+        plt.xlabel('Longitude')
+        plt.ylabel('Latitude')
+        plt.show()
+        
+    except Exception as e:
+        logging.error(f"Error visualizing SMAP data and polygon: {e}")
 
 def main(start_date, end_date, lat, lon, visual):
     auth = get_earthdata_auth()
 
-    # Get the HUC8 polygon
-    huc8_polygon = get_huc8_polygon(lat, lon)
+    huc8_polygon = get_huc_polygon(lat, lon, huc_level=8)
     if not huc8_polygon:
         logging.error("Failed to retrieve HUC8 polygon")
         return
 
-    # Simplify & validate the polygon and format it for earthaccess
     simplified_polygon = simplify_polygon(huc8_polygon)
-    logging.debug(f"Simplified polygon: {simplified_polygon}")
-    simplified_polygon = validate_polygon(simplified_polygon)
-    logging.info(f"Validated polygon coordinates: {simplified_polygon}")
+    logging.info(f"Simplified polygon coordinates: {simplified_polygon}")
 
-    # Calculate and log the bounding box of the polygon
-    lons, lats = zip(*simplified_polygon)
-    min_lon, max_lon = min(lons), max(lons)
-    min_lat, max_lat = min(lats), max(lats)
-    logging.info(f"Polygon bounding box: Lon ({min_lon}, {max_lon}), Lat ({min_lat}, {max_lat})")
-
-    # Pass the simplified_polygon to the search_and_download_smap_data function
     downloaded_file, temp_dir = search_and_download_smap_data(start_date, end_date, auth, simplified_polygon)
     
     if downloaded_file and temp_dir:
         try:
+            # Visualize SMAP data and polygon
+            visualize_smap_and_polygon(downloaded_file, simplified_polygon)
+            
             # Extract soil moisture data
-            average_soil_moisture = extract_soil_moisture(downloaded_file, simplified_polygon)
+            average_soil_moisture, used_polygon = extract_soil_moisture(downloaded_file, simplified_polygon)
             
             if average_soil_moisture is not None:
-                logging.info(f"Average soil moisture for the given polygon between {start_date} and {end_date}: {average_soil_moisture:.4f}")
-                
-                if visual:
-                    if matplotlib_available:
-                        visualize_soil_moisture_simple(simplified_polygon, average_soil_moisture)
-                    else:
-                        logging.warning("Matplotlib is not installed. Skipping visualization.")
+                logging.info(f"Average soil moisture: {average_soil_moisture:.4f}")
+                if visual and matplotlib_available:
+                    pass
+                    #visualize_soil_moisture_simple(used_polygon, average_soil_moisture)
             else:
-                logging.error("Failed to calculate soil moisture. Check if the polygon intersects with available data.")
-                
-            # Additional debugging: Check SMAP data bounds
-            smap_bounds = get_smap_data_bounds(downloaded_file)
-            if smap_bounds:
-                logging.info(f"SMAP data bounds: Lon ({smap_bounds[0]}, {smap_bounds[2]}), Lat ({smap_bounds[1]}, {smap_bounds[3]})")
-                if check_polygon_intersection(simplified_polygon, smap_bounds):
-                    logging.info("Polygon intersects with SMAP data bounds.")
-                else:
-                    logging.warning("Polygon does not intersect with SMAP data bounds. This may explain the lack of data.")
+                logging.error("Failed to calculate soil moisture.")
             
         finally:
             # Clean up: remove the temporary directory
-            try:
-                shutil.rmtree(temp_dir)
-                logging.info(f"Removed temporary directory: {temp_dir}")
-            except Exception as e:
-                logging.warning(f"Failed to remove temporary directory: {e}")
+            shutil.rmtree(temp_dir)
+            logging.info(f"Removed temporary directory: {temp_dir}")
     else:
         logging.error("Failed to find or download SMAP data")
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Calculate average soil moisture for a HUC8 polygon from SMAP L3 data.')
     parser.add_argument('--start-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='Start Date in YYYY-MM-DD format')

@@ -2,6 +2,7 @@ import logging
 import os
 import h5py
 from dotenv import load_dotenv
+from  earthaccess import Auth
 
  # Additional function to display the beginning and ending of the dataframe
 def preview_data(df, num_rows=4):
@@ -9,6 +10,29 @@ def preview_data(df, num_rows=4):
     logging.info(df.head(num_rows))
     logging.info("\nLast few rows:")
     logging.info(df.tail(num_rows))
+
+def get_earthdata_auth():
+    """
+    Create and return an authenticated earthaccess Auth instance.
+    """
+    auth = Auth()
+    
+    username = os.getenv("EARTHDATA_USERNAME")
+    password = os.getenv("EARTHDATA_PASSWORD")
+    
+    logging.info(f"Attempting to authenticate with username: {username}")
+    
+    if username and password:
+        if auth.login(strategy="environment"):
+            logging.info("Successfully authenticated using environment variables")
+            return auth
+        else:
+            logging.warning("Authentication failed using environment variables")
+    else:
+        logging.warning("Environment variables not set or empty")
+    
+    raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
+
 
 def get_smap_data_bounds(hdf_file):
     """

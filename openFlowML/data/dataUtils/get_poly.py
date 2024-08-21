@@ -126,7 +126,8 @@ def get_huc_polygon(lat, lon, huc_level):
 def simplify_polygon(polygon, tolerance=0.005):
     """
     Simplify the polygon using Shapely's simplify method.
-    """
+    # TODO: add tolerance based on HUC bc HUC 4 has many more points than HUC 6 or 8
+     """
     # Check if polygon is a list of lists (multi-ring polygon)
     if isinstance(polygon[0][0], list):
         # Take only the first ring (outer boundary)
@@ -229,7 +230,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Example SMAP data bounds (you should replace these with actual bounds from your SMAP data)
-    smap_data_bounds = (-180, -90, 180, 90)
+    smap_data_bounds = (-179.953323, -84.656417, 179.953323, 84.656417)
     
     result = main(args.lat, args.lon, args.huc, smap_data_bounds)
     if result:
