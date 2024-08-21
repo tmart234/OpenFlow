@@ -3,6 +3,12 @@ import os
 import h5py
 from dotenv import load_dotenv
 from  earthaccess import Auth
+import requests
+from datetime import datetime, timezone
+
+# Global variables to store token and expiration
+_token = None
+_expiration = None
 
  # Additional function to display the beginning and ending of the dataframe
 def preview_data(df, num_rows=4):
@@ -33,6 +39,59 @@ def get_earthdata_auth():
     
     raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
 
+
+def appeears_login():
+    """
+    Log in to AppEEARS and obtain a token.
+    """
+    global _token, _expiration
+    url = "https://appeears.earthdatacloud.nasa.gov/api/login"
+    username = os.getenv("EARTHDATA_USERNAME")
+    password = os.getenv("EARTHDATA_PASSWORD")
+
+    if not username or not password:
+        raise ValueError("EARTHDATA_USERNAME and EARTHDATA_PASSWORD environment variables must be set.")
+
+    try:
+        response = requests.post(url, auth=(username, password))
+        response.raise_for_status()
+        data = response.json()
+        _token = data['token']
+        # Parse the expiration date string manually
+        expiration_str = data['expiration']
+        # Remove the 'Z' at the end and split the string
+        date_part, time_part = expiration_str[:-1].split('T')
+        year, month, day = map(int, date_part.split('-'))
+        hour, minute, second = map(int, time_part.split(':'))
+        _expiration = datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+        return _token
+    except requests.RequestException as e:
+        print(f"Login failed: {e}")
+        return None
+
+def appeears_logout():
+    """
+    Log out from AppEEARS and invalidate the current token.
+    """
+    global _token, _expiration
+    if not _token:
+        print("No active session to log out from.")
+        return True
+
+    url = "https://appeears.earthdatacloud.nasa.gov/api/logout"
+    headers = {'Authorization': f'Bearer {_token}'}
+    try:
+        response = requests.post(url, headers=headers)
+        if response.status_code == 204:
+            _token = None
+            _expiration = None
+            return True
+        else:
+            print(f"Logout failed: {response.text}")
+            return False
+    except requests.RequestException as e:
+        print(f"Logout failed: {e}")
+        return False
 
 def get_smap_data_bounds(hdf_file):
     """
@@ -66,6 +125,7 @@ def get_smap_data_bounds(hdf_file):
     except Exception as e:
         logging.error(f"Error getting SMAP data bounds: {e}")
         return None
+    
 
 def load_vars():
     # Load environment variables from cred.env

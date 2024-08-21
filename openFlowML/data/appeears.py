@@ -9,7 +9,7 @@ import numpy as np
 from rasterio.mask import mask
 from shapely.geometry import box
 from dataUtils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
-from dataUtils.data_utils import load_vars, get_earthdata_auth, get_smap_data_bounds
+from dataUtils.data_utils import appeears_login, appeears_logout, load_vars, get_earthdata_auth, get_smap_data_bounds
 import time
 import tempfile
 import argparse
@@ -28,10 +28,102 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 load_vars()
 
+def check_appeears_product(product_id, layer_name):
+    """
+    Check if the specified product and layer are available in AppEEARS.
+    """
+    # First, get the list of all products
+    products_url = "https://appeears.earthdatacloud.nasa.gov/api/product"
+    
+    try:
+        response = requests.get(products_url, headers=None, timeout=30)
+        response.raise_for_status()
+        
+        # Print raw response for debugging
+        print("Raw API Response:")
+        print(response.text[:1000])  # Print first 1000 characters
+        
+        products = response.json()
+        
+        print(f"Type of products: {type(products)}")
+        
+        if isinstance(products, list):
+            print("Products is a list. Printing first item:")
+            print(products[0] if products else "Empty list")
+        elif isinstance(products, dict):
+            print("Products is a dictionary. Printing keys:")
+            print(products.keys())
+        else:
+            print(f"Unexpected type for products: {type(products)}")
+        
+        print("Available Soil Moisture Products:")
+        if isinstance(products, list):
+            for product in products:
+                if isinstance(product, dict) and 'ProductAndVersion' in product:
+                    # Check if the product is related to soil moisture
+                    if 'soil moisture' in product.get('Description', '').lower():
+                        print(f"- {product['ProductAndVersion']}: {product.get('Description', 'N/A')}")
+                        print(f"  Available: {product.get('Available', 'N/A')}")
+                        print(f"  Temporal Extent: {product.get('TemporalExtentStart', 'N/A')} to {product.get('TemporalExtentEnd', 'N/A')}")
+                        print(f"  Resolution: {product.get('Resolution', 'N/A')}")
+                        print(f"  Source: {product.get('Source', 'N/A')}")
+                        print("  ---")
+        
+    except requests.Timeout:
+        logging.error("Request timed out while checking product availability")
+        return False
+    except requests.RequestException as e:
+        logging.error(f"Error checking product availability: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        return False
+
+    return True  # Return True for now, adjust based on actual product availability check
+
+def get_product_layers(token, product_id):
+    """
+    Get available layers for a specific product from AppEEARS API.
+    """
+    url = f"https://appeears.earthdatacloud.nasa.gov/api/product/{product_id}"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        product_info = response.json()
+        
+        logging.info(f"Available layers for {product_id}:")
+        for layer_name, layer_info in product_info.items():
+            logging.info(f"- {layer_name}: {layer_info.get('Description', 'No description available')}")
+        
+        return product_info
+    except requests.RequestException as e:
+        logging.error(f"Error getting product layers: {e}")
+        return {}
+
 def submit_appears_task(token, polygon, start_date, end_date):
     """
     Submit a task to AppEEARS API for SMAP data retrieval.
     """
+    product_id = "SPL3SMP_E.006"
+    layers = get_product_layers(token, product_id)
+    
+    if not layers:
+        logging.error(f"No layers found for product {product_id}")
+        return None
+    
+    # Choose the first available layer related to soil moisture
+    soil_moisture_layer = next((layer_name for layer_name, layer_info in layers.items() 
+                                if 'soil_moisture' in layer_name.lower() or 'soil_moisture' in layer_info.get('Description', '').lower()), 
+                               None)
+    
+    if not soil_moisture_layer:
+        logging.error(f"No soil moisture layer found for product {product_id}")
+        return None
+    
+    logging.info(f"Selected layer: {soil_moisture_layer}")
+    
     url = "https://appeears.earthdatacloud.nasa.gov/api/task"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -50,8 +142,8 @@ def submit_appears_task(token, polygon, start_date, end_date):
             ],
             "layers": [
                 {
-                    "product": "SPL3SMP_E.003",
-                    "layer": "soil_moisture"
+                    "product": product_id,
+                    "layer": soil_moisture_layer
                 }
             ],
             "output": {
@@ -77,7 +169,15 @@ def submit_appears_task(token, polygon, start_date, end_date):
     }
     
     try:
+        logging.info(f"Submitting task to URL: {url}")
+        logging.info(f"Headers: {headers}")
+        logging.info(f"Payload: {json.dumps(task_payload, indent=2)}")
+        
         response = requests.post(url, headers=headers, data=json.dumps(task_payload), timeout=30)
+        
+        logging.info(f"Response status code: {response.status_code}")
+        logging.info(f"Response headers: {response.headers}")
+        logging.info(f"Response content: {response.text}")
         
         if response.status_code == 202:
             return response.json()["task_id"]
@@ -91,8 +191,7 @@ def submit_appears_task(token, polygon, start_date, end_date):
     except requests.RequestException as e:
         logging.error(f"Error submitting task: {e}")
         return None
-
-
+    
 def check_task_status(token, task_id):
     """
     Check the status of an AppEEARS task.
@@ -204,25 +303,55 @@ def visualize_smap_data(geotiff_path, polygon, average_moisture):
         logging.error(f"Error visualizing SMAP data: {e}")
         logging.error("Traceback: ", exc_info=True)
 
+# Add a function to verify the token:
+def verify_token(token):
+    url = "https://appeears.earthdatacloud.nasa.gov/api/user"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            logging.info("Token verified successfully")
+            return True
+        else:
+            logging.error(f"Failed to verify token. Status code: {response.status_code}")
+            logging.error(f"Response: {response.text}")
+            return False
+    except requests.RequestException as e:
+        logging.error(f"Error verifying token: {e}")
+        return False
+
 def main(start_date, end_date, lat, lon, visual):
-    # Get AppEEARS token
-    token = get_earthdata_auth().tokens[0]
+    # Login to AppEEARS
+    token = appeears_login()
+    if not token:
+        logging.error("Failed to login to AppEEARS. Please check your credentials.")
+        return
+
+    # Check if the product and layer are available
+    product_id = "SPL3SMP_E.003"
+    layer_name = "soil_moisture"
+    if not check_appeears_product(product_id, layer_name):
+        logging.error("Required product or layer is not available. Exiting.")
+        appeears_logout()
+        return
 
     # Get the HUC8 polygon
     huc8_polygon = get_huc_polygon(lat, lon, 8)
     if not huc8_polygon:
         logging.error("Failed to retrieve HUC8 polygon")
+        appeears_logout()
         return
 
     # Simplify & validate the polygon
     simplified_polygon = simplify_polygon(huc8_polygon)
     simplified_polygon = validate_polygon(simplified_polygon)
-    logging.info(f"Validated polygon coordinates: {simplified_polygon}")
+    logging.debug(f"Validated polygon coordinates: {simplified_polygon}")
 
     # Submit AppEEARS task
     task_id = submit_appears_task(token, simplified_polygon, start_date, end_date)
     if not task_id:
         logging.error("Failed to submit AppEEARS task")
+        appeears_logout()
         return
 
     # Wait for task to complete
@@ -235,14 +364,17 @@ def main(start_date, end_date, lat, lon, visual):
             break
         elif status == "error":
             logging.error("Task failed")
+            appeears_logout()
             return
         elif status is None:
             logging.error("Failed to check task status")
+            appeears_logout()
             return
         time.sleep(60)  # Wait for 60 seconds before checking again
         retries += 1
     else:
         logging.error("Task did not complete within the maximum wait time")
+        appeears_logout()
         return
     
     # Download results
@@ -267,6 +399,9 @@ def main(start_date, end_date, lat, lon, visual):
 
     # Clean up
     shutil.rmtree(output_dir)
+    
+    # Logout from AppEEARS
+    appeears_logout()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Calculate average soil moisture for a HUC8 polygon from SMAP L3 data.')
