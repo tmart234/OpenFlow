@@ -3,7 +3,7 @@ import argparse
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
-import dataUtils.data_utils as data_utils
+from data.utils import data_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,7 +32,7 @@ def get_historical_data(abbrev, start_date, end_date):
             data = response.json()
             if not data or 'ResultList' not in data:
                 logging.info("No data or unexpected data format returned for the given query.")
-                return pd.DataFrame(columns=['Date', 'Min Discharge', 'Max Discharge'])
+                return pd.DataFrame(columns=['Date', 'Min Flow', 'Max Flow'])
             
             date_dict = {}
             for record in data['ResultList']:
@@ -47,13 +47,13 @@ def get_historical_data(abbrev, start_date, end_date):
             min_flows = [min(flows) for flows in date_dict.values()]
             max_flows = [max(flows) for flows in date_dict.values()]
             
-            return pd.DataFrame({'Date': dates, 'Min Discharge': min_flows, 'Max Discharge': max_flows})
+            return pd.DataFrame({'Date': dates, 'Min Flow': min_flows, 'Max Flow': max_flows})
         except (ValueError, KeyError) as e:
             logging.error(f"Failed to parse JSON from response: {e}")
-            return pd.DataFrame(columns=['Date', 'Min Discharge', 'Max Discharge'])
+            return pd.DataFrame(columns=['Date', 'Min Flow', 'Max Flow'])
     else:
         logging.error(f"HTTP Error {response.status_code}: {response.text}")
-        return pd.DataFrame(columns=['Date', 'Min Discharge', 'Max Discharge'])
+        return pd.DataFrame(columns=['Date', 'Min Flow', 'Max Flow'])
     
 def main(abbrev, start_date=None, end_date=None):
     if start_date is None:

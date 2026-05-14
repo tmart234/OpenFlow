@@ -1,10 +1,12 @@
 import logging
 import os
-import h5py
-from dotenv import load_dotenv
-from  earthaccess import Auth
 import requests
 from datetime import datetime, timezone
+
+# NOTE: h5py, python-dotenv and earthaccess are heavy, optional dependencies
+# used only by the soil-moisture data modules. They are imported lazily inside
+# the functions that need them so that lightweight consumers (e.g. combine_data
+# importing preview_data) work with only the core requirements installed.
 
 # Global variables to store token and expiration
 _token = None
@@ -21,6 +23,7 @@ def get_earthdata_auth():
     """
     Create and return an authenticated earthaccess Auth instance.
     """
+    from earthaccess import Auth
     auth = Auth()
     
     username = os.getenv("EARTHDATA_USERNAME")
@@ -97,6 +100,7 @@ def get_smap_data_bounds(hdf_file):
     """
     Get the actual bounding box of the SMAP data from the HDF file, excluding fill values.
     """
+    import h5py
     try:
         with h5py.File(hdf_file, 'r') as file:
             for time_of_day in ['AM', 'PM']:
@@ -128,21 +132,29 @@ def get_smap_data_bounds(hdf_file):
     
 
 def load_vars():
-    # Load environment variables from cred.env
+    """
+    Load credentials from creds.env into the environment.
+
+    Returns True if all required variables are present, False otherwise. This
+    function must never exit the process: importing a data module should not
+    kill the interpreter just because credentials are absent (e.g. in CI or
+    when running the test suite).
+    """
+    from dotenv import load_dotenv
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     cred_env_path = os.path.join(script_dir, 'creds.env')
     if os.path.exists(cred_env_path):
         load_dotenv(cred_env_path)
         logging.info(f"Loaded environment variables from {cred_env_path}")
     else:
-        logging.error(f"creds.env file not found at {cred_env_path}")
-        exit(1)
+        logging.warning(f"creds.env file not found at {cred_env_path}")
 
-    # Check if environment variables are set
-    if not os.getenv("EARTHDATA_USERNAME") or not os.getenv("EARTHDATA_PASSWORD") \
-        or not os.getenv("EROS_API_KEY") or not os.getenv("EROS_USERNAME") \
-        or not os.getenv("EROS_USERNAME"):
-        logging.error("environment variables are not set in the cred.env file")
-        exit(1)
-    else:
-        logging.info("environment variables are set")
+    required = ["EARTHDATA_USERNAME", "EARTHDATA_PASSWORD",
+                "EROS_API_KEY", "EROS_USERNAME", "EROS_PASSWORD"]
+    missing = [v for v in required if not os.getenv(v)]
+    if missing:
+        logging.warning(f"Missing required environment variables: {missing}")
+        return False
+    logging.info("environment variables are set")
+    return True

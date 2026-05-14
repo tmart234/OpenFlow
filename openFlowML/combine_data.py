@@ -8,7 +8,8 @@ import pandas as pd
 import logging
 import re
 import numpy as np
-import MLutils.ml_utils as ml_utils
+from data.utils import data_utils
+from data.utils.get_coordinates import get_usgs_coordinates, get_dwr_coordinates
 
 """ 
 Takes multiuple individual data components and combindes into a dataset
@@ -63,12 +64,24 @@ def merge_dataframes(noaa_data, flow_data, station_id):
  
 # This function will handle fetching and processing (non-flow) data for a single site ID
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
-    coords_dict = get_coordinates(prefix, site_id)
+    if prefix == "USGS":
+        coords_dict = get_usgs_coordinates(site_id)
+    elif prefix == "DWR":
+        coords_dict = get_dwr_coordinates(site_id)
+    else:
+        coords_dict = None
+
+    if not coords_dict:
+        logging.error(f"Could not resolve coordinates for {prefix}:{site_id}. Skipping...")
+        return None
+
     latitude = coords_dict['latitude']
     longitude = coords_dict['longitude']
 
-    # Fetch NOAA data
-    closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_date, end_date)
+    # Fetch NOAA data. get_noaa.main expects date strings, not datetime objects.
+    start_str = start_date.strftime('%Y-%m-%d')
+    end_str = end_date.strftime('%Y-%m-%d')
+    closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_str, end_str)
 
     # Add the site ID to the NOAA data
     if not noaa_data.empty:
@@ -93,7 +106,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if noaa_data.empty or flow_data.empty:
         logging.warning(f"No data available for site ID {site_id}. Skipping...")
-        return None, None
+        return None
 
     # Check for and handle missing or non-numeric values in key columns
     for df in [noaa_data, flow_data]:
@@ -118,7 +131,7 @@ def save_combined_data(all_data, base_path):
         final_data = pd.concat([final_data, data])
 
     # Preview the combined data
-    ml_utils.preview_data(final_data)
+    data_utils.preview_data(final_data)
 
     # Save the combined raw data to a CSV file
     combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
@@ -154,14 +167,6 @@ def parse_datetime(datetime_str):
     else:
         print(f"No valid datetime found in string: {datetime_str}")
         return None
-    
-def get_site_ids(filename=None):
-    if filename is None:
-        # Construct the relative path to the site_ids.txt
-        filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.github', 'site_ids.txt')
-        
-    with open(filename, 'r') as f:
-        return [line.strip() for line in f]
 
 
 def main(training_num_years = 7):
@@ -183,8 +188,8 @@ def main(training_num_years = 7):
                 logging.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
             noaa_dataframe = fetch_and_process_data(prefix,id, start_date, end_date, flow_dataframe)
-            if flow_dataframe.empty:
-                logging.warning(f"No data available for site ID {site_id}. Skipping...")
+            if noaa_dataframe is None or noaa_dataframe.empty or flow_dataframe.empty:
+                logging.warning(f"No usable data for site ID {site_id}. Skipping...")
                 continue
 
             all_data[site_id] = merge_dataframes(noaa_dataframe, flow_dataframe, site_id)

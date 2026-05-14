@@ -1,6 +1,6 @@
 import shutil
 import logging
-from dataUtils.get_poly import simplify_polygon, validate_polygon, get_huc_polygon
+from data.utils.get_poly import simplify_polygon, validate_polygon, get_huc_polygon
 import os
 import datetime
 import rasterio
@@ -8,8 +8,8 @@ from rasterio.plot import show
 import numpy as np
 from rasterio.mask import mask
 from shapely.geometry import box
-from dataUtils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
-from dataUtils.data_utils import appeears_login, appeears_logout, load_vars, get_earthdata_auth, get_smap_data_bounds
+from data.utils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
+from data.utils.data_utils import appeears_login, appeears_logout, load_vars, get_earthdata_auth, get_smap_data_bounds
 import time
 import tempfile
 import argparse

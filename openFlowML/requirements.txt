@@ -1,12 +1,13 @@
+# Core dependencies for the ML training pipeline (train.py + combine_data.py).
+# Installed by .github/workflows/ml_training.yml.
+#
+# NOTE: kept intentionally minimal. tensorflow 2.13 pins typing-extensions<4.6,
+# which conflicts with earthaccess (>=4.10). The extra data-collection modules
+# that need earthaccess live in requirements-data.txt and are installed by a
+# separate CI job so the two never share an environment.
 requests>=2.31.0
 pandas>=2.1.1
 scikit-learn>=1.3.2
-numpy>=1.17.3
+numpy>=1.23,<1.25
 scipy>=1.5.0
 tensorflow==2.13
-u8darts>=0.29.0
-geopandas>=1.0.1
-earthaccess>=0.10.0
-
-#onnx==1.14.1
-#tf2onnx>=1.15.1

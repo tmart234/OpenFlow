@@ -9,22 +9,18 @@ def mock_requests():
 
 @pytest.fixture
 def usgs_mock_response():
-    return '''
-# comment line
-# another comment line
-site_no	station_nm	dec_lat_va	dec_long_va
-12345678	Test Station	40.123456	-105.654321
-07094500	ARKANSAS RIVER AT PARKDALE, CO	38.4872189	-105.373604
-'''
+    # NWIS Site Service RDB: comment line(s), header row, format-spec row, data rows.
+    return (
+        "# comment line\n"
+        "agency_cd\tsite_no\tstation_nm\tsite_tp_cd\tdec_lat_va\tdec_long_va\n"
+        "5s\t15s\t50s\t7s\t16s\t16s\n"
+        "USGS\t12345678\tTest Station\tST\t40.123456\t-105.654321\n"
+        "USGS\t07094500\tARKANSAS RIVER AT PARKDALE, CO\tST\t38.4872189\t-105.373604\n"
+    )
 
 @pytest.fixture
 def dwr_mock_response():
-    return '''
-# comment line
-# another comment line
-abbrev	latitude	longitude
-TESTABBR	39.987654	-104.123456
-'''
+    return {"ResultList": [{"abbrev": "TESTABBR", "latitude": 39.987654, "longitude": -104.123456}]}
 
 @pytest.fixture
 def mock_sys_argv(monkeypatch):
@@ -33,7 +29,7 @@ def mock_sys_argv(monkeypatch):
     return _mock_argv
 
 def test_get_usgs_coordinates(mock_requests, usgs_mock_response):
-    mock_requests.get('https://waterdata.usgs.gov/nwis/inventory', text=usgs_mock_response)
+    mock_requests.get('https://waterservices.usgs.gov/nwis/site/', text=usgs_mock_response)
 
     result = get_usgs_coordinates('12345678')
     expected = {
@@ -43,7 +39,7 @@ def test_get_usgs_coordinates(mock_requests, usgs_mock_response):
     assert result == expected
 
 def test_get_usgs_coordinates_specific_station(mock_requests, usgs_mock_response):
-    mock_requests.get('https://waterdata.usgs.gov/nwis/inventory', text=usgs_mock_response)
+    mock_requests.get('https://waterservices.usgs.gov/nwis/site/', text=usgs_mock_response)
 
     result = get_usgs_coordinates('07094500')
     expected = {
@@ -53,35 +49,35 @@ def test_get_usgs_coordinates_specific_station(mock_requests, usgs_mock_response
     assert result == expected
 
 def test_get_usgs_coordinates_invalid_station(mock_requests):
-    mock_requests.get('https://waterdata.usgs.gov/nwis/inventory', text='')
+    mock_requests.get('https://waterservices.usgs.gov/nwis/site/', text='')
 
     result = get_usgs_coordinates('invalid_station')
     assert result is None
 
 def test_get_usgs_coordinates_api_error(mock_requests):
-    mock_requests.get('https://waterdata.usgs.gov/nwis/inventory', status_code=500)
+    mock_requests.get('https://waterservices.usgs.gov/nwis/site/', status_code=500)
 
     result = get_usgs_coordinates('12345678')
     assert result is None
 
 def test_get_dwr_coordinates(mock_requests, dwr_mock_response):
-    mock_requests.get('https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations', text=dwr_mock_response)
+    mock_requests.get('https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations/', json=dwr_mock_response)
 
     result = get_dwr_coordinates('TESTABBR')
     expected = {
-        'latitude': '39.987654',
-        'longitude': '-104.123456'
+        'latitude': 39.987654,
+        'longitude': -104.123456
     }
     assert result == expected
 
 def test_get_dwr_coordinates_invalid_abbrev(mock_requests):
-    mock_requests.get('https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations', text='')
+    mock_requests.get('https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations/', json={"ResultList": []})
 
     result = get_dwr_coordinates('INVALID')
     assert result is None
 
 def test_get_dwr_coordinates_api_error(mock_requests):
-    mock_requests.get('https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations', status_code=500)
+    mock_requests.get('https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations/', status_code=500)
 
     result = get_dwr_coordinates('TESTABBR')
     assert result is None
@@ -92,7 +88,7 @@ def test_main_usgs(mock_sys_argv, monkeypatch, capsys):
     def mock_get_usgs_coordinates(site_number):
         return {'latitude': '38.4872189', 'longitude': '-105.373604'}
     
-    monkeypatch.setattr('utils.get_coordinates.get_usgs_coordinates', mock_get_usgs_coordinates)
+    monkeypatch.setattr('data.utils.get_coordinates.get_usgs_coordinates', mock_get_usgs_coordinates)
     
     main()
     
@@ -105,7 +101,7 @@ def test_main_dwr(mock_sys_argv, monkeypatch, capsys):
     def mock_get_dwr_coordinates(abbrev):
         return {'latitude': '39.987654', 'longitude': '-104.123456'}
     
-    monkeypatch.setattr('utils.get_coordinates.get_dwr_coordinates', mock_get_dwr_coordinates)
+    monkeypatch.setattr('data.utils.get_coordinates.get_dwr_coordinates', mock_get_dwr_coordinates)
     
     main()
     

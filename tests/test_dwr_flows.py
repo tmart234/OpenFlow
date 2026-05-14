@@ -30,8 +30,8 @@ def test_successful_data_fetch_dwr(mock_dwr_response):
     result = get_historical_data("ARKCANCO", start_date, end_date)
     assert not result.empty
     assert len(result) == 1
-    assert result.loc[0, 'Min Discharge'] == 10.0
-    assert result.loc[0, 'Max Discharge'] == 20.0
+    assert result.loc[0, 'Min Flow'] == 10.0
+    assert result.loc[0, 'Max Flow'] == 20.0
 
 def test_api_error_handling(mock_dwr_response):
     # Mocking a failure scenario

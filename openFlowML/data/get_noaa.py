@@ -264,7 +264,9 @@ def main(latitude=38.52, longitude=-106.96, startStr=None, endStr=None):
         return nearest_station_id[0], temperature_data
     else:
         logging.error("No station found near the specified location!")
-        return sys.exit(1)  # Exit with a status of 1, indicating failure
+        # Return empty results rather than exiting: a single station with no
+        # nearby NOAA data must not abort the whole training run.
+        return None, pd.DataFrame()
 
 if __name__ == "__main__":
     if len(sys.argv) > 4:  # Check if enough arguments are passed

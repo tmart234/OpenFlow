@@ -12,6 +12,7 @@ def test_date_validation():
     with pytest.raises(ValueError):
         get_swe.main(basin_name, basin_type, start_date, end_date)
     
+@pytest.mark.network
 def test_data_retrieval():
     """Test that data retrieval returns a non-empty DataFrame for valid dates."""
     basin_name = 'South Platte'
@@ -33,6 +34,7 @@ def test_invalid_basin_type():
 
 # check basin vs sub basin
 # Using a tuple in parametrize to differentiate between basin types and their names
+@pytest.mark.network
 @pytest.mark.parametrize("basin_type,basin_name", [
     ('basin', 'South Platte'),  # Known basin
     ('subbasin', 'Upper South Platte')  # Known subbasin

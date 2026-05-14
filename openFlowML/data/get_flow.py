@@ -3,7 +3,7 @@ import argparse
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
-import dataUtils.data_utils as data_utils
+from data.utils import data_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,7 +22,7 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
             data_lines = content[index:]
             break
     else:
-        return pd.DataFrame(columns=['Date', 'Min Discharge', 'Max Discharge'])  # Return empty DataFrame if no data lines found
+        return pd.DataFrame(columns=['Date', 'Min Flow', 'Max Flow'])  # Return empty DataFrame if no data lines found
 
     for line in data_lines:
         columns = line.split('\t')
@@ -45,7 +45,7 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
                 min_flows.append(flow)
                 max_flows.append(flow)
 
-    df = pd.DataFrame({'Date': dates, 'Min Discharge': min_flows, 'Max Discharge': max_flows})
+    df = pd.DataFrame({'Date': dates, 'Min Flow': min_flows, 'Max Flow': max_flows})
     return df
 
 def main(flow_site_id, start_date, end_date):

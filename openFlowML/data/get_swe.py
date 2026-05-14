@@ -1,6 +1,6 @@
 import requests
 import argparse
-from swe_dicts import basins, subbasins
+from data.swe_dicts import basins, subbasins
 import pandas as pd
 from datetime import datetime, timedelta
 import json

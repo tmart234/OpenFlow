@@ -1,0 +1,9 @@
+# Dependencies for running the test suite (pytest tests/).
+# Installed by .github/workflows/tests.yml.
+#
+# Pulls in the data-module dependencies (so the data modules import cleanly)
+# plus the test tooling. tensorflow is intentionally NOT included here -- no
+# test imports the training pipeline, and tensorflow conflicts with earthaccess.
+-r openFlowML/requirements-data.txt
+pytest>=7.4.0
+requests-mock>=1.11.0
