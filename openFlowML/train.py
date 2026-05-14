@@ -29,12 +29,13 @@ def reshape_data_for_lstm(data, historical_flow_timesteps=60, forecast_temperatu
     if not all(col in data.columns for col in required_columns):
         raise ValueError(f"Data missing required columns. Available columns: {data.columns}")
 
-    # Debugging: Print the DataFrame columns before one-hot encoding
-    logging.info("DataFrame columns before one-hot encoding: %s", data.columns)
-
-    # Assuming station columns are already one-hot encoded
-    station_columns = [col for col in data.columns if col.startswith('station_')]
-    feature_columns = required_columns + station_columns + ['date_normalized']
+    # Phase 2 feature schema: cyclical day-of-year (doy_sin/doy_cos) replaces the
+    # old date_normalized ramp. Station identity is now an integer (station_idx)
+    # rather than one-hot columns, and is intentionally left out of the sequence
+    # features here. Phase 3 reworks this windowing entirely -- station-aware
+    # windows, no flow leakage into the forecast window, chronological split --
+    # and reintroduces station identity via a proper embedding.
+    feature_columns = required_columns + ['doy_sin', 'doy_cos']
 
     total_required_days = historical_flow_timesteps + forecast_temperature_timesteps
 
@@ -76,10 +77,6 @@ def main():
     if data is None or data.empty:
         raise ValueError("Error: Data is not available or not in expected format.")
 
-    # Extract one-hot encoded station columns
-    station_columns = [col for col in data.columns if col.startswith('station_')]
-
-    # Ensure that site_id_data is no longer needed
     X, Y = reshape_data_for_lstm(data)
 
     # Split data into training and testing sets

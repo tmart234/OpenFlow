@@ -26,9 +26,15 @@ jobs:
     - name: Train model
       run: python openFlowML/train.py
 
-    - name: Upload model as artifact
+    # The model is not usable for inference without the scaler parameters
+    # (to invert the normalized flow predictions) and the station index map,
+    # so all three are published together.
+    - name: Upload model and inference artifacts
       uses: actions/upload-artifact@v4
       with:
         name: lstm_model_keras_release
-        path: ./lstm_model.h5
+        path: |
+          ./lstm_model.h5
+          ./scalers.json
+          ./station_index.json
         if-no-files-found: error

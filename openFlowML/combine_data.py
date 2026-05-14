@@ -6,64 +6,98 @@ import data.get_noaa as get_noaa
 import normalize_data
 import pandas as pd
 import logging
-import re
-import numpy as np
 from data.utils import data_utils
 from data.utils.get_coordinates import get_usgs_coordinates, get_dwr_coordinates
 
-""" 
-Takes multiuple individual data components and combindes into a dataset
+"""
+Combines the individual data components (flow + NOAA temperature) for each
+monitoring site into a single training dataset.
 
-scaling/Performance concerns: noaa script, pd.concat
+Phase 2 data-spine guarantees:
+  - every site is placed on a regular daily index over the training window
+  - short interior gaps are interpolated time-aware and PER STATION; longer
+    gaps are dropped rather than filled with a pooled (cross-station) mean
+  - the per-station frames carry a clean 'site_id' column
 
-TODO:
-1) Use get_all_stations at first
-2) SWE data
-2) remove station ID one-hot encoding
- """
+TODO (later in Phase 2): wire in SWE as a history-window feature.
+"""
 
-# This function will merge NOAA and flow data.
-def merge_dataframes(noaa_data, flow_data, station_id):
-     # Check if 'Date' column is in both dataframes
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logger = logging.getLogger(__name__)
+
+# Numeric columns that must be present and gap-free in the final per-site frame.
+CORE_COLUMNS = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX']
+# Longest interior gap (in days) we are willing to interpolate across.
+MAX_GAP_DAYS = 7
+
+
+def _to_daily_series(df, value_columns, daily_index):
+    """Index `df` by Date and reindex onto a regular daily DatetimeIndex."""
+    df = df.copy()
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    df = df.dropna(subset=['Date'])
+    present = [c for c in value_columns if c in df.columns]
+    if not present:
+        return pd.DataFrame(index=daily_index, columns=value_columns, dtype='float64')
+    # Collapse any accidental duplicate dates before reindexing.
+    daily = df.groupby('Date')[present].mean()
+    return daily.reindex(daily_index)
+
+
+def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date):
+    """
+    Merge a site's NOAA temperature and flow data onto one regular daily index.
+
+    Short interior gaps (<= MAX_GAP_DAYS) are interpolated time-aware; rows that
+    are still missing a core value afterwards are dropped. There is deliberately
+    no pooled-mean fill -- filling a flow gap with the average of every station
+    injects garbage into the series.
+    """
     if 'Date' not in noaa_data or 'Date' not in flow_data:
         raise ValueError("'Date' column missing in one of the dataframes")
+
     try:
-        # Convert 'Date' columns to datetime format
-        noaa_data['Date'] = pd.to_datetime(noaa_data['Date'], errors='coerce')
-        flow_data['Date'] = pd.to_datetime(flow_data['Date'], errors='coerce')
+        daily_index = pd.date_range(
+            pd.Timestamp(start_date).normalize(),
+            pd.Timestamp(end_date).normalize(),
+            freq='D',
+            name='Date',
+        )
 
-        # Check for NaN values after conversion
-        if noaa_data['Date'].isnull().any() or flow_data['Date'].isnull().any():
-            raise ValueError("NaN values found in 'Date' column after conversion to datetime")
+        flow_daily = _to_daily_series(flow_data, ['Min Flow', 'Max Flow'], daily_index)
+        noaa_daily = _to_daily_series(noaa_data, ['TMIN', 'TMAX'], daily_index)
 
-        # Add station_id to both dataframes
-        noaa_data['stationID'] = station_id
-        flow_data['stationID'] = station_id
+        combined = pd.concat([flow_daily, noaa_daily], axis=1)
+        for col in CORE_COLUMNS:
+            if col not in combined.columns:
+                combined[col] = float('nan')
+            combined[col] = pd.to_numeric(combined[col], errors='coerce')
 
-        # Set 'Date' as the index
-        noaa_data.set_index(['Date', 'stationID'], inplace=True)
-        flow_data.set_index(['Date', 'stationID'], inplace=True)
+        # Time-aware interpolation of short interior gaps only (limit_area
+        # 'inside' means no edge extrapolation). `combined` is a single station,
+        # so this interpolation never bleeds across station boundaries.
+        combined = combined.interpolate(method='time', limit=MAX_GAP_DAYS, limit_area='inside')
 
-        # Use an outer join to merge so we keep all dates and station IDs, filling missing values with NaN
-        combined_data = pd.merge(noaa_data, flow_data, left_index=True, right_index=True, how='outer')
+        # Drop rows still missing any core value (long gaps, leading/trailing).
+        before = len(combined)
+        combined = combined.dropna(subset=CORE_COLUMNS)
+        logger.info(
+            "Site %s: %d/%d daily rows usable after gap handling",
+            site_id, len(combined), before,
+        )
 
-        # After merging, handle missing data for key columns.
-        # You can choose to fill with mean, median, or a placeholder like -9999
-        for col in ['TMAX', 'TMIN', 'Min Flow', 'Max Flow']:
-            if col in combined_data.columns:
-                # Filling missing values with the mean of the column
-                combined_data[col].fillna(combined_data[col].mean(), inplace=True)
-
-        # Reset index to bring 'Date' and 'stationID' back as columns
-        combined_data.reset_index(inplace=True)
-
-        return combined_data
+        combined = combined.reset_index()
+        combined['site_id'] = site_id
+        return combined
     except Exception as e:
-        logging.error(f"Error merging dataframes for station ID {station_id}: {e}")
-        return pd.DataFrame()  # Return an empty DataFrame on error
- 
-# This function will handle fetching and processing (non-flow) data for a single site ID
+        logger.error(f"Error merging dataframes for site {site_id}: {e}")
+        return pd.DataFrame()
+
+
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
+    """Resolve a site's coordinates and fetch its NOAA temperature series."""
     if prefix == "USGS":
         coords_dict = get_usgs_coordinates(site_id)
     elif prefix == "DWR":
@@ -72,136 +106,100 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
         coords_dict = None
 
     if not coords_dict:
-        logging.error(f"Could not resolve coordinates for {prefix}:{site_id}. Skipping...")
+        logger.error(f"Could not resolve coordinates for {prefix}:{site_id}. Skipping...")
         return None
 
     latitude = coords_dict['latitude']
     longitude = coords_dict['longitude']
 
-    # Fetch NOAA data. get_noaa.main expects date strings, not datetime objects.
+    # get_noaa.main expects date strings, not datetime objects.
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = end_date.strftime('%Y-%m-%d')
     closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_str, end_str)
 
-    # Add the site ID to the NOAA data
-    if not noaa_data.empty:
-        noaa_data['USGS_site_ID'] = site_id  # Add the site ID as a new column
-
-        # Clean NOAA data
-        noaa_data['TMAX'] = pd.to_numeric(noaa_data['TMAX'], errors='coerce')
-        noaa_data['TMIN'] = pd.to_numeric(noaa_data['TMIN'], errors='coerce')
-
-    # Diagnostic logging to check 'Date' column in NOAA data
-    if 'Date' in noaa_data.columns:
-        logging.info(f"'Date' column present in NOAA data for site ID {site_id}")
-    else:
-        logging.error(f"'Date' column missing in NOAA data for site ID {site_id}")
-
-    # Diagnostic logging to check 'Date' column in flow data
-    if 'Date' in flow_data.columns:
-        logging.info(f"'Date' column present in flow data for site ID {site_id}")
-    else:
-        logging.error(f"'Date' column missing in flow data for site ID {site_id}")
-
-
-    if noaa_data.empty or flow_data.empty:
-        logging.warning(f"No data available for site ID {site_id}. Skipping...")
+    if noaa_data is None or noaa_data.empty:
+        logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
         return None
 
-    # Check for and handle missing or non-numeric values in key columns
-    for df in [noaa_data, flow_data]:
-        for col in ['TMAX', 'TMIN', 'Min Flow', 'Max Flow']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-                df[col].fillna(df[col].mean(), inplace=True)  # Fill missing values with mean
-
+    noaa_data = noaa_data.copy()
+    noaa_data['USGS_site_ID'] = site_id
+    # Gap handling and numeric coercion happen in merge_dataframes (per station,
+    # on the regular daily index) -- not here, and never via a pooled mean.
     return noaa_data
+
 
 def get_site_ids(filename=None):
     if filename is None:
         filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.github', 'site_ids.txt')
     with open(filename, 'r') as f:
-        return [line.strip() for line in f]
+        return [line.strip() for line in f if line.strip()]
 
-# This function will save the combined data from all site IDs.
+
 def save_combined_data(all_data, base_path):
-    final_data = pd.DataFrame()
-    for site_id, data in all_data.items():
-        # Ensure data alignment; might need additional checks or preprocessing here
-        final_data = pd.concat([final_data, data])
-
-    # Preview the combined data
+    """Concatenate the per-site frames, normalize, and persist the dataset."""
+    final_data = pd.concat(all_data.values(), ignore_index=True)
     data_utils.preview_data(final_data)
 
-    # Save the combined raw data to a CSV file
     combined_data_file_path = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
     final_data.to_csv(combined_data_file_path, index=False)
 
-    # Apply normalization which includes one-hot encoding within the normalization function
-    normalized_data = normalize_data.normalize_data(combined_data_file_path, final_data)
-
-    # Save the normalized data to a separate CSV file
-    normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')
-    normalized_data.to_csv(normalized_data_path, index=False)
-
-    return normalized_data
-
-# usable for for GH actions or local testing workflow
-def get_base_path():
-    if 'GITHUB_WORKSPACE' in os.environ:
-        return os.environ['GITHUB_WORKSPACE']
-    else:
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-def parse_datetime(datetime_str):
-    # Use regular expressions to extract the datetime part
-    match = re.search(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', datetime_str)
-    if match:
-        datetime_str = match.group(0)
-        try:
-            # Try parsing the datetime
-            return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
-        except ValueError as e:
-            print(f"Error parsing datetime: {e}")
-            return None
-    else:
-        print(f"No valid datetime found in string: {datetime_str}")
+    # Normalization persists scalers.json + station_index.json to base_path so
+    # inference can reproduce the transform and invert flow predictions.
+    normalized_data = normalize_data.normalize_data(final_data, artifacts_dir=base_path)
+    if normalized_data is None:
+        logger.error("Normalization failed; no normalized dataset produced")
         return None
 
+    normalized_data_path = os.path.join(base_path, 'openFlowML', 'normalized_data.csv')
+    normalized_data.to_csv(normalized_data_path, index=False)
+    return normalized_data
 
-def main(training_num_years = 7):
+
+def get_base_path():
+    """Repo root, whether running in GitHub Actions or locally."""
+    if 'GITHUB_WORKSPACE' in os.environ:
+        return os.environ['GITHUB_WORKSPACE']
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def main(training_num_years=7):
     all_data = {}
     site_ids = get_site_ids()
     base_path = get_base_path()
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=training_num_years*365)
+    start_date = end_date - timedelta(days=training_num_years * 365)
 
     for site_id in site_ids:
         try:
             prefix, id = site_id.split(':')
-            logging.info(f"Consuming {prefix}:{id}")
+            logger.info(f"Consuming {prefix}:{id}")
             if prefix == "DWR":
                 flow_dataframe = get_CODWR_flow.main(id, start_date, end_date)
             elif prefix == "USGS":
                 flow_dataframe = get_flow.main(id, start_date, end_date)
             else:
-                logging.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
-                continue
-            noaa_dataframe = fetch_and_process_data(prefix,id, start_date, end_date, flow_dataframe)
-            if noaa_dataframe is None or noaa_dataframe.empty or flow_dataframe.empty:
-                logging.warning(f"No usable data for site ID {site_id}. Skipping...")
+                logger.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
 
-            all_data[site_id] = merge_dataframes(noaa_dataframe, flow_dataframe, site_id)
+            noaa_dataframe = fetch_and_process_data(prefix, id, start_date, end_date, flow_dataframe)
+            if noaa_dataframe is None or noaa_dataframe.empty or flow_dataframe.empty:
+                logger.warning(f"No usable data for site ID {site_id}. Skipping...")
+                continue
+
+            merged = merge_dataframes(noaa_dataframe, flow_dataframe, site_id, start_date, end_date)
+            if merged.empty:
+                logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
+                continue
+            all_data[site_id] = merged
         except Exception as e:
-            logging.error(f"An error occurred for site ID {site_id}: {e}")
+            logger.error(f"An error occurred for site ID {site_id}: {e}")
 
     if all_data:
-        final_data = save_combined_data(all_data, base_path)
-        return final_data
-    else:
-        logging.error("No combined data for all sites")
-        return None
+        return save_combined_data(all_data, base_path)
+
+    logger.error("No combined data for all sites")
+    return None
+
 
 if __name__ == "__main__":
     main()

@@ -28,3 +28,27 @@ jobs:
     # here to keep CI deterministic; run them locally with `pytest -m network`.
     - name: Run tests
       run: python -m pytest -v -m "not network"
+
+  import-smoke:
+    # Verifies the training pipeline imports cleanly with only the core
+    # requirements installed. This catches the import-level breakage that left
+    # the whole pipeline unrunnable before Phase 1.
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install core training dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r openFlowML/requirements.txt
+
+    - name: Import training pipeline
+      working-directory: openFlowML
+      run: python -c "import combine_data, normalize_data, train; print('training pipeline imports OK')"
