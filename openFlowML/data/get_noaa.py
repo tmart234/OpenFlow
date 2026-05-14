@@ -56,7 +56,6 @@ def check_fields(fields, station_id, start_str, end_str):
         "endDate": end_str + "T00:00:00", 
         "dataTypes": ",".join(fields),
         "stations": station_id,
-        "url": url
     }
 
     # Encode the parameters without encoding the colons in the datetime strings
