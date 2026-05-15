@@ -21,7 +21,12 @@ Given a per-station, daily-indexed frame from combine_data, this produces:
 
 logger = logging.getLogger(__name__)
 
-NUMERIC_COLUMNS = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
+# Required: rows missing any of these are dropped (no pooled-mean fill).
+CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
+# Optional columns that get scaled when present. SWE is slow-varying; if it's
+# missing for a row, default it to 0 rather than dropping the row.
+OPTIONAL_NUMERIC = ['SWE']
+NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 
 
 def add_day_of_year_features(data):
@@ -88,19 +93,28 @@ def normalize_data(data, artifacts_dir=None):
     try:
         data = data.copy()
 
-        missing = [c for c in NUMERIC_COLUMNS if c not in data.columns]
-        if missing:
-            raise ValueError(f"Missing columns in the data: {missing}")
+        missing_core = [c for c in CORE_REQUIRED if c not in data.columns]
+        if missing_core:
+            raise ValueError(f"Missing required columns in the data: {missing_core}")
 
-        for column in NUMERIC_COLUMNS:
+        # Coerce every numeric column we know about, including SWE if present.
+        present_numeric = [c for c in NUMERIC_COLUMNS if c in data.columns]
+        for column in present_numeric:
             data[column] = pd.to_numeric(data[column], errors='coerce')
 
-        # combine_data owns per-station gap handling; anything still missing
-        # here is dropped rather than filled with a pooled (cross-station) mean.
+        # SWE is slowly varying and often legitimately zero -- any remaining
+        # missing value here defaults to 0 ("no snow data") instead of forcing
+        # the row out, so a station with no nearby SNOTEL still contributes.
+        if 'SWE' in data.columns:
+            data['SWE'] = data['SWE'].fillna(0.0)
+
+        # combine_data owns per-station gap handling for flow + temperature;
+        # anything still missing in the core columns here is dropped rather
+        # than filled with a pooled (cross-station) mean.
         before = len(data)
-        data = data.dropna(subset=NUMERIC_COLUMNS).reset_index(drop=True)
+        data = data.dropna(subset=CORE_REQUIRED).reset_index(drop=True)
         if len(data) < before:
-            logger.warning("Dropped %d rows with missing numeric values", before - len(data))
+            logger.warning("Dropped %d rows with missing core values", before - len(data))
 
         data = add_day_of_year_features(data)
 
@@ -111,7 +125,7 @@ def normalize_data(data, artifacts_dir=None):
             station_index = {}
             logger.warning("No 'site_id' column found; station_idx not added")
 
-        scalers = fit_scalers(data, NUMERIC_COLUMNS)
+        scalers = fit_scalers(data, present_numeric)
         data = apply_scalers(data, scalers)
 
         if artifacts_dir:

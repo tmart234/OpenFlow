@@ -80,3 +80,32 @@ def test_merge_returns_empty_when_a_source_is_all_missing():
     merged = combine_data.merge_dataframes(
         noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
     assert merged.empty
+
+
+def test_merge_attaches_interpolated_swe_when_provided():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    # Sparse SWE -- only every 3rd day. Interior gaps fill via interpolation.
+    swe = pd.DataFrame({'Date': dates[::3],
+                        'SWE': [10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0]})
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST',
+        datetime(2022, 1, 1), datetime(2022, 1, 20),
+        swe_data=swe)
+    assert 'SWE' in merged.columns
+    assert not merged['SWE'].isnull().any()
+    # Interior rows (up to the last known SWE date) lie between the sparse
+    # known points spanning 4..10; trailing rows past the last known SWE
+    # date default to 0 (documented behavior, see merge_dataframes).
+    interior = merged.loc[pd.to_datetime(merged['Date']) <= pd.Timestamp('2022-01-19'), 'SWE']
+    assert interior.max() <= 10.0 and interior.min() >= 4.0
+    trailing = merged.loc[pd.to_datetime(merged['Date']) > pd.Timestamp('2022-01-19'), 'SWE']
+    assert (trailing == 0.0).all()
+
+
+def test_merge_defaults_swe_to_zero_when_not_provided():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert 'SWE' in merged.columns
+    assert (merged['SWE'] == 0.0).all()

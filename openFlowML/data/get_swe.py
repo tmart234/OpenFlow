@@ -1,150 +1,163 @@
-import requests
 import argparse
-from data.swe_dicts import basins, subbasins
-import pandas as pd
-from datetime import datetime, timedelta
-import json
 import logging
+from datetime import datetime, timedelta
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import pandas as pd
 
-""" 
-Given a basin or sub-basin (HU6 or HU8) and a date, look up historic SWE for a range of dates
+from data.utils import data_utils
+
+"""
+Snow Water Equivalent (SWE) timeseries by HUC, sourced from the USDA NRCS AWDB
+REST API.
+
+Given a station's lat/lon we look up the enclosing HUC, find every active
+SNOTEL site in that HUC that reports daily WTEQ, fetch their WTEQ timeseries,
+and return a single daily SWE series that's the cross-station mean within the
+HUC.
+
+This replaces the older hand-curated swe_dicts approach -- AWDB-by-HUC works
+for any HUC in the country instead of only a handful of Colorado basins.
 """
 
-def is_leap(year):
-    """Return True if year is a leap year."""
-    return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logger = logging.getLogger(__name__)
+
+WBD_QUERY_URL = "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/{layer}/query"
+AWDB_STATIONS_URL = "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/stations"
+AWDB_DATA_URL = "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data"
+
+# WBD MapServer layer ids per HUC level (matches data/utils/get_poly.py).
+_HUC_LAYER = {2: 0, 4: 1, 6: 2, 8: 4, 10: 5, 12: 6}
 
 
-def normalize_name(name):
-    """Normalize names to match keys in the dictionary."""
-    return name.lower().replace("/", "-") if name else None
+def get_huc_id(lat, lon, level=8):
+    """
+    Resolve the HUC code containing a point via the WBD ArcGIS MapServer.
 
-def fetch_swe_data(url):
-    """Fetch SWE data from a given URL."""
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return json.loads(response.text)
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Request failed: {e}")
+    Lightweight (no shapely) so combine_data can call it from the core env.
+    """
+    if level not in _HUC_LAYER:
+        raise ValueError(f"Unsupported HUC level: {level}")
+    params = {
+        "f": "json",
+        "geometry": f"{lon},{lat}",
+        "geometryType": "esriGeometryPoint",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": f"huc{level}",
+        "inSR": 4326,
+        "returnGeometry": "false",
+    }
+    response = data_utils.request_with_retry(WBD_QUERY_URL.format(layer=_HUC_LAYER[level]), params=params)
+    if response is None:
         return None
-
-def get_swe_for_date(data, target_date, years_range):
-    year_values = {}
-    for year, value in data.items():
-        if year.isdigit() and int(year) in years_range:
-            year_values[year] = value
-    return year_values
-
-def get_swe_for_date_range(data, start_date, end_date):
-    # Ensure both start_date and end_date are datetime.date objects for comparison
-    if isinstance(start_date, datetime):
-        start_date = start_date.date()
-    if isinstance(end_date, datetime):
-        end_date = end_date.date()
-
-    years_range = range(start_date.year, end_date.year + 1)
-    all_dates = []
-    all_values = []
-
-    for entry in data:
-        entry_date_str = entry['date']
-        for year in years_range:
-            if entry_date_str == "02-29" and not is_leap(year):
-                continue
-            date_str = f"{year}-{entry_date_str}"
-            try:
-                entry_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                if start_date <= entry_date <= end_date:
-                    year_data = entry.get(str(year), None)
-                    if year_data is not None:
-                        all_dates.append(entry_date)
-                        all_values.append(year_data)
-            except ValueError as e:
-                logging.error(f"Error processing date {date_str}: {e}")
-
-    return pd.DataFrame({
-        'Date': all_dates,
-        'SWE Value': all_values
-    })
-
-"""
-def fetch_swe_station(start_date="2020-01-01", end_date="2021-01-01", station_id="360", state="MT"):
-    url_template = "https://wcc.sc.egov.usda.gov/reportGenerator/view_csv/customMultiTimeSeriesGroupByStationReport/daily/start_of_period/{station_id}:{state}:SNTL%7Cid=%22%22%7Cname/{start_date},{end_date}/WTEQ::value"
-    url = url_template.format(
-        start_date=start_date,
-        end_date=end_date,
-        station_id=station_id,
-        state=state,
-    )
-
     try:
-        response = requests.get(url)
-        response.raise_for_status()  # Raise an exception for bad responses
-        content = response.text.splitlines()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Request failed: {e}")
-        return {}
+        features = response.json().get("features", [])
+    except ValueError:
+        return None
+    if not features:
+        return None
+    return features[0].get("attributes", {}).get(f"huc{level}")
 
-    data_dict = {}
-    for line in content:
-        if ',' not in line or line.strip().startswith('#'):
-            continue  # skip comments and empty lines
-        try:
-            date_str, value = line.split(',')
-            # Additional parsing to skip headers or malformed lines
-            if value.replace('.', '', 1).isdigit():
-                data_dict[date_str] = float(value)
-        except ValueError as e:
-            logging.error(f"Error processing line: {line} - {e}")
 
-    return data_dict
-"""
+def get_snotel_station_triplets(huc_id, active_only=True):
+    """Return SNOTEL station triplets reporting WTEQ in the given HUC."""
+    if not huc_id:
+        return []
+    params = {"hucs": huc_id, "elements": "WTEQ"}
+    if active_only:
+        params["activeOnly"] = "true"
+    response = data_utils.request_with_retry(AWDB_STATIONS_URL, params=params)
+    if response is None:
+        return []
+    try:
+        stations = response.json()
+    except ValueError:
+        return []
+    return [s["stationTriplet"] for s in stations if s.get("stationTriplet")]
 
-def main(basin_name, basin_type, start_date, end_date):
-    if end_date < start_date:
-        raise ValueError("End date must be after start date.")
-    if basin_type.lower() == "basin":
-        target_dict = basins
-    elif basin_type.lower() == "subbasin":
-        target_dict = subbasins
-    else:
-        logging.error("Invalid basin type specified. Choose 'basin' or 'subbasin'.")
-        return pd.DataFrame()
 
-    normalized_basin_name = normalize_name(basin_name)
-    if normalized_basin_name in target_dict:
-        url = target_dict[normalized_basin_name]
-        data = fetch_swe_data(url)
-        if data:
-            result_df = get_swe_for_date_range(data, start_date, end_date)
-            if result_df is not None and not result_df.empty:
-                return result_df
-            else:
-                logging.error("No SWE data found within the specified date range.")
-        else:
-            logging.warn("Failed to fetch data.")
-    else:
-        logging.error(f"No data URL found for the specified basin: {normalized_basin_name}")
-    
-    return pd.DataFrame()  # Ensure a DataFrame is always returned
+def get_swe_timeseries(station_triplets, start_date, end_date):
+    """
+    Fetch daily WTEQ for each triplet and return one DataFrame [Date, SWE]
+    where SWE is the cross-station mean for each day.
+    """
+    if not station_triplets:
+        return pd.DataFrame(columns=['Date', 'SWE'])
+    params = {
+        "stationTriplets": ",".join(station_triplets),
+        "elements": "WTEQ",
+        "duration": "DAILY",
+        "beginDate": start_date.strftime('%Y-%m-%d'),
+        "endDate": end_date.strftime('%Y-%m-%d'),
+    }
+    response = data_utils.request_with_retry(AWDB_DATA_URL, params=params)
+    if response is None:
+        return pd.DataFrame(columns=['Date', 'SWE'])
+    try:
+        payload = response.json()
+    except ValueError:
+        return pd.DataFrame(columns=['Date', 'SWE'])
+
+    rows = []
+    for station in payload or []:
+        for element in station.get('data', []) or []:
+            for point in element.get('values', []) or []:
+                date = point.get('date')
+                value = point.get('value')
+                if date is None or value is None:
+                    continue
+                try:
+                    rows.append((str(date)[:10], float(value)))
+                except (ValueError, TypeError):
+                    continue
+
+    if not rows:
+        return pd.DataFrame(columns=['Date', 'SWE'])
+
+    df = pd.DataFrame(rows, columns=['Date', 'SWE'])
+    daily = df.groupby('Date')['SWE'].mean().reset_index()
+    return daily.sort_values('Date').reset_index(drop=True)
+
+
+def get_swe(lat, lon, start_date, end_date, huc_level=8):
+    """
+    End-to-end SWE lookup for a point: lat/lon -> HUC -> SNOTEL triplets -> WTEQ.
+
+    Returns a DataFrame with columns [Date, SWE]. Empty if no HUC is found, no
+    SNOTEL stations report WTEQ in that HUC, or AWDB returns nothing.
+    """
+    huc_id = get_huc_id(lat, lon, huc_level)
+    if not huc_id:
+        logger.warning("Could not resolve HUC%d for (%s, %s)", huc_level, lat, lon)
+        return pd.DataFrame(columns=['Date', 'SWE'])
+    triplets = get_snotel_station_triplets(huc_id)
+    if not triplets:
+        logger.warning("No SNOTEL WTEQ stations found in HUC %s", huc_id)
+        return pd.DataFrame(columns=['Date', 'SWE'])
+    logger.info("HUC %s: averaging WTEQ across %d SNOTEL stations", huc_id, len(triplets))
+    return get_swe_timeseries(triplets, start_date, end_date)
+
+
+def main(lat, lon, start_date=None, end_date=None, huc_level=8):
+    if start_date is None:
+        start_date = datetime.now() - timedelta(days=365)
+    if end_date is None:
+        end_date = datetime.now()
+    df = get_swe(lat, lon, start_date, end_date, huc_level)
+    data_utils.preview_data(df)
+    return df
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Fetch SWE data for a specified basin and date range.')
-    parser.add_argument('--basin_name', type=str, required=True, help='Name of the basin or sub-basin')
-    parser.add_argument('--basin_type', type=str, required=True, choices=['basin', 'subbasin'], help='Type of basin: "basin (HUC6)" or "subbasin (HUC8)"')
-    parser.add_argument('--start_date', type=str, required=True, help='Start date in the format YYYY-MM-DD')
-    parser.add_argument('--end_date', type=str, required=True, help='End date in the format YYYY-MM-DD')
+    parser = argparse.ArgumentParser(description='Fetch HUC-aggregated SWE timeseries from NRCS AWDB.')
+    parser.add_argument('--lat', type=float, required=True)
+    parser.add_argument('--lon', type=float, required=True)
+    parser.add_argument('--start_date', type=str, default=None, help='YYYY-MM-DD')
+    parser.add_argument('--end_date', type=str, default=None, help='YYYY-MM-DD')
+    parser.add_argument('--huc_level', type=int, default=8, choices=[2, 4, 6, 8, 10, 12])
     args = parser.parse_args()
-
-    start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
-    end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
-
-    result_df = main(args.basin_name, args.basin_type, start_date, end_date)
-    if result_df is not None and not result_df.empty:
-        print(result_df)
-    else:
-        print("No SWE data found for the given parameters.")
+    start = datetime.strptime(args.start_date, '%Y-%m-%d') if args.start_date else None
+    end = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else None
+    main(args.lat, args.lon, start, end, args.huc_level)

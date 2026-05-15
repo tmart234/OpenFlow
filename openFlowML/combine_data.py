@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import data.get_flow as get_flow
 import data.get_CODWR_flow as get_CODWR_flow
 import data.get_noaa as get_noaa
+import data.get_swe as get_swe
 import normalize_data
 import pandas as pd
 import logging
@@ -29,8 +30,12 @@ logger = logging.getLogger(__name__)
 
 # Numeric columns that must be present and gap-free in the final per-site frame.
 CORE_COLUMNS = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX']
-# Longest interior gap (in days) we are willing to interpolate across.
+# Longest interior gap (in days) we are willing to interpolate across for flow
+# and temperature, which can change quickly day-to-day.
 MAX_GAP_DAYS = 7
+# SWE changes slowly (snowpack accumulates/melts over weeks), so we tolerate
+# longer interior gaps in the SWE series before giving up on a value.
+MAX_SWE_GAP_DAYS = 30
 
 
 def _to_daily_series(df, value_columns, daily_index):
@@ -46,14 +51,15 @@ def _to_daily_series(df, value_columns, daily_index):
     return daily.reindex(daily_index)
 
 
-def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date):
+def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date, swe_data=None):
     """
-    Merge a site's NOAA temperature and flow data onto one regular daily index.
+    Merge a site's NOAA temperature, flow, and SWE data onto one regular daily
+    index.
 
-    Short interior gaps (<= MAX_GAP_DAYS) are interpolated time-aware; rows that
-    are still missing a core value afterwards are dropped. There is deliberately
-    no pooled-mean fill -- filling a flow gap with the average of every station
-    injects garbage into the series.
+    Short interior flow/temp gaps (<= MAX_GAP_DAYS) are interpolated time-aware;
+    rows still missing a core value afterwards are dropped (no pooled-mean
+    fill). SWE is interpolated with a longer limit (it's slow-varying) and any
+    remaining missing values default to 0 -- they don't drop the row.
     """
     if 'Date' not in noaa_data or 'Date' not in flow_data:
         raise ValueError("'Date' column missing in one of the dataframes")
@@ -80,9 +86,21 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date):
         # so this interpolation never bleeds across station boundaries.
         combined = combined.interpolate(method='time', limit=MAX_GAP_DAYS, limit_area='inside')
 
-        # Drop rows still missing any core value (long gaps, leading/trailing).
+        # SWE: separate, slow-varying series; longer interpolation limit.
+        if swe_data is not None and not swe_data.empty:
+            swe_daily = _to_daily_series(swe_data, ['SWE'], daily_index)
+            swe_daily['SWE'] = pd.to_numeric(swe_daily['SWE'], errors='coerce')
+            swe_daily = swe_daily.interpolate(method='time', limit=MAX_SWE_GAP_DAYS, limit_area='inside')
+            combined['SWE'] = swe_daily['SWE']
+        else:
+            combined['SWE'] = float('nan')
+
+        # Drop rows still missing any core flow/temp value. SWE is NOT in
+        # CORE_COLUMNS, so a missing SWE never drops a row.
         before = len(combined)
         combined = combined.dropna(subset=CORE_COLUMNS)
+        # Any remaining SWE gaps default to 0 ("no snow data" / out-of-season).
+        combined['SWE'] = combined['SWE'].fillna(0.0)
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,
@@ -97,7 +115,11 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date):
 
 
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
-    """Resolve a site's coordinates and fetch its NOAA temperature series."""
+    """
+    Resolve a site's coordinates and fetch its NOAA temperature + HUC SWE
+    series. Returns (noaa_data, swe_data); either may be empty (SWE degrades
+    gracefully; missing NOAA causes the caller to skip the site).
+    """
     if prefix == "USGS":
         coords_dict = get_usgs_coordinates(site_id)
     elif prefix == "DWR":
@@ -107,7 +129,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if not coords_dict:
         logger.error(f"Could not resolve coordinates for {prefix}:{site_id}. Skipping...")
-        return None
+        return None, None
 
     latitude = coords_dict['latitude']
     longitude = coords_dict['longitude']
@@ -119,13 +141,22 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if noaa_data is None or noaa_data.empty:
         logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
-        return None
+        return None, None
 
     noaa_data = noaa_data.copy()
     noaa_data['USGS_site_ID'] = site_id
+
+    # SWE is a history-window feature; degrade gracefully if the HUC lookup or
+    # AWDB fetch fails -- the row stays, SWE defaults to 0 in merge_dataframes.
+    try:
+        swe_data = get_swe.get_swe(float(latitude), float(longitude), start_date, end_date)
+    except Exception as e:
+        logger.warning("SWE fetch failed for %s: %s", site_id, e)
+        swe_data = pd.DataFrame(columns=['Date', 'SWE'])
+
     # Gap handling and numeric coercion happen in merge_dataframes (per station,
     # on the regular daily index) -- not here, and never via a pooled mean.
-    return noaa_data
+    return noaa_data, swe_data
 
 
 def get_site_ids(filename=None):
@@ -181,12 +212,15 @@ def main(training_num_years=7):
                 logger.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
 
-            noaa_dataframe = fetch_and_process_data(prefix, id, start_date, end_date, flow_dataframe)
+            noaa_dataframe, swe_dataframe = fetch_and_process_data(
+                prefix, id, start_date, end_date, flow_dataframe)
             if noaa_dataframe is None or noaa_dataframe.empty or flow_dataframe.empty:
                 logger.warning(f"No usable data for site ID {site_id}. Skipping...")
                 continue
 
-            merged = merge_dataframes(noaa_dataframe, flow_dataframe, site_id, start_date, end_date)
+            merged = merge_dataframes(
+                noaa_dataframe, flow_dataframe, site_id, start_date, end_date,
+                swe_data=swe_dataframe)
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue

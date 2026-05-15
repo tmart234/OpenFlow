@@ -62,7 +62,7 @@ def test_normalize_persists_artifacts_and_z_scores(tmp_path):
     assert set(station_index) == {'USGS:A', 'DWR:B'}
 
     # Normalized numeric columns are z-scores: ~0 mean, ~1 std.
-    for col in normalize_data.NUMERIC_COLUMNS:
+    for col in normalize_data.CORE_REQUIRED:
         assert abs(out[col].mean()) < 1e-6
         assert abs(out[col].std(ddof=0) - 1.0) < 1e-6
 
@@ -83,3 +83,26 @@ def test_apply_scalers_round_trips():
 def test_normalize_missing_column_returns_none():
     df = _make_combined().drop(columns=['TMIN'])
     assert normalize_data.normalize_data(df) is None
+
+
+def test_normalize_scales_swe_when_present(tmp_path):
+    import json
+    df = _make_combined()
+    df['SWE'] = np.linspace(0.0, 5.0, 20)
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    assert 'SWE' in scalers
+    # Normalized SWE is a z-score: ~0 mean, ~1 std.
+    assert abs(out['SWE'].mean()) < 1e-6
+    assert abs(out['SWE'].std(ddof=0) - 1.0) < 1e-6
+
+
+def test_normalize_fills_missing_swe_with_zero_not_dropping_rows():
+    df = _make_combined()
+    df['SWE'] = [np.nan] * len(df)
+    out = normalize_data.normalize_data(df)
+    assert out is not None
+    # SWE NaN should NOT drop rows -- only the core columns drop rows.
+    assert len(out) == len(df)
+    assert out['SWE'].isnull().sum() == 0
