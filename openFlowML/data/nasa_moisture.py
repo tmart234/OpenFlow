@@ -8,8 +8,8 @@ from shapely.geometry import Polygon
 import logging
 import argparse
 from earthaccess import *
-from dataUtils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
-from dataUtils.data_utils import load_vars, get_earthdata_auth, get_smap_data_bounds
+from data.utils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
+from data.utils.data_utils import load_vars, get_earthdata_auth, get_smap_data_bounds
 import os
 import tempfile
 # Conditionally import matplotlib

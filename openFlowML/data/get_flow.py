@@ -1,62 +1,87 @@
-import requests
 import argparse
-import pandas as pd
 import logging
-from datetime import datetime, timedelta
-import dataUtils.data_utils as data_utils
+import pandas as pd
+from datetime import datetime
+from data.utils import data_utils
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logger = logging.getLogger(__name__)
+
+USGS_IV_URL = "https://nwis.waterservices.usgs.gov/nwis/iv/"
+# The IV service silently returns a partial response for multi-year requests,
+# so we fetch it roughly one year at a time and concatenate.
+CHUNK_DAYS = 366
+
+
+def _parse_rdb_flow(text):
+    """Parse a USGS IV RDB payload into a list of (date_str, flow) tuples."""
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith('USGS'):
+            continue
+        columns = line.split('\t')
+        if len(columns) < 5:
+            continue
+        try:
+            dt = datetime.strptime(columns[2][:16], "%Y-%m-%d %H:%M")
+            flow = float(columns[4])
+        except ValueError:
+            # Header / format-spec row, missing value, or a non-numeric
+            # qualifier in the value column -- skip it.
+            continue
+        rows.append((dt.strftime("%Y-%m-%d"), flow))
+    return rows
+
 
 def get_daily_flow_data(flow_site_id, start_date, end_date):
-    start_date = start_date.strftime('%Y-%m-%d')
-    end_date = end_date.strftime('%Y-%m-%d')
-    url = f"https://nwis.waterservices.usgs.gov/nwis/iv/?sites={flow_site_id}&parameterCd=00060&startDT={start_date}&endDT={end_date}&siteStatus=all&format=rdb"
-    logging.info(f"Fetching flow data from: {url}")
-    response = requests.get(url)
-    content = response.text.splitlines()
+    """
+    Fetch USGS instantaneous flow for a site and aggregate it to daily min/max.
 
-    dates, min_flows, max_flows = [], [], []
-    for index, line in enumerate(content):
-        if line.startswith('USGS'):
-            data_lines = content[index:]
-            break
-    else:
-        return pd.DataFrame(columns=['Date', 'Min Discharge', 'Max Discharge'])  # Return empty DataFrame if no data lines found
+    The request is split into ~yearly chunks because the IV service silently
+    truncates long-range requests; each chunk is fetched with retries.
+    """
+    records = []
+    for chunk_start, chunk_end in data_utils.date_chunks(start_date, end_date, CHUNK_DAYS):
+        params = {
+            "sites": flow_site_id,
+            "parameterCd": "00060",
+            "startDT": chunk_start.strftime('%Y-%m-%d'),
+            "endDT": chunk_end.strftime('%Y-%m-%d'),
+            "siteStatus": "all",
+            "format": "rdb",
+        }
+        logger.info("Fetching USGS IV flow for %s %s..%s",
+                    flow_site_id, params['startDT'], params['endDT'])
+        response = data_utils.request_with_retry(USGS_IV_URL, params=params)
+        if response is None:
+            logger.error("Failed to fetch USGS flow chunk %s..%s for %s",
+                         params['startDT'], params['endDT'], flow_site_id)
+            continue
+        records.extend(_parse_rdb_flow(response.text))
 
-    for line in data_lines:
-        columns = line.split('\t')
-        if len(columns) >= 5:
-            datetime_str = columns[2][:16]  # Extracts "YYYY-MM-DD HH:MM" part
-            try:
-                dt = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M")
-            except ValueError:
-                logging.error(f"Skipping line due to unexpected datetime format: {line}")
-                continue  # Skip this line entirely
-            date_str = dt.strftime("%Y-%m-%d")
+    if not records:
+        return pd.DataFrame(columns=['Date', 'Min Flow', 'Max Flow'])
 
-            flow = float(columns[4])
-            if date_str in dates:
-                index = dates.index(date_str)
-                min_flows[index] = min(min_flows[index], flow)
-                max_flows[index] = max(max_flows[index], flow)
-            else:
-                dates.append(date_str)
-                min_flows.append(flow)
-                max_flows.append(flow)
+    df = pd.DataFrame(records, columns=['Date', 'flow'])
+    daily = df.groupby('Date')['flow'].agg(['min', 'max']).reset_index()
+    daily.columns = ['Date', 'Min Flow', 'Max Flow']
+    return daily.sort_values('Date').reset_index(drop=True)
 
-    df = pd.DataFrame({'Date': dates, 'Min Discharge': min_flows, 'Max Discharge': max_flows})
-    return df
 
 def main(flow_site_id, start_date, end_date):
     df = get_daily_flow_data(flow_site_id, start_date, end_date)
     data_utils.preview_data(df)
     return df
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Fetch daily flow data for a given USGS site.')
-    parser.add_argument('--flow_site_id', type=str, default=None, help='USGS flow site ID (ex: 09114500)')
-    parser.add_argument('--start_date', type=str, default=None, help='Start date in the format YYYY-MM-DD')
-    parser.add_argument('--end_date', type=str, default=None, help='End date in the format YYYY-MM-DD')
+    parser = argparse.ArgumentParser(description='Fetch daily min/max flow for a USGS site.')
+    parser.add_argument('--flow_site_id', type=str, required=True, help='USGS flow site ID (ex: 09114500)')
+    parser.add_argument('--start_date', type=str, required=True, help='Start date YYYY-MM-DD')
+    parser.add_argument('--end_date', type=str, required=True, help='End date YYYY-MM-DD')
     args = parser.parse_args()
-    main(args.flow_site_id, args.start_date, args.end_date)
+    start = datetime.strptime(args.start_date, '%Y-%m-%d')
+    end = datetime.strptime(args.end_date, '%Y-%m-%d')
+    main(args.flow_site_id, start, end)

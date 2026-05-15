@@ -53,3 +53,10 @@ WW-app.xcodeproj/xcuserdata/tylermartin.xcuserdatad/xcdebugger/Breakpoints_v2.xc
 *.h5
 /.vscode
 *.env
+
+# ML training build artifacts (produced by combine_data / train.py)
+/scalers.json
+/station_index.json
+/basin_index.json
+/training_config.json
+__pycache__/

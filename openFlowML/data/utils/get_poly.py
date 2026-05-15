@@ -123,6 +123,14 @@ def get_huc_polygon(lat, lon, huc_level):
         logger.error(f"Error retrieving HUC{huc_level} polygon: {e}")
         return None, None, None
 
+def get_huc8_polygon(lat, lon):
+    """
+    Convenience wrapper around get_huc_polygon: return just the HUC8 polygon
+    ring (a list of [lon, lat] points) for a point, or None if none is found.
+    """
+    polygon, _huc_id, _attributes = get_huc_polygon(lat, lon, 8)
+    return polygon
+
 def simplify_polygon(polygon, tolerance=0.005):
     """
     Simplify the polygon using Shapely's simplify method.

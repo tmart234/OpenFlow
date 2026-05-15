@@ -5,7 +5,7 @@ import tempfile
 import time
 import shutil
 from datetime import datetime, timedelta
-from dataUtils.data_utils import load_vars
+from data.utils.data_utils import load_vars
 import logging
 
 load_vars()

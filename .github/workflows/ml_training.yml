@@ -6,28 +6,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  prepare_ml_data:
+  train:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
-        python-version: 3.9
+        python-version: '3.11'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r $GITHUB_WORKSPACE/openFlowML/requirements.txt
-        
-    - name: Train Data
-      run: python $GITHUB_WORKSPACE/openFlowML/train.py
+        pip install -r openFlowML/requirements.txt
 
-    - name: Upload Model as Artifact
-      uses: actions/upload-artifact@v2
+    - name: Train model
+      run: python openFlowML/train.py
+
+    # The model is not usable for inference without the scaler parameters
+    # (to invert the log1p + z-score flow transform), the station + basin
+    # index maps (for the embedding lookups), and the training config (which
+    # records the feature schema). All five travel together.
+    - name: Upload model and inference artifacts
+      uses: actions/upload-artifact@v4
       with:
         name: lstm_model_keras_release
-        path: ./lstm_model.h5
+        path: |
+          ./lstm_model.h5
+          ./scalers.json
+          ./station_index.json
+          ./basin_index.json
+          ./training_config.json
+        if-no-files-found: error
