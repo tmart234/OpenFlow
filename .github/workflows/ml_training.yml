@@ -27,8 +27,9 @@ jobs:
       run: python openFlowML/train.py
 
     # The model is not usable for inference without the scaler parameters
-    # (to invert the normalized flow predictions) and the station index map,
-    # so all three are published together.
+    # (to invert the log1p + z-score flow transform), the station + basin
+    # index maps (for the embedding lookups), and the training config (which
+    # records the feature schema). All five travel together.
     - name: Upload model and inference artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -37,4 +38,6 @@ jobs:
           ./lstm_model.h5
           ./scalers.json
           ./station_index.json
+          ./basin_index.json
+          ./training_config.json
         if-no-files-found: error

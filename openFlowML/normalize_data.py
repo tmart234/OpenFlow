@@ -8,15 +8,19 @@ from sklearn.preprocessing import StandardScaler
 """
 Feature engineering and normalization for the combined training dataset.
 
-Given a per-station, daily-indexed frame from combine_data, this produces:
+Given a per-station, daily-indexed frame from combine_data this produces:
   - cyclical day-of-year features (doy_sin, doy_cos) that are continuous across
-    year boundaries and leap-year aware -- replacing the old monotonic
-    date_normalized ramp which had a discontinuity every Dec 31 -> Jan 1
-  - an integer station index (station_idx); index 0 is reserved for unknown /
-    unseen stations so a future embedding layer can fall back gracefully
-  - z-score normalized numeric columns, with the fitted scaler parameters
-    persisted (scalers.json) so inference can reproduce the exact transform and
-    invert the flow predictions, plus the station mapping (station_index.json)
+    year boundaries and leap-year aware
+  - an integer station index (station_idx); index 0 is reserved for unseen
+    stations so the Phase 3 embedding layer falls back to a generic vector
+  - an integer basin index (basin_idx) keyed by HUC8, also with 0 reserved
+  - LOG-transformed flow columns (log1p) before z-scoring -- streamflow is
+    log-normal, so this prevents floods from dominating the loss and lets the
+    model spread error across base/low/peak flow regimes
+  - z-score normalized numeric columns. Scaler parameters AND the
+    log-transform flag are persisted (scalers.json) so inference can reproduce
+    the exact transform and invert the flow predictions correctly. The station
+    + basin maps are persisted alongside.
 """
 
 logger = logging.getLogger(__name__)
@@ -27,6 +31,9 @@ CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 # missing for a row, default it to 0 rather than dropping the row.
 OPTIONAL_NUMERIC = ['SWE']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
+# Streamflow is log-normal -- log1p before z-scoring is standard hydrology
+# practice. Temperature/SWE stay linear.
+LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow'}
 
 
 def add_day_of_year_features(data):
@@ -49,31 +56,64 @@ def build_station_index(site_ids):
     """
     Map each station id string to a stable integer index.
 
-    Index 0 is reserved for unknown/unseen stations so that the embedding layer
-    planned for Phase 3 can fall back to a generic representation.
+    Index 0 is reserved for unseen stations so the embedding can fall back to
+    a generic representation (basin fallback path).
     """
     unique_ids = sorted(pd.unique(pd.Series(site_ids).dropna()))
     return {site_id: idx + 1 for idx, site_id in enumerate(unique_ids)}
 
 
-def fit_scalers(data, columns):
-    """Fit a StandardScaler per column; return {column: {mean, scale}}."""
+def build_basin_index(huc8_ids):
+    """
+    Map each HUC8 string to a stable integer index. 0 reserved for unknown.
+
+    Empty strings (when the HUC lookup failed) collapse to the unknown bucket.
+    """
+    series = pd.Series(huc8_ids).dropna()
+    series = series[series.astype(str).str.len() > 0]
+    unique_ids = sorted(pd.unique(series.astype(str)))
+    return {huc: idx + 1 for idx, huc in enumerate(unique_ids)}
+
+
+def fit_scalers(data, columns, log_columns=LOG_TRANSFORM_COLUMNS):
+    """
+    Fit a StandardScaler per column and return its parameters.
+
+    For columns named in `log_columns`, we fit on log1p-transformed values --
+    streamflow is log-normal, and using log space is the standard hydrology
+    move. The returned record carries a `transform` flag so apply/invert can
+    reproduce it.
+    """
     scalers = {}
     for column in columns:
+        values = data[[column]].astype('float64').values
+        transform = 'log1p' if column in log_columns else 'identity'
+        if transform == 'log1p':
+            values = np.log1p(values)
         scaler = StandardScaler()
-        scaler.fit(data[[column]].astype('float64').values)
+        scaler.fit(values)
         scalers[column] = {
             'mean': float(scaler.mean_[0]),
             'scale': float(scaler.scale_[0]),
+            'transform': transform,
         }
     return scalers
 
 
 def apply_scalers(data, scalers):
-    """Apply persisted scaler parameters in place; returns the frame."""
+    """
+    Apply persisted scaler parameters (including any log1p transform) in place.
+
+    Inverse: x_raw = expm1(z * scale + mean) for log1p columns,
+             x_raw = z * scale + mean        otherwise.
+    """
     for column, params in scalers.items():
-        if column in data.columns:
-            data[column] = (data[column].astype('float64') - params['mean']) / params['scale']
+        if column not in data.columns:
+            continue
+        values = data[column].astype('float64').values
+        if params.get('transform', 'identity') == 'log1p':
+            values = np.log1p(values)
+        data[column] = (values - params['mean']) / params['scale']
     return data
 
 
@@ -82,13 +122,16 @@ def normalize_data(data, artifacts_dir=None):
     Feature-engineer and normalize the combined dataset.
 
     Args:
-        data: per-station daily-indexed DataFrame from combine_data, with
-              columns Date, site_id, TMIN, TMAX, Min Flow, Max Flow.
-        artifacts_dir: if given, scalers.json and station_index.json are written
-              here so inference can reproduce the transform.
+        data: per-station daily-indexed DataFrame from combine_data with
+              columns Date, site_id, huc8, TMIN, TMAX, Min Flow, Max Flow,
+              and optionally SWE.
+        artifacts_dir: if given, scalers.json, station_index.json, and
+              basin_index.json are written here so inference can reproduce the
+              full transform pipeline.
 
-    Returns the normalized DataFrame. Date and site_id are intentionally
-    preserved so Phase 3 can do chronological / per-station splitting.
+    Returns the normalized DataFrame. Date, site_id, huc8, station_idx, and
+    basin_idx are all preserved so Phase 3 can do per-station chronological
+    splitting and station/basin embedding lookup.
     """
     try:
         data = data.copy()
@@ -118,12 +161,21 @@ def normalize_data(data, artifacts_dir=None):
 
         data = add_day_of_year_features(data)
 
+        # Station embedding key.
         if 'site_id' in data.columns:
             station_index = build_station_index(data['site_id'])
             data['station_idx'] = data['site_id'].map(station_index).fillna(0).astype(int)
         else:
             station_index = {}
             logger.warning("No 'site_id' column found; station_idx not added")
+
+        # Basin embedding key (HUC8 -> int).
+        if 'huc8' in data.columns:
+            basin_index = build_basin_index(data['huc8'])
+            data['basin_idx'] = data['huc8'].astype(str).map(basin_index).fillna(0).astype(int)
+        else:
+            basin_index = {}
+            logger.warning("No 'huc8' column found; basin_idx not added")
 
         scalers = fit_scalers(data, present_numeric)
         data = apply_scalers(data, scalers)
@@ -134,7 +186,9 @@ def normalize_data(data, artifacts_dir=None):
                 json.dump(scalers, f, indent=2)
             with open(os.path.join(artifacts_dir, 'station_index.json'), 'w') as f:
                 json.dump(station_index, f, indent=2)
-            logger.info("Wrote scalers.json and station_index.json to %s", artifacts_dir)
+            with open(os.path.join(artifacts_dir, 'basin_index.json'), 'w') as f:
+                json.dump(basin_index, f, indent=2)
+            logger.info("Wrote scalers/station/basin index JSON to %s", artifacts_dir)
 
         return data
     except Exception as e:

@@ -71,13 +71,17 @@ def test_normalize_persists_artifacts_and_z_scores(tmp_path):
     assert 'Date' in out.columns and 'site_id' in out.columns
 
 
-def test_apply_scalers_round_trips():
+def test_apply_scalers_round_trips_identity_column():
+    # TMIN/TMAX go through pure z-score (no log1p), so the inverse is the
+    # simple affine z * scale + mean. The log1p inverse for flow columns is
+    # covered by test_apply_scalers_inverts_log_transform_cleanly below.
     df = _make_combined()
-    scalers = normalize_data.fit_scalers(df, ['Min Flow'])
+    scalers = normalize_data.fit_scalers(df, ['TMIN'])
     scaled = normalize_data.apply_scalers(df.copy(), scalers)
-    params = scalers['Min Flow']
-    restored = scaled['Min Flow'] * params['scale'] + params['mean']
-    assert np.allclose(restored, df['Min Flow'])
+    params = scalers['TMIN']
+    assert params['transform'] == 'identity'
+    restored = scaled['TMIN'] * params['scale'] + params['mean']
+    assert np.allclose(restored, df['TMIN'])
 
 
 def test_normalize_missing_column_returns_none():
@@ -106,3 +110,48 @@ def test_normalize_fills_missing_swe_with_zero_not_dropping_rows():
     # SWE NaN should NOT drop rows -- only the core columns drop rows.
     assert len(out) == len(df)
     assert out['SWE'].isnull().sum() == 0
+
+
+def test_flow_columns_are_log_transformed_before_scaling(tmp_path):
+    import json
+    df = _make_combined()
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    # Flow columns must record the log1p transform; TMIN/TMAX do not.
+    assert scalers['Min Flow']['transform'] == 'log1p'
+    assert scalers['Max Flow']['transform'] == 'log1p'
+    assert scalers['TMIN']['transform'] == 'identity'
+    assert scalers['TMAX']['transform'] == 'identity'
+    # The recorded mean must be in LOG space (close to log(mean_of_raw)),
+    # not the raw cfs scale (~10s..50s).
+    raw_mean = df['Min Flow'].mean()
+    assert scalers['Min Flow']['mean'] < np.log1p(raw_mean) + 0.5
+
+
+def test_apply_scalers_inverts_log_transform_cleanly():
+    df = _make_combined()
+    scalers = normalize_data.fit_scalers(df, ['Min Flow'])
+    scaled = normalize_data.apply_scalers(df.copy(), scalers)
+    params = scalers['Min Flow']
+    # Documented inverse: x_raw = expm1(z * scale + mean) for log1p columns.
+    restored = np.expm1(scaled['Min Flow'] * params['scale'] + params['mean'])
+    assert np.allclose(restored, df['Min Flow'])
+
+
+def test_basin_index_is_built_and_persisted(tmp_path):
+    import json
+    df = _make_combined()
+    df['huc8'] = ['14010001'] * 10 + ['14020002'] * 10
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    basin_index = json.loads((tmp_path / 'basin_index.json').read_text())
+    # 0 reserved for unknown, two distinct HUC8s -> indices 1 and 2.
+    assert set(basin_index) == {'14010001', '14020002'}
+    assert 0 not in basin_index.values()
+    assert sorted(basin_index.values()) == [1, 2]
+    assert set(out['basin_idx'].unique()) <= {1, 2}
+
+
+def test_basin_index_collapses_blank_huc8_to_unknown():
+    idx = normalize_data.build_basin_index(['14010001', '', '14010001'])
+    # Empty strings are treated as unknown and do not get an index.
+    assert set(idx) == {'14010001'}

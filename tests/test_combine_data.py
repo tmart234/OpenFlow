@@ -109,3 +109,20 @@ def test_merge_defaults_swe_to_zero_when_not_provided():
         noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
     assert 'SWE' in merged.columns
     assert (merged['SWE'] == 0.0).all()
+
+
+def test_merge_records_huc8_when_provided():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20),
+        huc8='14010001')
+    assert 'huc8' in merged.columns
+    assert (merged['huc8'] == '14010001').all()
+
+
+def test_merge_huc8_defaults_to_empty_when_not_provided():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert 'huc8' in merged.columns
+    assert (merged['huc8'] == '').all()

@@ -51,7 +51,8 @@ def _to_daily_series(df, value_columns, daily_index):
     return daily.reindex(daily_index)
 
 
-def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date, swe_data=None):
+def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
+                     swe_data=None, huc8=None):
     """
     Merge a site's NOAA temperature, flow, and SWE data onto one regular daily
     index.
@@ -108,6 +109,10 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date, swe_da
 
         combined = combined.reset_index()
         combined['site_id'] = site_id
+        # Basin identity (HUC8) is constant per station and is what the Phase 3
+        # basin embedding looks up. Empty string when the lookup failed; the
+        # basin index treats that as "unknown".
+        combined['huc8'] = huc8 or ''
         return combined
     except Exception as e:
         logger.error(f"Error merging dataframes for site {site_id}: {e}")
@@ -117,8 +122,11 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date, swe_da
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     """
     Resolve a site's coordinates and fetch its NOAA temperature + HUC SWE
-    series. Returns (noaa_data, swe_data); either may be empty (SWE degrades
-    gracefully; missing NOAA causes the caller to skip the site).
+    series, and its HUC8 basin id (used as a Phase 3 basin embedding key).
+
+    Returns (noaa_data, swe_data, huc8). Either dataframe may be empty (SWE
+    degrades gracefully; missing NOAA causes the caller to skip the site).
+    huc8 may be None when the lookup fails.
     """
     if prefix == "USGS":
         coords_dict = get_usgs_coordinates(site_id)
@@ -129,10 +137,10 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if not coords_dict:
         logger.error(f"Could not resolve coordinates for {prefix}:{site_id}. Skipping...")
-        return None, None
+        return None, None, None
 
-    latitude = coords_dict['latitude']
-    longitude = coords_dict['longitude']
+    latitude = float(coords_dict['latitude'])
+    longitude = float(coords_dict['longitude'])
 
     # get_noaa.main expects date strings, not datetime objects.
     start_str = start_date.strftime('%Y-%m-%d')
@@ -141,22 +149,33 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if noaa_data is None or noaa_data.empty:
         logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
-        return None, None
+        return None, None, None
 
     noaa_data = noaa_data.copy()
     noaa_data['USGS_site_ID'] = site_id
 
-    # SWE is a history-window feature; degrade gracefully if the HUC lookup or
-    # AWDB fetch fails -- the row stays, SWE defaults to 0 in merge_dataframes.
+    # Resolve the enclosing HUC8 for the basin embedding. Cheap (one ArcGIS
+    # call) and shapely-free, so we can do it here without dragging the data
+    # deps into combine_data's environment.
     try:
-        swe_data = get_swe.get_swe(float(latitude), float(longitude), start_date, end_date)
+        huc8 = get_swe.get_huc_id(latitude, longitude, level=8)
+    except Exception as e:
+        logger.warning("HUC8 lookup failed for %s: %s", site_id, e)
+        huc8 = None
+    if not huc8:
+        logger.warning("No HUC8 resolved for %s -- basin embedding will fall back", site_id)
+
+    # SWE is a history-window feature; degrade gracefully if the AWDB fetch
+    # fails -- the row stays, SWE defaults to 0 in merge_dataframes.
+    try:
+        swe_data = get_swe.get_swe(latitude, longitude, start_date, end_date)
     except Exception as e:
         logger.warning("SWE fetch failed for %s: %s", site_id, e)
         swe_data = pd.DataFrame(columns=['Date', 'SWE'])
 
     # Gap handling and numeric coercion happen in merge_dataframes (per station,
     # on the regular daily index) -- not here, and never via a pooled mean.
-    return noaa_data, swe_data
+    return noaa_data, swe_data, huc8
 
 
 def get_site_ids(filename=None):
@@ -212,7 +231,7 @@ def main(training_num_years=7):
                 logger.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
 
-            noaa_dataframe, swe_dataframe = fetch_and_process_data(
+            noaa_dataframe, swe_dataframe, huc8 = fetch_and_process_data(
                 prefix, id, start_date, end_date, flow_dataframe)
             if noaa_dataframe is None or noaa_dataframe.empty or flow_dataframe.empty:
                 logger.warning(f"No usable data for site ID {site_id}. Skipping...")
@@ -220,7 +239,7 @@ def main(training_num_years=7):
 
             merged = merge_dataframes(
                 noaa_dataframe, flow_dataframe, site_id, start_date, end_date,
-                swe_data=swe_dataframe)
+                swe_data=swe_dataframe, huc8=huc8)
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue
