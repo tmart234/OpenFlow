@@ -1,7 +1,8 @@
 import logging
 import os
+import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # NOTE: h5py, python-dotenv and earthaccess are heavy, optional dependencies
 # used only by the soil-moisture data modules. They are imported lazily inside
@@ -18,6 +19,45 @@ def preview_data(df, num_rows=4):
     logging.info(df.head(num_rows))
     logging.info("\nLast few rows:")
     logging.info(df.tail(num_rows))
+
+
+def request_with_retry(url, params=None, headers=None, timeout=60, retries=3, backoff=2):
+    """
+    GET a URL with a timeout and simple exponential backoff.
+
+    Returns the Response on HTTP 200, or None if every attempt failed. The flow
+    fetchers depend on this because their upstream services (USGS IV, CO DWR)
+    are slow and occasionally flaky on long-range requests.
+    """
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=timeout)
+            if response.status_code == 200:
+                return response
+            logging.warning("HTTP %s from %s (attempt %d/%d)",
+                            response.status_code, url, attempt + 1, retries)
+        except requests.exceptions.RequestException as e:
+            logging.warning("Request error for %s: %s (attempt %d/%d)",
+                            url, e, attempt + 1, retries)
+        if attempt < retries - 1:
+            time.sleep(backoff ** attempt)
+    logging.error("Giving up on %s after %d attempts", url, retries)
+    return None
+
+
+def date_chunks(start_date, end_date, max_days=366):
+    """
+    Yield (chunk_start, chunk_end) datetime pairs covering [start_date, end_date]
+    in windows of at most `max_days` days.
+
+    Long-range requests to the USGS IV service are silently truncated, so the
+    flow fetchers request one bounded chunk at a time and concatenate.
+    """
+    current = start_date
+    while current <= end_date:
+        chunk_end = min(current + timedelta(days=max_days - 1), end_date)
+        yield current, chunk_end
+        current = chunk_end + timedelta(days=1)
 
 def get_earthdata_auth():
     """

@@ -89,3 +89,16 @@ def test_invalid_site_id():
     end_date = datetime.now()
     df = get_daily_flow_data(flow_site_id, start_date, end_date)
     assert df.empty, "DataFrame should be empty for invalid site IDs"
+
+
+def test_parse_rdb_flow_extracts_valid_rows_only():
+    from data.get_flow import _parse_rdb_flow
+    text = (
+        "# comment\n"
+        "agency_cd\tsite_no\tdatetime\ttz_cd\tvalue\tqual\n"
+        "5s\t15s\t20d\t6s\t14n\t10s\n"                          # RDB format-spec row
+        "USGS\t09114500\t2022-05-01 00:00\tMST\t15.0\tA\n"
+        "USGS\t09114500\t2022-05-01 00:15\tMST\t\tA\n"          # missing value -> skipped
+        "USGS\t09114500\t2022-05-01 00:30\tMST\t25.0\tP\n"
+    )
+    assert _parse_rdb_flow(text) == [("2022-05-01", 15.0), ("2022-05-01", 25.0)]
