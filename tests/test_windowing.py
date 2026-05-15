@@ -115,15 +115,30 @@ def test_stack_produces_keras_input_dict_and_target_tensor():
     samples = windowing.build_windows(df, encoder_days=60, decoder_days=14)
     inputs, targets = windowing.stack(samples)
     assert set(inputs) == {'encoder_input', 'decoder_input',
+                           'persistence_input',
                            'station_input', 'basin_input'}
     n = len(samples)
     assert inputs['encoder_input'].shape == (n, 60, len(windowing.ENCODER_FEATURES))
     assert inputs['decoder_input'].shape == (n, 14, len(windowing.DECODER_FEATURES))
+    assert inputs['persistence_input'].shape == (n, len(windowing.TARGET_FEATURES))
     assert inputs['station_input'].shape == (n,)
     assert inputs['basin_input'].shape == (n,)
     assert targets.shape == (n, 14, len(windowing.TARGET_FEATURES))
     assert inputs['encoder_input'].dtype == np.float32
+    assert inputs['persistence_input'].dtype == np.float32
     assert inputs['station_input'].dtype == np.int32
+
+
+def test_persistence_anchor_is_the_last_encoder_day_target_values():
+    df = _make_station_frame('USGS:A', 1, 1, n_days=120)
+    samples = windowing.build_windows(df, encoder_days=60, decoder_days=14)
+    # The persistence anchor is the model's free baseline -- it MUST match the
+    # last encoder day's target-feature values exactly, or the residual
+    # learning becomes biased.
+    target_indices = [windowing.ENCODER_FEATURES.index(c) for c in windowing.TARGET_FEATURES]
+    for s in samples[:5]:
+        expected = s.encoder_X[-1, target_indices]
+        np.testing.assert_array_equal(s.persistence_anchor, expected)
 
 
 def test_build_windows_rejects_dataframe_missing_required_columns():

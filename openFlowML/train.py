@@ -58,19 +58,13 @@ def _summarize_per_horizon(y_true, y_pred):
 
 def _persistence_pred_for_samples(test_samples):
     """
-    Persistence prediction for the test set, in the scaled target space.
-
-    Persistence == "flow on every forecast day equals flow on the last day of
-    the encoder window". The encoder feature columns are ordered the same way
-    as TARGET_FEATURES (Min Flow, Max Flow), so we just lift the last encoder
-    row and broadcast it across the decoder horizon.
+    Persistence prediction for the test set, in the scaled target space:
+    every forecast day's flow equals the last encoder-day flow, broadcast
+    across the horizon. windowing.WindowedSample already stores this value
+    as `persistence_anchor` so it's a straight lift.
     """
     horizon = test_samples[0].target_Y.shape[0]
-    preds = []
-    for s in test_samples:
-        # encoder col 0 = Min Flow, col 1 = Max Flow (see windowing.ENCODER_FEATURES)
-        last_flow = s.encoder_X[-1, 0:2]
-        preds.append(np.tile(last_flow, (horizon, 1)))
+    preds = [np.tile(s.persistence_anchor, (horizon, 1)) for s in test_samples]
     return np.stack(preds).astype('float32')
 
 

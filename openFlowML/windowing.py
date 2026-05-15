@@ -44,6 +44,12 @@ class WindowedSample:
     encoder_X: np.ndarray           # (encoder_days, |encoder_features|)
     decoder_X: np.ndarray           # (decoder_days, |decoder_features|)
     target_Y: np.ndarray            # (decoder_days, |target_features|)
+    # The last encoder-day flow values, in the same log-z-scored space as the
+    # target. The Phase 3 model is wired as a residual forecaster -- it
+    # predicts `delta = target - persistence_anchor` and reconstructs
+    # `prediction = persistence_anchor + delta` internally, so its worst case
+    # is the persistence baseline.
+    persistence_anchor: np.ndarray  # (|target_features|,)
     station_idx: int
     basin_idx: int
     site_id: str
@@ -80,6 +86,9 @@ def _build_windows_for_station(station_df: pd.DataFrame,
     enc_matrix = df[ENCODER_FEATURES].to_numpy(dtype=float)
     dec_matrix = df[DECODER_FEATURES].to_numpy(dtype=float)
     tgt_matrix = df[TARGET_FEATURES].to_numpy(dtype=float)
+    # Indices within ENCODER_FEATURES of the columns that match TARGET_FEATURES,
+    # so we can lift the persistence anchor straight from the encoder slice.
+    target_indices_in_encoder = [ENCODER_FEATURES.index(c) for c in TARGET_FEATURES]
 
     station_idx = int(df['station_idx'].iloc[0])
     basin_idx = int(df['basin_idx'].iloc[0]) if 'basin_idx' in df.columns else 0
@@ -95,10 +104,12 @@ def _build_windows_for_station(station_df: pd.DataFrame,
         tgt = tgt_matrix[start + encoder_days:start + total]
         if not (np.isfinite(enc).all() and np.isfinite(dec).all() and np.isfinite(tgt).all()):
             continue
+        persistence_anchor = enc[-1, target_indices_in_encoder].astype(float)
         samples.append(WindowedSample(
             encoder_X=enc,
             decoder_X=dec,
             target_Y=tgt,
+            persistence_anchor=persistence_anchor,
             station_idx=station_idx,
             basin_idx=basin_idx,
             site_id=site_id,
@@ -189,10 +200,12 @@ def stack(samples: List[WindowedSample]) -> Tuple[dict, np.ndarray]:
     if not samples:
         empty = np.zeros((0,))
         return ({'encoder_input': empty, 'decoder_input': empty,
+                 'persistence_input': empty,
                  'station_input': empty, 'basin_input': empty}, empty)
     inputs = {
         'encoder_input': np.stack([s.encoder_X for s in samples]).astype('float32'),
         'decoder_input': np.stack([s.decoder_X for s in samples]).astype('float32'),
+        'persistence_input': np.stack([s.persistence_anchor for s in samples]).astype('float32'),
         'station_input': np.array([s.station_idx for s in samples], dtype='int32'),
         'basin_input': np.array([s.basin_idx for s in samples], dtype='int32'),
     }
