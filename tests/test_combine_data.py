@@ -111,6 +111,37 @@ def test_merge_defaults_swe_to_zero_when_not_provided():
     assert (merged['SWE'] == 0.0).all()
 
 
+def test_merge_attaches_interpolated_soil_moisture_when_provided():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    # Sparse SMAP retrievals -- only every 3rd day, like a real revisit cadence.
+    sm = pd.DataFrame({'Date': dates[::3],
+                       'soil_moisture': [0.15, 0.20, 0.25, 0.30, 0.25, 0.20, 0.15]})
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST',
+        datetime(2022, 1, 1), datetime(2022, 1, 20),
+        sm_data=sm)
+    assert 'soil_moisture' in merged.columns
+    assert not merged['soil_moisture'].isnull().any()
+    interior = merged.loc[
+        pd.to_datetime(merged['Date']) <= pd.Timestamp('2022-01-19'),
+        'soil_moisture']
+    assert interior.max() <= 0.30 and interior.min() >= 0.15
+    trailing = merged.loc[
+        pd.to_datetime(merged['Date']) > pd.Timestamp('2022-01-19'),
+        'soil_moisture']
+    # Trailing rows past the last known SM date default to 0 (same as SWE).
+    assert (trailing == 0.0).all()
+
+
+def test_merge_defaults_soil_moisture_to_zero_when_not_provided():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert 'soil_moisture' in merged.columns
+    assert (merged['soil_moisture'] == 0.0).all()
+
+
 def test_merge_records_huc8_when_provided():
     noaa, flow = _make_frames()
     merged = combine_data.merge_dataframes(

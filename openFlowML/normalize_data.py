@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 
 # Required: rows missing any of these are dropped (no pooled-mean fill).
 CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
-# Optional columns that get scaled when present. SWE is slow-varying; if it's
-# missing for a row, default it to 0 rather than dropping the row.
-OPTIONAL_NUMERIC = ['SWE']
+# Optional columns that get scaled when present. SWE and soil_moisture are
+# slow-varying; if either is missing for a row, default to 0 rather than
+# dropping the row.
+OPTIONAL_NUMERIC = ['SWE', 'soil_moisture']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 # Streamflow is log-normal -- log1p before z-scoring is standard hydrology
 # practice. Temperature/SWE stay linear.
@@ -145,11 +146,14 @@ def normalize_data(data, artifacts_dir=None):
         for column in present_numeric:
             data[column] = pd.to_numeric(data[column], errors='coerce')
 
-        # SWE is slowly varying and often legitimately zero -- any remaining
-        # missing value here defaults to 0 ("no snow data") instead of forcing
-        # the row out, so a station with no nearby SNOTEL still contributes.
+        # SWE and soil_moisture are slowly varying and often legitimately near
+        # zero -- any remaining missing value here defaults to 0 instead of
+        # forcing the row out, so a station with no nearby SNOTEL / no SMAP
+        # retrieval that day still contributes.
         if 'SWE' in data.columns:
             data['SWE'] = data['SWE'].fillna(0.0)
+        if 'soil_moisture' in data.columns:
+            data['soil_moisture'] = data['soil_moisture'].fillna(0.0)
 
         # combine_data owns per-station gap handling for flow + temperature;
         # anything still missing in the core columns here is dropped rather

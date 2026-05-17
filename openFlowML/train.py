@@ -81,7 +81,8 @@ def main():
 
     # 2. Sanity-check spine outputs the rest of training relies on.
     required = {'station_idx', 'basin_idx', 'site_id', 'Date',
-                'Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'SWE',
+                'Min Flow', 'Max Flow', 'TMIN', 'TMAX',
+                'SWE', 'soil_moisture',
                 'doy_sin', 'doy_cos'}
     missing = required - set(data.columns)
     if missing:

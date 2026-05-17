@@ -112,6 +112,30 @@ def test_normalize_fills_missing_swe_with_zero_not_dropping_rows():
     assert out['SWE'].isnull().sum() == 0
 
 
+def test_normalize_scales_soil_moisture_when_present(tmp_path):
+    import json
+    df = _make_combined()
+    df['soil_moisture'] = np.linspace(0.05, 0.45, 20)
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    assert 'soil_moisture' in scalers
+    # Identity transform (no log1p) for soil moisture; z-scored on the raw scale.
+    assert scalers['soil_moisture']['transform'] == 'identity'
+    assert abs(out['soil_moisture'].mean()) < 1e-6
+    assert abs(out['soil_moisture'].std(ddof=0) - 1.0) < 1e-6
+
+
+def test_normalize_fills_missing_soil_moisture_with_zero():
+    df = _make_combined()
+    df['soil_moisture'] = [np.nan] * len(df)
+    out = normalize_data.normalize_data(df)
+    assert out is not None
+    # Missing soil moisture should NOT drop rows.
+    assert len(out) == len(df)
+    assert out['soil_moisture'].isnull().sum() == 0
+
+
 def test_flow_columns_are_log_transformed_before_scaling(tmp_path):
     import json
     df = _make_combined()

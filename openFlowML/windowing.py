@@ -25,11 +25,16 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # Encoder window: everything we know up to the prediction time. Flow is here
-# (these are observations), and SWE -- current snowpack is a strong predictor
-# of snowmelt-fed runoff in Colorado.
-ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'SWE', 'doy_sin', 'doy_cos']
+# (these are observations); SWE -- current snowpack is a strong predictor of
+# snowmelt-fed runoff in Colorado; soil_moisture (SMAP L3 enhanced) is the
+# antecedent wetness state that gates how much new precipitation becomes runoff
+# vs infiltrates.
+ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX',
+                    'SWE', 'soil_moisture',
+                    'doy_sin', 'doy_cos']
 # Decoder window: ONLY features available at forecast time. No flow (that's
-# what we're predicting), no SWE (no skillful 14-day SWE forecast exists).
+# what we're predicting), no SWE / no soil_moisture (neither has a skillful
+# 14-day forecast available).
 DECODER_FEATURES = ['TMIN', 'TMAX', 'doy_sin', 'doy_cos']
 # Target: log-z-scored flow during the decoder days. Both columns are already
 # log1p-transformed and z-scored by normalize_data, so MSE/Huber here behaves.

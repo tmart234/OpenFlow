@@ -20,7 +20,12 @@ Phase 2 data-spine guarantees:
     gaps are dropped rather than filled with a pooled (cross-station) mean
   - the per-station frames carry a clean 'site_id' column
 
-TODO (later in Phase 2): wire in SWE as a history-window feature.
+Phase 4 (SMAP soil moisture):
+  - Soil moisture is fetched per station from NASA SMAP L3 enhanced via
+    nasa_moisture (lazy import; failure degrades to "no SMAP" for that site).
+  - Treated like SWE in the spine: slow-varying, longer interior interpolation
+    limit, missing rows default to 0 rather than being dropped.
+  - Set OPENFLOW_DISABLE_SMAP=1 to run the ablation baseline without SMAP.
 """
 
 if not logging.getLogger().hasHandlers():
@@ -36,6 +41,10 @@ MAX_GAP_DAYS = 7
 # SWE changes slowly (snowpack accumulates/melts over weeks), so we tolerate
 # longer interior gaps in the SWE series before giving up on a value.
 MAX_SWE_GAP_DAYS = 30
+# SMAP has a ~1-3 day revisit cadence per pass; gaps come from RFI / dense
+# vegetation / frozen ground. Soil moisture itself is slow-varying so the same
+# generous interior interpolation limit as SWE is appropriate.
+MAX_SM_GAP_DAYS = 30
 
 
 def _to_daily_series(df, value_columns, daily_index):
@@ -52,15 +61,16 @@ def _to_daily_series(df, value_columns, daily_index):
 
 
 def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
-                     swe_data=None, huc8=None):
+                     swe_data=None, sm_data=None, huc8=None):
     """
-    Merge a site's NOAA temperature, flow, and SWE data onto one regular daily
-    index.
+    Merge a site's NOAA temperature, flow, SWE and soil-moisture data onto one
+    regular daily index.
 
     Short interior flow/temp gaps (<= MAX_GAP_DAYS) are interpolated time-aware;
     rows still missing a core value afterwards are dropped (no pooled-mean
-    fill). SWE is interpolated with a longer limit (it's slow-varying) and any
-    remaining missing values default to 0 -- they don't drop the row.
+    fill). SWE and soil_moisture are interpolated with longer limits (slow-
+    varying) and any remaining missing values default to 0 -- they don't drop
+    the row.
     """
     if 'Date' not in noaa_data or 'Date' not in flow_data:
         raise ValueError("'Date' column missing in one of the dataframes")
@@ -96,12 +106,24 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         else:
             combined['SWE'] = float('nan')
 
-        # Drop rows still missing any core flow/temp value. SWE is NOT in
-        # CORE_COLUMNS, so a missing SWE never drops a row.
+        # SMAP soil moisture: slow-varying surface state; same shape as SWE
+        # handling -- generous interior interpolation limit, missing values
+        # default to 0 instead of dropping the row.
+        if sm_data is not None and not sm_data.empty:
+            sm_daily = _to_daily_series(sm_data, ['soil_moisture'], daily_index)
+            sm_daily['soil_moisture'] = pd.to_numeric(sm_daily['soil_moisture'], errors='coerce')
+            sm_daily = sm_daily.interpolate(method='time', limit=MAX_SM_GAP_DAYS, limit_area='inside')
+            combined['soil_moisture'] = sm_daily['soil_moisture']
+        else:
+            combined['soil_moisture'] = float('nan')
+
+        # Drop rows still missing any core flow/temp value. SWE / soil_moisture
+        # are NOT in CORE_COLUMNS, so a missing one never drops a row.
         before = len(combined)
         combined = combined.dropna(subset=CORE_COLUMNS)
-        # Any remaining SWE gaps default to 0 ("no snow data" / out-of-season).
+        # Any remaining SWE/SM gaps default to 0 ("no data" / out-of-season).
         combined['SWE'] = combined['SWE'].fillna(0.0)
+        combined['soil_moisture'] = combined['soil_moisture'].fillna(0.0)
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,
@@ -121,12 +143,13 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
 
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     """
-    Resolve a site's coordinates and fetch its NOAA temperature + HUC SWE
-    series, and its HUC8 basin id (used as a Phase 3 basin embedding key).
+    Resolve a site's coordinates and fetch its NOAA temperature, HUC SWE and
+    SMAP soil-moisture series, and its HUC8 basin id (used as a Phase 3 basin
+    embedding key).
 
-    Returns (noaa_data, swe_data, huc8). Either dataframe may be empty (SWE
-    degrades gracefully; missing NOAA causes the caller to skip the site).
-    huc8 may be None when the lookup fails.
+    Returns (noaa_data, swe_data, sm_data, huc8). Any of the dataframes may be
+    empty (SWE and SM degrade gracefully; missing NOAA causes the caller to
+    skip the site). huc8 may be None when the lookup fails.
     """
     if prefix == "USGS":
         coords_dict = get_usgs_coordinates(site_id)
@@ -137,7 +160,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if not coords_dict:
         logger.error(f"Could not resolve coordinates for {prefix}:{site_id}. Skipping...")
-        return None, None, None
+        return None, None, None, None
 
     latitude = float(coords_dict['latitude'])
     longitude = float(coords_dict['longitude'])
@@ -149,7 +172,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     if noaa_data is None or noaa_data.empty:
         logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
-        return None, None, None
+        return None, None, None, None
 
     noaa_data = noaa_data.copy()
     noaa_data['USGS_site_ID'] = site_id
@@ -173,9 +196,32 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
         logger.warning("SWE fetch failed for %s: %s", site_id, e)
         swe_data = pd.DataFrame(columns=['Date', 'SWE'])
 
+    # SMAP soil moisture: also a history-window feature, fetched per HUC8.
+    # Lazy import keeps the heavy earthaccess/h5py stack out of the core
+    # training-env import path; if it's not installed or any step fails
+    # (auth, search, download, extraction), sm_data ends up empty and
+    # merge_dataframes treats it as "no data" (defaults to 0, doesn't drop
+    # the row), mirroring the SWE handling.
+    #
+    # OPENFLOW_DISABLE_SMAP=1 short-circuits to empty -- this is the lever
+    # for the ablation run (train without SMAP and compare on the held-out
+    # test set).
+    sm_data = pd.DataFrame(columns=['Date', 'soil_moisture'])
+    if os.getenv('OPENFLOW_DISABLE_SMAP', '').strip() in ('1', 'true', 'True'):
+        logger.info("OPENFLOW_DISABLE_SMAP set -- skipping SMAP for %s", site_id)
+    else:
+        try:
+            from data import nasa_moisture
+            sm_data = nasa_moisture.main(latitude, longitude, start_date, end_date)
+        except ImportError as e:
+            logger.warning("Soil-moisture deps unavailable (%s); skipping SMAP for %s",
+                           e, site_id)
+        except Exception as e:
+            logger.warning("SMAP fetch failed for %s: %s", site_id, e)
+
     # Gap handling and numeric coercion happen in merge_dataframes (per station,
     # on the regular daily index) -- not here, and never via a pooled mean.
-    return noaa_data, swe_data, huc8
+    return noaa_data, swe_data, sm_data, huc8
 
 
 def get_site_ids(filename=None):
@@ -231,7 +277,7 @@ def main(training_num_years=7):
                 logger.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
                 continue
 
-            noaa_dataframe, swe_dataframe, huc8 = fetch_and_process_data(
+            noaa_dataframe, swe_dataframe, sm_dataframe, huc8 = fetch_and_process_data(
                 prefix, id, start_date, end_date, flow_dataframe)
             if noaa_dataframe is None or noaa_dataframe.empty or flow_dataframe.empty:
                 logger.warning(f"No usable data for site ID {site_id}. Skipping...")
@@ -239,7 +285,7 @@ def main(training_num_years=7):
 
             merged = merge_dataframes(
                 noaa_dataframe, flow_dataframe, site_id, start_date, end_date,
-                swe_data=swe_dataframe, huc8=huc8)
+                swe_data=swe_dataframe, sm_data=sm_dataframe, huc8=huc8)
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue

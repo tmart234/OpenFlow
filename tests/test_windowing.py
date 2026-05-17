@@ -20,6 +20,7 @@ def _make_station_frame(site_id, station_idx, basin_idx, n_days=120, start='2022
         'TMIN': rng.standard_normal(n_days),
         'TMAX': rng.standard_normal(n_days),
         'SWE': rng.standard_normal(n_days),
+        'soil_moisture': rng.standard_normal(n_days),
         'doy_sin': np.sin(2 * np.pi * np.arange(n_days) / 365),
         'doy_cos': np.cos(2 * np.pi * np.arange(n_days) / 365),
     })
@@ -39,6 +40,9 @@ def test_decoder_features_carry_no_flow_information():
     assert 'Max Flow' not in windowing.DECODER_FEATURES
     # SWE is also a current-conditions feature -- no skillful 14-day forecast.
     assert 'SWE' not in windowing.DECODER_FEATURES
+    # Same for soil moisture: SMAP is encoder-only, never in the decoder window.
+    assert 'soil_moisture' not in windowing.DECODER_FEATURES
+    assert 'soil_moisture' in windowing.ENCODER_FEATURES
 
 
 def test_build_windows_shapes_are_correct():
@@ -143,5 +147,11 @@ def test_persistence_anchor_is_the_last_encoder_day_target_values():
 
 def test_build_windows_rejects_dataframe_missing_required_columns():
     df = _make_station_frame('USGS:A', 1, 1).drop(columns=['SWE'])
+    with pytest.raises(ValueError):
+        windowing.build_windows(df)
+
+
+def test_build_windows_rejects_dataframe_missing_soil_moisture():
+    df = _make_station_frame('USGS:A', 1, 1).drop(columns=['soil_moisture'])
     with pytest.raises(ValueError):
         windowing.build_windows(df)
