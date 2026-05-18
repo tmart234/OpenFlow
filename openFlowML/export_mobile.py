@@ -41,8 +41,16 @@ H5_NAME = 'lstm_model.h5'
 MLPACKAGE_NAME = 'lstm_model.mlpackage'
 MLPACKAGE_ZIP_NAME = 'lstm_model.mlpackage.zip'
 TFLITE_NAME = 'lstm_model.tflite'
+TFLITE_INT8_NAME = 'lstm_model_int8.tflite'
 MANIFEST_NAME = 'manifest.json'
 TRAINING_CONFIG_NAME = 'training_config.json'
+
+# Maximum per-output absolute error (scaled space) the int8-quantized TFLite
+# is allowed to introduce vs the float32 Keras model. Beyond this we ship
+# only the float32 TFLite -- the size win isn't worth a noticeable accuracy
+# regression. Tuned to roughly the noise floor of the float-32 conversion
+# parity tests in tests/test_export_parity.py.
+TFLITE_INT8_MAX_ABS_DIFF = 0.05
 
 
 def _load_keras_model(h5_path):
@@ -143,6 +151,86 @@ def _rebuild_without_mask_zero(net, config):
     return rebuilt
 
 
+def _random_sample_inputs(config, n=8, seed=0):
+    """Synthetic (Keras-shaped) sample inputs for parity comparisons; CPU-only, no fixtures needed."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    return {
+        'encoder_input': rng.standard_normal(
+            (n, config['encoder_days'], len(config['encoder_features']))).astype('float32'),
+        'decoder_input': rng.standard_normal(
+            (n, config['decoder_days'], len(config['decoder_features']))).astype('float32'),
+        'persistence_input': rng.standard_normal(
+            (n, len(config['target_features']))).astype('float32'),
+        # Index 0 always exists ("unseen station/basin"), so the synthetic
+        # range stays inside the trained embedding vocab.
+        'station_input': rng.integers(0, max(2, config['num_stations']), size=(n,)).astype('int32'),
+        'basin_input': rng.integers(0, max(2, config['num_basins']), size=(n,)).astype('int32'),
+    }
+
+
+def export_tflite_int8(h5_path, out_path, config):
+    """
+    Dynamic-range quantization (weights -> int8, activations stay float32).
+    Returns (out_path, max_abs_diff_vs_keras) on success, or (None, None)
+    on failure. The caller is responsible for deciding whether the parity
+    is good enough to ship.
+
+    Why dynamic-range and not full-integer quantization: full-integer needs a
+    representative dataset to calibrate activation ranges, which we don't
+    have at export time outside of training. Dynamic-range is a one-line
+    converter flag, runs every weight tensor through int8, and matches the
+    float32 model to within a few percent on most architectures.
+    """
+    import numpy as np
+    import tensorflow as tf
+
+    net = _load_keras_model(h5_path)
+    input_specs = _input_specs_from_config(config)
+    serving_fn = _make_serving_fn(net)
+    concrete = serving_fn.get_concrete_function(*input_specs)
+    converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete], net)
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    # Same Flex-fallback policy as the float32 path -- mask_zero=True
+    # embeddings sometimes need it.
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
+    try:
+        tflite_bytes = converter.convert()
+    except Exception as e:
+        logger.warning("TFLite int8 conversion failed: %s", e)
+        return None, None
+    with open(out_path, 'wb') as f:
+        f.write(tflite_bytes)
+    logger.info("Wrote TFLite int8: %s (%d bytes)", out_path, len(tflite_bytes))
+
+    # Parity check: int8 must stay within TFLITE_INT8_MAX_ABS_DIFF of the
+    # float32 Keras prediction on synthetic inputs. If it doesn't, the caller
+    # drops the int8 file and ships only float32.
+    keras_inputs = _random_sample_inputs(config, n=8)
+    keras_pred = net.predict(keras_inputs, verbose=0)
+
+    interp = tf.lite.Interpreter(model_path=out_path)
+    interp.allocate_tensors()
+    in_details = {d['name'].split(':')[0]: d for d in interp.get_input_details()}
+    out_details = interp.get_output_details()
+    max_diff = 0.0
+    for i in range(keras_pred.shape[0]):
+        for name in ('encoder_input', 'decoder_input', 'persistence_input',
+                     'station_input', 'basin_input'):
+            matched = next((v for k, v in in_details.items() if k.endswith(name)), None)
+            if matched is None:
+                logger.warning("Int8 TFLite missing input %s; skipping parity", name)
+                return out_path, None
+            interp.set_tensor(matched['index'], keras_inputs[name][i:i+1])
+        interp.invoke()
+        int8_pred = interp.get_tensor(out_details[0]['index'])
+        diff = float(np.max(np.abs(int8_pred - keras_pred[i:i+1])))
+        max_diff = max(max_diff, diff)
+    logger.info("TFLite int8 parity: max abs diff vs Keras = %.6f", max_diff)
+    return out_path, max_diff
+
+
 def export_tflite(h5_path, out_path, config):
     """
     Convert Keras .h5 -> TFLite. Returns (out_path, mode) on success or
@@ -195,7 +283,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def write_manifest(base_path, config, artifact_files, tflite_mode):
+def write_manifest(base_path, config, artifact_files, tflite_mode,
+                   tflite_int8_max_abs_diff=None):
     """
     Emit manifest.json next to the artifacts. The mobile app reads this to
     verify integrity, learn the input/output schema, and pick which artifact
@@ -226,6 +315,7 @@ def write_manifest(base_path, config, artifact_files, tflite_mode):
         'tf_version': tf.__version__,
         'coremltools_version': coremltools_version,
         'tflite_mode': tflite_mode,
+        'tflite_int8_max_abs_diff': tflite_int8_max_abs_diff,
         'schema': {
             'encoder_days': config['encoder_days'],
             'decoder_days': config['decoder_days'],
@@ -259,13 +349,36 @@ def export_all(base_path):
     tflite_path = os.path.join(base_path, TFLITE_NAME)
     tflite_result, tflite_mode = export_tflite(h5_path, tflite_path, config)
 
+    # Try the int8-quantized TFLite as an additional, optional artifact.
+    # If conversion or the parity check fails we silently drop it -- the
+    # float32 .tflite is the canonical Android artifact.
+    tflite_int8_path = os.path.join(base_path, TFLITE_INT8_NAME)
+    int8_path, int8_max_diff = export_tflite_int8(h5_path, tflite_int8_path, config)
+    int8_shipped = False
+    if int8_path is not None and int8_max_diff is not None:
+        if int8_max_diff <= TFLITE_INT8_MAX_ABS_DIFF:
+            int8_shipped = True
+            logger.info("Int8 TFLite passes parity gate (%.4f <= %.4f); shipping",
+                        int8_max_diff, TFLITE_INT8_MAX_ABS_DIFF)
+        else:
+            logger.warning(
+                "Int8 TFLite parity %.4f exceeds gate %.4f; dropping int8 artifact",
+                int8_max_diff, TFLITE_INT8_MAX_ABS_DIFF)
+            try:
+                os.remove(tflite_int8_path)
+            except OSError:
+                pass
+
     artifact_files = [H5_NAME, 'scalers.json', 'station_index.json',
                       'basin_index.json', TRAINING_CONFIG_NAME]
     if mlpackage_zip:
         artifact_files.append(MLPACKAGE_ZIP_NAME)
     if tflite_result:
         artifact_files.append(TFLITE_NAME)
-    write_manifest(base_path, config, artifact_files, tflite_mode)
+    if int8_shipped:
+        artifact_files.append(TFLITE_INT8_NAME)
+    write_manifest(base_path, config, artifact_files, tflite_mode,
+                   tflite_int8_max_abs_diff=int8_max_diff if int8_shipped else None)
 
     if not mlpackage_zip and not tflite_result:
         raise RuntimeError("Both CoreML and TFLite exports failed")
@@ -273,6 +386,8 @@ def export_all(base_path):
         'mlpackage_zip': mlpackage_zip,
         'tflite': tflite_result,
         'tflite_mode': tflite_mode,
+        'tflite_int8': tflite_int8_path if int8_shipped else None,
+        'tflite_int8_max_abs_diff': int8_max_diff,
     }
 
 

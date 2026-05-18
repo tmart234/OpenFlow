@@ -19,6 +19,7 @@ def _make_station_frame(site_id, station_idx, basin_idx, n_days=120, start='2022
         'Max Flow': rng.standard_normal(n_days),
         'TMIN': rng.standard_normal(n_days),
         'TMAX': rng.standard_normal(n_days),
+        'precipitation': rng.standard_normal(n_days),
         'SWE': rng.standard_normal(n_days),
         'soil_moisture': rng.standard_normal(n_days),
         'sm_observed': rng.integers(0, 2, n_days),
@@ -60,6 +61,11 @@ def test_decoder_features_carry_no_flow_information():
     assert 'reservoir_observed' in windowing.ENCODER_FEATURES
     for c in ('reservoir_storage', 'reservoir_release', 'reservoir_observed'):
         assert c not in windowing.DECODER_FEATURES
+    # Precipitation is the ONE auxiliary that IS available at forecast time
+    # (Open-Meteo / GFS QPF ships a 14-day daily precipitation_sum), so it
+    # appears in BOTH windows -- observed in the encoder, QPF in the decoder.
+    assert 'precipitation' in windowing.ENCODER_FEATURES
+    assert 'precipitation' in windowing.DECODER_FEATURES
 
 
 def test_build_windows_shapes_are_correct():

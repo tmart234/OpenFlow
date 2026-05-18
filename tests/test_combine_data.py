@@ -257,6 +257,53 @@ def test_merge_defaults_reservoir_to_zero_when_unregulated():
     assert (merged['reservoir_observed'] == 0).all()
 
 
+def test_merge_attaches_precipitation_from_noaa():
+    noaa, flow = _make_frames()
+    # NCEI returns daily PRCP in mm (combine_data expects post-conversion).
+    noaa['precipitation'] = np.zeros(len(noaa))
+    # Two storm days punctuating the dry stretch.
+    noaa.loc[3, 'precipitation'] = 12.5
+    noaa.loc[10, 'precipitation'] = 3.0
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert 'precipitation' in merged.columns
+    rows = merged.set_index(pd.to_datetime(merged['Date']))
+    assert rows.loc['2022-01-04', 'precipitation'] == 12.5
+    assert rows.loc['2022-01-11', 'precipitation'] == 3.0
+    # Other days remain dry (zero), not interpolated up.
+    assert rows.loc['2022-01-01', 'precipitation'] == 0.0
+    assert rows.loc['2022-01-20', 'precipitation'] == 0.0
+
+
+def test_merge_defaults_precipitation_to_zero_when_missing_from_noaa():
+    """If the NCEI station's PRCP coverage is gone, default the column to 0 (dry)."""
+    noaa, flow = _make_frames()
+    # NOAA frame has no precipitation column at all.
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert 'precipitation' in merged.columns
+    assert (merged['precipitation'] == 0.0).all()
+
+
+def test_merge_does_not_interpolate_long_precipitation_gaps():
+    """Precip is spiky; don't smear a missed storm day across surrounding dry days."""
+    noaa, flow = _make_frames()
+    noaa['precipitation'] = np.zeros(len(noaa))
+    noaa.loc[3, 'precipitation'] = 20.0  # storm
+    # Punch a 5-day gap around days 5..9. With MAX_PRECIP_GAP_DAYS=2 this
+    # interior chunk should NOT be filled by interpolation -- it falls
+    # through to the final fillna(0.0).
+    noaa.loc[5:9, 'precipitation'] = np.nan
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    rows = merged.set_index(pd.to_datetime(merged['Date']))
+    # Storm day preserved.
+    assert rows.loc['2022-01-04', 'precipitation'] == 20.0
+    # Long-gap interior is zeros (not interpolated).
+    for d in ['2022-01-06', '2022-01-07', '2022-01-08', '2022-01-09', '2022-01-10']:
+        assert rows.loc[d, 'precipitation'] == 0.0
+
+
 def test_merge_records_huc8_when_provided():
     noaa, flow = _make_frames()
     merged = combine_data.merge_dataframes(
