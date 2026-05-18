@@ -10,7 +10,8 @@ Every successful weekly training run on `main` produces a GitHub Release tagged 
 | --- | --- |
 | `lstm_model.h5` | Canonical Keras model. The source of truth; everything else is derived. |
 | `lstm_model.mlpackage.zip` | CoreML mlprogram for iOS (iOS 15+). Unzip and pass to `MLModel(contentsOf:)`. |
-| `lstm_model.tflite` | TFLite for Android. May require the Flex delegate — see TFLite note below. |
+| `lstm_model.tflite` | TFLite (float32) for Android. May require the Flex delegate — see TFLite note below. |
+| `lstm_model_int8.tflite` | Optional dynamic-range int8 TFLite. Smaller, slightly less accurate. Only present when it passed the parity gate; see `manifest.tflite_int8_max_abs_diff`. |
 | `scalers.json` | Per-column scaler params (mean, scale, transform). Inputs and outputs are in scaled space; you invert with this. |
 | `station_index.json` | Map `site_id` → embedding index. Index `0` is reserved for "unseen". |
 | `basin_index.json` | Map HUC8 → embedding index. Index `0` is reserved for "unseen". |
@@ -37,8 +38,8 @@ The model takes a dict of 5 inputs. Names are stable across exports:
 
 | Name | dtype | Shape | Source |
 | --- | --- | --- | --- |
-| `encoder_input` | float32 | `[1, 60, len(encoder_features)]` | Last 60 days of features, columns in `training_config.encoder_features` order, pre-scaled. |
-| `decoder_input` | float32 | `[1, 14, len(decoder_features)]` | Next 14 days of forecast-time-available features, columns in `training_config.decoder_features` order, pre-scaled. |
+| `encoder_input` | float32 | `[1, 60, len(encoder_features)]` | Last 60 days of features, columns in `training_config.encoder_features` order, pre-scaled. Includes observed precipitation (`precipitation`, mm/day from GHCND PRCP). |
+| `decoder_input` | float32 | `[1, 14, len(decoder_features)]` | Next 14 days of forecast-time-available features, columns in `training_config.decoder_features` order, pre-scaled. Includes forecast precipitation — pull `precipitation_sum` from Open-Meteo's daily forecast (`data/get_forecast.py` does this server-side; mobile clients can call Open-Meteo directly). |
 | `persistence_input` | float32 | `[1, len(target_features)]` | Last encoder-day flow values (the `Min Flow` / `Max Flow` columns from the last encoder row), in scaled space. |
 | `station_input` | int32 | `[1]` | `station_index.json[site_id]`, or `0` if the site isn't in the map. |
 | `basin_input` | int32 | `[1]` | `basin_index.json[huc8]`, or `0` if the HUC isn't in the map. |
@@ -92,3 +93,18 @@ Both embedding layers reserve index `0` for unknown. If the user picks a site no
 ## Reference fixture
 
 The export parity tests in `tests/test_export_parity.py` generate synthetic inputs, run them through Keras / CoreML / TFLite, and assert they agree within `1e-3`. They're the executable spec of this document — when in doubt, read that file.
+
+## Publishing the first release
+
+The weekly cron at `.github/workflows/ml_training.yml` produces a Release tagged `model-YYYY.MM.DD` whenever it runs on `main`. To create the first release before the next Monday cron fires, after this branch is merged:
+
+```bash
+gh workflow run ml_training.yml --ref main
+gh run watch                  # follow until done
+```
+
+Verify the release appeared with all expected files (8 if int8 shipped, 7 otherwise) and a valid manifest:
+
+```bash
+gh release view "model-$(date -u +%Y.%m.%d)" --json assets,name
+```

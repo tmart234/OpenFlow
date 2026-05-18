@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 # Encoder window: everything we know up to the prediction time.
 #   flow (observations); SWE -- snowpack drives snowmelt-fed runoff in CO;
+#   precipitation -- recent rainfall on the basin, the second-most-important
+#   short-horizon driver of stream rise after temperature-driven snowmelt;
 #   soil_moisture (SMAP L3 enhanced) -- antecedent wetness gates infiltration
 #   vs runoff; sm_observed -- 1 = real / short-gap-interpolated SMAP, 0 =
 #   imputed via combine_data's median fallback; drought_index (USDM) -- HUC8
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 #   RISE) -- upstream regulation state for regulated rivers, defaults to 0
 #   for unmapped (unregulated) stations; reservoir_observed -- 1 when the
 #   station actually has reservoir data, 0 when it's the unregulated default.
-ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX',
+ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
                     'SWE', 'soil_moisture', 'sm_observed',
                     'drought_index',
                     'reservoir_storage', 'reservoir_release', 'reservoir_observed',
@@ -41,7 +43,10 @@ ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX',
 # Decoder window: ONLY features available at forecast time. No flow (that's
 # what we're predicting), no SWE / no soil_moisture / no drought / no
 # reservoir state (none of these have a skillful 14-day forecast available).
-DECODER_FEATURES = ['TMIN', 'TMAX', 'doy_sin', 'doy_cos']
+# Precipitation IS forecast-available -- Open-Meteo (and the NWS/NOAA QPF
+# layer behind it) ships a 14-day daily precipitation_sum that get_forecast.py
+# fetches at inference time, so it goes in the decoder window.
+DECODER_FEATURES = ['TMIN', 'TMAX', 'precipitation', 'doy_sin', 'doy_cos']
 # Target: log-z-scored flow during the decoder days. Both columns are already
 # log1p-transformed and z-scored by normalize_data, so MSE/Huber here behaves.
 TARGET_FEATURES = ['Min Flow', 'Max Flow']

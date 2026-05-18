@@ -82,6 +82,7 @@ def main():
     # 2. Sanity-check spine outputs the rest of training relies on.
     required = {'station_idx', 'basin_idx', 'site_id', 'Date',
                 'Min Flow', 'Max Flow', 'TMIN', 'TMAX',
+                'precipitation',
                 'SWE', 'soil_moisture', 'sm_observed',
                 'drought_index',
                 'reservoir_storage', 'reservoir_release', 'reservoir_observed',

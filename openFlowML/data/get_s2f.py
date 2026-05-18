@@ -35,8 +35,8 @@ IMPLEMENTATION STATUS + TIMESCALE CAVEAT:
 """
 
 import logging
-from datetime import date, datetime
-from typing import Optional
+from datetime import date, datetime, timedelta
+from typing import Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -44,6 +44,11 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 if not logging.getLogger().hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Conversion factor used by disaggregate_seasonal_to_daily: 1 kAF/day in cfs.
+# Derivation: 1 acre-foot = 43,560 ft^3; 1 day = 86,400 s; so 1 AF/day =
+# 43,560 / 86,400 cfs = 0.50417 cfs. 1,000 AF/day = 504.17 cfs.
+_CFS_PER_KAF_PER_DAY = 43_560.0 * 1_000.0 / 86_400.0
 
 
 def _empty() -> pd.DataFrame:
@@ -67,11 +72,65 @@ def fetch(site_id: str, anchor_date) -> pd.DataFrame:
     Currently stubbed: USBR S2F doesn't expose a clean REST archive, so this
     always returns empty until the per-basin scraper is built. The function
     signature is the integration point so combine_data / baselines can adopt
-    the real fetch without changing callers.
+    the real fetch without changing callers. When wired, baseline_predictions
+    will call disaggregate_seasonal_to_daily below to produce daily-cadence
+    predictions in cfs.
     """
     logger.debug("S2F fetch stubbed for %s @ %s -- archive integration pending",
                  site_id, _to_date(anchor_date))
     return _empty()
+
+
+def disaggregate_seasonal_to_daily(volume_kaf: float,
+                                   season_start: date,
+                                   season_end: date,
+                                   anchor_date,
+                                   horizon_days: int,
+                                   climatology: Optional[Mapping] = None) -> np.ndarray:
+    """
+    Convert a seasonal-volume forecast (e.g. "April-July runoff = 850 kAF")
+    into a daily-cfs prediction series for the `horizon_days` after
+    `anchor_date`.
+
+    Approach: split the seasonal volume across days inside [season_start,
+    season_end] using a per-day-of-year share, then convert each daily
+    kAF/day allocation to cfs via _CFS_PER_KAF_PER_DAY. Days outside the
+    forecast season get the climatological out-of-season flow share (default:
+    zero contribution from the seasonal forecast; the persistence baseline
+    already covers the rest).
+
+    Args:
+        volume_kaf:      seasonal total in thousand acre-feet
+        season_start:    first day inside the forecast season
+        season_end:      last day inside the forecast season (inclusive)
+        anchor_date:     first day of the prediction window (forecast issue
+                         date + 1, typically)
+        horizon_days:    number of daily predictions to return
+        climatology:     optional dict {day_of_year -> fraction_of_seasonal_volume};
+                         must sum to ~1.0 over the days in the season.
+                         When None, falls back to a uniform share across the
+                         season (1 / season_length per in-season day) -- the
+                         honest minimum-information baseline.
+
+    Returns: ndarray of shape (horizon_days,) in cfs.
+    """
+    anchor = _to_date(anchor_date)
+    if season_end < season_start:
+        raise ValueError("season_end must be on or after season_start")
+    season_length = (season_end - season_start).days + 1
+    out = np.zeros(horizon_days, dtype='float32')
+    for offset in range(horizon_days):
+        day = anchor + timedelta(days=offset)
+        if day < season_start or day > season_end:
+            continue
+        if climatology is None:
+            share = 1.0 / season_length
+        else:
+            doy = day.timetuple().tm_yday
+            share = float(climatology.get(doy, 1.0 / season_length))
+        daily_kaf = volume_kaf * share
+        out[offset] = daily_kaf * _CFS_PER_KAF_PER_DAY
+    return out
 
 
 def baseline_predictions(test_samples) -> Optional[np.ndarray]:
@@ -80,9 +139,10 @@ def baseline_predictions(test_samples) -> Optional[np.ndarray]:
     items. Returns (N, horizon, target_features) on the raw flow scale when
     feasible, or None when the S2F archive isn't wired in (current state).
 
-    See the module docstring for the daily-disaggregation approach this
-    expects when fully implemented; until then it's a no-op returning None
-    so train.py reports "S2F: not available" and moves on.
+    The disaggregation math lives in disaggregate_seasonal_to_daily and is
+    ready to use; the missing piece is fetch() returning real data and a
+    per-site daily-share climatology lookup. Until then this is a no-op
+    returning None so train.py reports "S2F: not available" and moves on.
     """
     if not test_samples:
         return None
@@ -92,6 +152,8 @@ def baseline_predictions(test_samples) -> Optional[np.ndarray]:
             found += 1
     if found == 0:
         return None
-    # The disaggregation step (seasonal kAF -> daily cfs via per-site
-    # climatological share) belongs here once fetch() returns real data.
+    # When fetch() returns real data, the loop above would build a
+    # (N, horizon, target_features) tensor by calling
+    # disaggregate_seasonal_to_daily for each sample and tiling the cfs
+    # value across both Min Flow + Max Flow target columns.
     return None

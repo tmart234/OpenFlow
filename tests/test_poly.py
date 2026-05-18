@@ -1,4 +1,6 @@
-from data.utils.get_poly import get_huc8_polygon, simplify_polygon, main  # type: ignore
+from data.utils.get_poly import (
+    DEFAULT_TOLERANCE_DEG, HUC_TOLERANCE_DEG, get_huc8_polygon,
+    main, simplify_polygon, tolerance_for_huc)  # type: ignore
 import pytest
 import requests_mock
 from shapely.geometry import Polygon
@@ -37,6 +39,41 @@ def test_simplify_polygon(mock_response):
         polygon = get_huc8_polygon(37.7749, -122.4194)
         simplified = simplify_polygon(polygon)
         assert len(simplified) <= 100
+
+
+def test_tolerance_for_huc_uses_default_when_unknown():
+    assert tolerance_for_huc(None) == DEFAULT_TOLERANCE_DEG
+    assert tolerance_for_huc(99) == DEFAULT_TOLERANCE_DEG
+
+
+def test_tolerance_for_huc_scales_inversely_with_level():
+    # Coarser HUCs (lower numbers) cover bigger areas and need a bigger
+    # simplification tolerance; finer HUCs (higher numbers) need a smaller one.
+    assert HUC_TOLERANCE_DEG[2] > HUC_TOLERANCE_DEG[4] > HUC_TOLERANCE_DEG[8] > HUC_TOLERANCE_DEG[12]
+
+
+def test_simplify_polygon_honors_huc_level_lookup():
+    # A dense circular polygon: simplifying with a higher tolerance must
+    # leave fewer (or equal) points than a lower tolerance.
+    import math
+    n_points = 200
+    polygon = [(math.cos(2 * math.pi * i / n_points),
+                math.sin(2 * math.pi * i / n_points)) for i in range(n_points)]
+    coarse = simplify_polygon(polygon, huc_level=4)   # 0.02 deg
+    fine = simplify_polygon(polygon, huc_level=12)    # 0.001 deg
+    assert len(coarse) <= len(fine)
+
+
+def test_simplify_polygon_explicit_tolerance_wins_over_huc_level():
+    """Back-compat: callers passing a fixed tolerance get exactly that, not the HUC default."""
+    import math
+    polygon = [(math.cos(2 * math.pi * i / 50),
+                math.sin(2 * math.pi * i / 50)) for i in range(50)]
+    # If huc_level were honored over the explicit tolerance, results would
+    # differ wildly between the two calls; pin that the explicit value rules.
+    a = simplify_polygon(polygon, tolerance=0.1, huc_level=12)
+    b = simplify_polygon(polygon, tolerance=0.1)
+    assert a == b
 
 @pytest.mark.xfail(
     reason="get_poly.main() requires a huc_level arg and performs visualization; "
