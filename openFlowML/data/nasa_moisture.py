@@ -101,9 +101,12 @@ def _get_huc8_polygon(lat: float, lon: float):
     if not result:
         return None
     polygon, _huc_id, _attributes = result
+    # HUC-aware simplification: we're always asking for HUC8 here, so pin
+    # the tolerance to the HUC8 default rather than letting the caller's
+    # generic 0.005 ride.
     if not polygon:
         return None
-    return simplify_polygon(polygon)
+    return simplify_polygon(polygon, huc_level=8)
 
 
 def _search_granules(polygon, start_date, end_date):

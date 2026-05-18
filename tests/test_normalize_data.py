@@ -149,6 +149,29 @@ def test_normalize_keeps_sm_observed_as_binary_indicator(tmp_path):
     assert 'sm_observed' not in scalers
 
 
+def test_normalize_log_transforms_precipitation(tmp_path):
+    """Precipitation is heavy-tailed like flow -- log1p before z-score."""
+    df = _make_combined()
+    df['precipitation'] = np.linspace(0.0, 50.0, 20)  # mm
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    assert 'precipitation' in scalers
+    assert scalers['precipitation']['transform'] == 'log1p'
+    assert abs(out['precipitation'].mean()) < 1e-6
+    assert abs(out['precipitation'].std(ddof=0) - 1.0) < 1e-6
+
+
+def test_normalize_fills_missing_precipitation_with_zero():
+    """No NCEI PRCP coverage -> default to 0 mm ("no rain"), don't drop the row."""
+    df = _make_combined()
+    df['precipitation'] = [np.nan] * len(df)
+    out = normalize_data.normalize_data(df)
+    assert out is not None
+    assert len(out) == len(df)
+    assert out['precipitation'].isnull().sum() == 0
+
+
 def test_normalize_scales_drought_and_reservoir_when_present(tmp_path):
     import json
     df = _make_combined()

@@ -38,6 +38,12 @@ CORE_COLUMNS = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX']
 # Longest interior gap (in days) we are willing to interpolate across for flow
 # and temperature, which can change quickly day-to-day.
 MAX_GAP_DAYS = 7
+# Precipitation is far less amenable to interpolation than temperature: most
+# days are dry, storms are spike events, and "average two dry days around a
+# storm to fill the storm day" is meaningfully wrong. Use a very short interior
+# interpolation limit (carries through ~2-day missing-data sensor outages) and
+# then default to 0 ("no rain") for anything still missing.
+MAX_PRECIP_GAP_DAYS = 2
 # SWE changes slowly (snowpack accumulates/melts over weeks), so we tolerate
 # longer interior gaps in the SWE series before giving up on a value.
 MAX_SWE_GAP_DAYS = 30
@@ -94,7 +100,11 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         )
 
         flow_daily = _to_daily_series(flow_data, ['Min Flow', 'Max Flow'], daily_index)
-        noaa_daily = _to_daily_series(noaa_data, ['TMIN', 'TMAX'], daily_index)
+        # NOAA fetch now returns precipitation alongside TMIN/TMAX (get_noaa.py
+        # surfaces GHCND PRCP as `precipitation` in mm). The column may still
+        # be absent if the NCEI station had no PRCP coverage at all.
+        noaa_daily = _to_daily_series(
+            noaa_data, ['TMIN', 'TMAX', 'precipitation'], daily_index)
 
         combined = pd.concat([flow_daily, noaa_daily], axis=1)
         for col in CORE_COLUMNS:
@@ -104,8 +114,17 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
 
         # Time-aware interpolation of short interior gaps only (limit_area
         # 'inside' means no edge extrapolation). `combined` is a single station,
-        # so this interpolation never bleeds across station boundaries.
-        combined = combined.interpolate(method='time', limit=MAX_GAP_DAYS, limit_area='inside')
+        # so this interpolation never bleeds across station boundaries. We
+        # interpolate the core flow/temp columns at MAX_GAP_DAYS and handle
+        # precipitation separately just below with a much shorter limit
+        # (interpolation across a missed storm day is misleading).
+        combined[CORE_COLUMNS] = combined[CORE_COLUMNS].interpolate(
+            method='time', limit=MAX_GAP_DAYS, limit_area='inside')
+        if 'precipitation' in combined.columns:
+            combined['precipitation'] = pd.to_numeric(
+                combined['precipitation'], errors='coerce')
+            combined['precipitation'] = combined['precipitation'].interpolate(
+                method='time', limit=MAX_PRECIP_GAP_DAYS, limit_area='inside')
 
         # SWE: separate, slow-varying series; longer interpolation limit.
         if swe_data is not None and not swe_data.empty:
@@ -159,9 +178,17 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
             combined['reservoir_release'] = float('nan')
 
         # Drop rows still missing any core flow/temp value. SWE / soil_moisture
-        # are NOT in CORE_COLUMNS, so a missing one never drops a row.
+        # / precipitation are NOT in CORE_COLUMNS, so a missing one never
+        # drops a row.
         before = len(combined)
         combined = combined.dropna(subset=CORE_COLUMNS)
+        # Precipitation: 0 mm means "no measurable rain", a legitimate default
+        # for any post-interpolation gap (NCEI station with no PRCP coverage,
+        # short outage that exceeded MAX_PRECIP_GAP_DAYS, etc.). Most days in
+        # most basins are zero anyway, so this defaults to the modal value.
+        if 'precipitation' not in combined.columns:
+            combined['precipitation'] = 0.0
+        combined['precipitation'] = combined['precipitation'].fillna(0.0)
         # SWE: 0 means "no snow", which IS a legitimate default; keep that.
         combined['SWE'] = combined['SWE'].fillna(0.0)
         # Soil moisture: 0 means "Sahara desert", which is NOT a legitimate

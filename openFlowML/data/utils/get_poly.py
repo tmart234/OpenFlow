@@ -131,26 +131,60 @@ def get_huc8_polygon(lat, lon):
     polygon, _huc_id, _attributes = get_huc_polygon(lat, lon, 8)
     return polygon
 
-def simplify_polygon(polygon, tolerance=0.005):
+# Per-HUC-level simplification tolerance (degrees). HUC4 polygons cover whole
+# sub-regions and ship thousands of ring points; HUC8 polygons are local and
+# already lightweight. Scaling the tolerance keeps the simplified output
+# roughly the same order-of-magnitude in point count across HUC levels.
+HUC_TOLERANCE_DEG = {
+    2: 0.05,
+    4: 0.02,
+    6: 0.01,
+    8: 0.005,
+    10: 0.0025,
+    12: 0.001,
+}
+DEFAULT_TOLERANCE_DEG = 0.005
+
+
+def tolerance_for_huc(huc_level):
+    """Recommended simplification tolerance (degrees) for a given HUC level."""
+    if huc_level is None:
+        return DEFAULT_TOLERANCE_DEG
+    return HUC_TOLERANCE_DEG.get(int(huc_level), DEFAULT_TOLERANCE_DEG)
+
+
+def simplify_polygon(polygon, tolerance=None, huc_level=None):
     """
     Simplify the polygon using Shapely's simplify method.
-    # TODO: add tolerance based on HUC bc HUC 4 has many more points than HUC 6 or 8
-     """
+
+    Tolerance precedence:
+      1. explicit `tolerance` argument (back-compat with existing callers)
+      2. `huc_level` -> HUC_TOLERANCE_DEG lookup
+      3. DEFAULT_TOLERANCE_DEG
+
+    HUC4 polygons have ~10x the points of HUC8 polygons, so the same fixed
+    tolerance over-simplifies one and under-simplifies the other. The lookup
+    keeps the simplified output roughly stable in point count regardless of
+    which HUC level the caller asked for.
+    """
+    if tolerance is None:
+        tolerance = tolerance_for_huc(huc_level)
+
     # Check if polygon is a list of lists (multi-ring polygon)
     if isinstance(polygon[0][0], list):
         # Take only the first ring (outer boundary)
         polygon = polygon[0]
-    
+
     shapely_polygon = Polygon(polygon)
     simplified = shapely_polygon.simplify(tolerance=tolerance, preserve_topology=True)
-    
+
     # Extract coordinates
     coords = list(simplified.exterior.coords)
-    
+
     # Round coordinates to 6 decimal places
     coords = [(round(float(lon), 6), round(float(lat), 6)) for lon, lat in coords]
-    
-    logger.info(f"Simplified polygon to {len(coords)} points")
+
+    logger.info(f"Simplified polygon to {len(coords)} points (tolerance={tolerance})")
     return coords
 
 def is_ccw(coords):
@@ -214,7 +248,7 @@ def perpendicular_distance(p1, p2, p):
 def main(lat, lon, huc_level, data_bounds=None):
     huc_polygon = get_huc_polygon(lat, lon, huc_level)
     if huc_polygon:
-        simplified_polygon = simplify_polygon(huc_polygon)
+        simplified_polygon = simplify_polygon(huc_polygon, huc_level=huc_level)
         logger.debug(f"Simplified polygon: {simplified_polygon}")
         
         if data_bounds:

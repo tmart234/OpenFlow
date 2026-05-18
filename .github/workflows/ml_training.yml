@@ -98,10 +98,14 @@ jobs:
         # station + basin index maps, and training_config.json. All artifacts
         # travel together; manifest.json carries sha256s + schema so the
         # mobile app can verify what it downloaded. See docs/INFERENCE.md.
+        # lstm_model_int8.tflite is shipped only if the int8 parity check in
+        # export_mobile.py passes; if it didn't ship, softprops/action-gh-release
+        # quietly skips the missing file.
         files: |
           lstm_model.h5
           lstm_model.mlpackage.zip
           lstm_model.tflite
+          lstm_model_int8.tflite
           scalers.json
           station_index.json
           basin_index.json
@@ -119,6 +123,7 @@ jobs:
           ./lstm_model.h5
           ./lstm_model.mlpackage.zip
           ./lstm_model.tflite
+          ./lstm_model_int8.tflite
           ./scalers.json
           ./station_index.json
           ./basin_index.json
