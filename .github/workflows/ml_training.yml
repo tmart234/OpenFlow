@@ -21,10 +21,18 @@ on:
 jobs:
   train:
     runs-on: ubuntu-latest
+    # contents:write is needed for softprops/action-gh-release to tag and
+    # publish the trained model artifacts as a GitHub Release.
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        # Fetch tags so the release-tag collision check ("does model-YYYY.MM.DD
+        # already exist?") can see existing release tags.
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -52,18 +60,68 @@ jobs:
         OPENFLOW_DISABLE_RESERVOIR: ${{ inputs.disable_reservoir && '1' || '' }}
       run: python openFlowML/train.py
 
-    # The model is not usable for inference without the scaler parameters
-    # (to invert the log1p + z-score flow transform), the station + basin
-    # index maps (for the embedding lookups), and the training config (which
-    # records the feature schema). All five travel together.
+    - name: Export mobile artifacts (CoreML + TFLite + manifest)
+      id: export
+      # Best-effort: a Phase 6 regression must NOT lose the trained .h5. The
+      # release step is gated on this step's success, so a failure here
+      # cleanly skips the release while still uploading the .h5 via the
+      # artifact step below.
+      continue-on-error: true
+      env:
+        OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
+      working-directory: openFlowML
+      run: python -m export_mobile --base-path "$GITHUB_WORKSPACE"
+
+    - name: Compute release tag
+      id: tag
+      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success'
+      # Use the UTC date as the base tag and suffix -rN on collision so a
+      # same-day re-run still produces a fresh release.
+      run: |
+        BASE_TAG="model-$(date -u +%Y.%m.%d)"
+        TAG="$BASE_TAG"
+        N=2
+        while git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; do
+          TAG="${BASE_TAG}-r${N}"
+          N=$((N + 1))
+        done
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Publish GitHub Release
+      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: Model ${{ steps.tag.outputs.tag }}
+        generate_release_notes: true
+        # The model is not usable for inference without scalers.json, the
+        # station + basin index maps, and training_config.json. All artifacts
+        # travel together; manifest.json carries sha256s + schema so the
+        # mobile app can verify what it downloaded. See docs/INFERENCE.md.
+        files: |
+          lstm_model.h5
+          lstm_model.mlpackage.zip
+          lstm_model.tflite
+          scalers.json
+          station_index.json
+          basin_index.json
+          training_config.json
+          manifest.json
+
+    # Belt-and-braces: even on release-step failure, the artifact upload
+    # keeps the trained model retrievable for debugging the release path.
     - name: Upload model and inference artifacts
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: lstm_model_keras_release
         path: |
           ./lstm_model.h5
+          ./lstm_model.mlpackage.zip
+          ./lstm_model.tflite
           ./scalers.json
           ./station_index.json
           ./basin_index.json
           ./training_config.json
-        if-no-files-found: error
+          ./manifest.json
+        if-no-files-found: warn

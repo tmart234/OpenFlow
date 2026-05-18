@@ -7,3 +7,4 @@ New here? See our wiki
 
 - [x] Automated dataset creation based on a USGS and CODWR station
 - [x] GitHub actions ML training
+- [x] Mobile artifacts published per training run (CoreML + TFLite + manifest) — see [docs/INFERENCE.md](docs/INFERENCE.md)
