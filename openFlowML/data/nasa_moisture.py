@@ -1,330 +1,365 @@
-import datetime
-import numpy as np
-import h5py
-import shutil
-from scipy.spatial import cKDTree
-from shapely.ops import transform
-from shapely.geometry import Polygon
-import logging
+"""
+SMAP L3 enhanced soil moisture (SPL3SMP_E v006) timeseries by HUC8.
+
+Given a station's lat/lon and a date window, this module looks up the enclosing
+HUC8 polygon, searches NASA Earthdata for every SMAP granule whose footprint
+intersects that polygon over the window, downloads them (with a granule cache
+shared across calls so neighboring stations don't redownload the same global
+daily file), filters each granule to recommended-quality pixels inside the
+polygon's bbox, and returns the daily polygon mean.
+
+Public API:
+    main(lat, lon, start_date, end_date) -> DataFrame[Date, soil_moisture]
+
+A failure at any step (HUC8 lookup, Earthdata auth, search, download,
+extraction) degrades to an empty DataFrame -- combine_data treats missing
+soil moisture as "no SMAP today" (forward-filled, then site-median fallback,
+plus an sm_observed indicator) rather than dropping the row.
+
+Performance: SPL3SMP_E granules are global daily files (~30-100 MB each), so
+two stations in different HUC8s on the same day pull the same granule. The
+module-level _GRANULE_PATH_CACHE deduplicates within a single process; set
+OPENFLOW_SMAP_CACHE_DIR to a persistent path to keep granules across runs.
+"""
+
 import argparse
-from earthaccess import *
-from data.utils.get_poly import check_polygon_intersection, get_huc_polygon, validate_polygon, simplify_polygon
-from data.utils.data_utils import load_vars, get_earthdata_auth, get_smap_data_bounds
+import logging
 import os
 import tempfile
-# Conditionally import matplotlib
-import importlib.util
-from shapely.ops import transform
-import earthaccess
-import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon as mplPolygon
-matplotlib_spec = importlib.util.find_spec("matplotlib")
-matplotlib_available = matplotlib_spec is not None
+from datetime import date, datetime
+from typing import Optional
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import pandas as pd
 
-load_vars()
+logger = logging.getLogger(__name__)
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def search_and_download_smap_data(start_date, end_date, auth, simplified_polygon):
+# NSIDC SMAP L3 enhanced (9 km) passive radiometer soil moisture.
+SMAP_SHORT_NAME = "SPL3SMP_E"
+SMAP_VERSION = "006"
+# HDF5 fill value for missing pixels in the SMAP product.
+FILL_VALUE = -9999.0
+# Valid SMAP retrieval range for volumetric soil moisture (m^3/m^3).
+VALID_MIN = 0.0
+VALID_MAX = 1.0
+# retrieval_qual_flag bit 0: 0 = retrieval is recommended quality, 1 = not.
+# Conservative filter: drop any pixel where bit 0 is set.
+QUAL_RECOMMENDED_BIT = 0
+
+# Process-level cache so the per-station SMAP loop doesn't re-download the
+# same global daily granule for every basin. Keyed by granule filename.
+_GRANULE_PATH_CACHE: dict = {}
+
+
+def _empty() -> pd.DataFrame:
+    return pd.DataFrame(columns=['Date', 'soil_moisture'])
+
+
+def _to_date(d) -> date:
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    return datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
+
+
+def _login_earthdata():
     """
-    Search for SMAP L3 data between the given dates that intersect with the given polygon,
-    and download the smallest intersecting granule.
+    Authenticate with NASA Earthdata via earthaccess. Returns the Auth on
+    success, None on any failure -- the caller short-circuits to an empty
+    series so a missing credential doesn't bring down combine_data.
     """
     try:
-        # Ensure we're authenticated
-        if not auth.authenticated:
-            logging.info("Not logged in, attempting to log in...")
-            if not auth.login(strategy="environment"):
-                raise RuntimeError("Failed to authenticate with NASA Earthdata Login")
-        else:
-            logging.info("Already authenticated, proceeding with search and download")
-
-        # Search for SPL3SMP_E collection
-        collection_query = earthaccess.DataCollections().short_name("SPL3SMP_E").version("006")
-        collections = collection_query.get()
-
-        if not collections:
-            logging.error("SMAP L3 SM_P_E collection not found")
-            return None
-
-        collection = collections[0]
-        concept_id = collection.concept_id()
-        logging.info(f"Found SMAP_L3_SM_P_E collection with concept_id: {concept_id}")
-
-
-        # Calculate bounding box from simplified_polygon
-        lons, lats = zip(*simplified_polygon)
-        min_lon, max_lon = min(lons), max(lons)
-        min_lat, max_lat = min(lats), max(lats)
-
-        # Now search for granules using DataGranules
-        granule_query = (earthaccess.DataGranules()
-                         .concept_id(concept_id) 
-                         .temporal(start_date, end_date)
-                         .bounding_box(min_lon, min_lat, max_lon, max_lat))
-                
-        granule_hits = granule_query.hits()
-        logging.info(f"Number of granules found: {granule_hits}")
-
-        if granule_hits == 0:
-            logging.warning(f"No SMAP data found from {start_date} to {end_date}")
-            return None
-
-        granules = granule_query.get_all()
-
-        if not granules:
-            logging.warning(f"No granules retrieved despite positive hit count")
-            return None
-
-        # Log the number of granules found
-        logging.info(f"Retrieved {len(granules)} granules")
-
-        # Find the smallest granule
-        smallest_granule = min(granules, key=lambda g: g.size())
-        logging.info(f"Smallest intersecting granule size: {smallest_granule.size()} MB")
-
-        # Create a temporary directory that won't be automatically deleted
-        temp_dir = tempfile.mkdtemp()
-        logging.info(f"Created temporary directory: {temp_dir}")
-
-        # Download only the smallest granule
-        try:
-            downloaded_files = earthaccess.download(smallest_granule, local_path=temp_dir)
-        except Exception as e:
-            logging.error(f"Error during download: {str(e)}")
-            if temp_dir:
-                shutil.rmtree(temp_dir)
-            return None, None
-
-        if downloaded_files:
-            downloaded_file = downloaded_files[0]
-            logging.info(f"Successfully downloaded: {downloaded_file}")
-            
-            # Verify that the file exists
-            if os.path.exists(downloaded_file):
-                logging.info(f"File exists at {downloaded_file}")
-                file_size = os.path.getsize(downloaded_file)
-                logging.info(f"File size: {file_size} bytes")
-            else:
-                logging.error(f"File does not exist at {downloaded_file}")
-                if temp_dir:
-                    shutil.rmtree(temp_dir)
-                return None, None
-            
-            return downloaded_file, temp_dir
-        else:
-            logging.error("Failed to download SMAP data")
-            if temp_dir:
-                shutil.rmtree(temp_dir)
-            return None, None
-
-    except Exception as e:
-        logging.error(f"Error searching or downloading SMAP data: {e}")
-        logging.error("Traceback: ", exc_info=True)
-        if temp_dir:
-            shutil.rmtree(temp_dir)
-        return None, None
-
-def extract_soil_moisture(hdf_file, polygon, max_distance=0.1):
+        import earthaccess
+    except ImportError as e:
+        logger.warning("earthaccess not installed: %s", e)
+        return None
     try:
-        with h5py.File(hdf_file, 'r') as file:
-            for dataset_name in file:
-                if 'Soil_Moisture_Retrieval_Data' in dataset_name:
-                    soil_moisture = file[f'{dataset_name}/soil_moisture'][:]
-                    lat = file[f'{dataset_name}/latitude'][:]
-                    lon = file[f'{dataset_name}/longitude'][:]
-                    logging.info(f"Found soil moisture data in {dataset_name}")
-                    break
-            else:
-                logging.error("Could not find soil moisture data in the file")
-                return None
-
-        polygon_obj = Polygon(polygon)
-        minx, miny, maxx, maxy = polygon_obj.bounds
-
-        # Start with the polygon bounds and gradually expand
-        for distance in np.linspace(0, max_distance, 5):
-            expanded_bounds = (minx-distance, miny-distance, maxx+distance, maxy+distance)
-            mask = (lon >= expanded_bounds[0]) & (lon <= expanded_bounds[2]) & \
-                   (lat >= expanded_bounds[1]) & (lat <= expanded_bounds[3])
-            
-            lons = lon[mask]
-            lats = lat[mask]
-            soil_moisture_masked = soil_moisture[mask]
-
-            valid = (soil_moisture_masked != -9999.0) & (lons != -9999.0) & (lats != -9999.0)
-            lons = lons[valid]
-            lats = lats[valid]
-            soil_moisture_valid = soil_moisture_masked[valid]
-
-            logging.info(f"Found {len(lons)} valid points within expanded bounds (distance: {distance})")
-
-            if len(lons) > 0:
-                tree = cKDTree(np.column_stack((lons, lats)))
-                expanded_polygon = polygon_obj.buffer(distance)
-                mask_polygon = tree.query_ball_point(expanded_polygon.exterior.coords, r=0.01)
-                mask_polygon = np.unique(np.concatenate(mask_polygon))
-
-                soil_moisture_in_polygon = soil_moisture_valid[mask_polygon]
-
-                if len(soil_moisture_in_polygon) > 0:
-                    average_moisture = np.mean(soil_moisture_in_polygon)
-                    logging.info(f"Found {len(soil_moisture_in_polygon)} points inside or near the polygon")
-                    logging.info(f"Average soil moisture: {average_moisture:.4f}")
-                    return average_moisture, expanded_polygon
-
-        logging.warning("No valid soil moisture data found within or near the polygon")
-        return None, None
-
+        auth = earthaccess.login(strategy="environment")
+        if auth is not None and getattr(auth, 'authenticated', False):
+            return auth
+        logger.warning("Earthdata authentication did not succeed")
+        return None
     except Exception as e:
-        logging.error(f"Error extracting soil moisture data: {e}")
-        logging.error("Traceback: ", exc_info=True)
-        return None, None
-
-# Add this function to check data availability in the polygon area
-def check_data_availability(hdf_file, polygon):
-    try:
-        with h5py.File(hdf_file, 'r') as file:
-            for time_of_day in ['AM', 'PM']:
-                try:
-                    soil_moisture = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/soil_moisture'][:]
-                    lat = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/latitude'][:]
-                    lon = file[f'Soil_Moisture_Retrieval_Data_{time_of_day}/longitude'][:]
-                    break
-                except KeyError:
-                    continue
-            else:
-                logging.error("Could not find soil moisture data")
-                return
-
-        # Get polygon bounds
-        poly = Polygon(polygon)
-        min_lon, min_lat, max_lon, max_lat = poly.bounds
-
-        # Create masks for the area of interest and its surroundings
-        area_mask = (lat >= min_lat) & (lat <= max_lat) & (lon >= min_lon) & (lon <= max_lon)
-        surrounding_mask = (lat >= min_lat-1) & (lat <= max_lat+1) & (lon >= min_lon-1) & (lon <= max_lon+1)
-
-        # Check for valid data
-        valid_data_mask = (soil_moisture != -9999.0)
-
-        # Calculate statistics
-        total_points = np.sum(area_mask)
-        valid_points = np.sum(valid_data_mask & area_mask)
-        surrounding_valid_points = np.sum(valid_data_mask & surrounding_mask)
-
-        logging.info(f"Total points in area of interest: {total_points}")
-        logging.info(f"Valid data points in area of interest: {valid_points}")
-        logging.info(f"Percentage of valid data in area: {valid_points/total_points*100:.2f}%")
-        logging.info(f"Valid data points in surrounding area: {surrounding_valid_points}")
-
-        if valid_points == 0:
-            logging.warning("No valid data points found within the polygon.")
-            if surrounding_valid_points > 0:
-                logging.info("However, valid data points found in the surrounding area.")
-            else:
-                logging.warning("No valid data points found in the surrounding area either.")
-
-    except Exception as e:
-        logging.error(f"Error checking data availability: {e}")
-
-def list_nsidc_collections():
-    try:
-        nsidc_query = earthaccess.collection_query().daac("NSIDC")
-        collections = nsidc_query.get()
-        
-        logging.info(f"Found {len(collections)} collections from NSIDC-DAAC:")
-        for collection in collections:
-            logging.info(f"- Short Name: {collection['umm']['ShortName']}, Version: {collection['umm'].get('Version', 'N/A')}")
-        
-        return collections
-    except Exception as e:
-        logging.error(f"Error listing NSIDC collections: {e}")
+        logger.warning("Earthdata authentication error: %s", e)
         return None
 
-def visualize_smap_and_polygon(hdf_file, polygon):
+
+def _get_huc8_polygon(lat: float, lon: float):
+    """
+    HUC8 polygon (list of (lon, lat) tuples) enclosing the point, simplified.
+    Returns None when the WBD lookup fails or the simplification dependencies
+    aren't installed.
+    """
     try:
-        with h5py.File(hdf_file, 'r') as file:
-            for dataset_name in file:
-                if 'Soil_Moisture_Retrieval_Data' in dataset_name:
-                    soil_moisture = file[f'{dataset_name}/soil_moisture'][:]
-                    lat = file[f'{dataset_name}/latitude'][:]
-                    lon = file[f'{dataset_name}/longitude'][:]
-                    break
-            else:
-                logging.error("Could not find soil moisture data in the file")
-                return
+        from data.utils.get_poly import get_huc_polygon, simplify_polygon
+    except ImportError as e:
+        logger.warning("Polygon utilities unavailable: %s", e)
+        return None
+    result = get_huc_polygon(lat, lon, huc_level=8)
+    if not result:
+        return None
+    polygon, _huc_id, _attributes = result
+    if not polygon:
+        return None
+    return simplify_polygon(polygon)
 
-        # Create a mask for valid data
-        valid_mask = (soil_moisture != -9999.0) & (lat != -9999.0) & (lon != -9999.0)
-        
-        fig, ax = plt.subplots(figsize=(12, 8))
-        
-        # Plot SMAP data points
-        sc = ax.scatter(lon[valid_mask], lat[valid_mask], c=soil_moisture[valid_mask], 
-                        cmap='viridis', s=1, alpha=0.5)
-        plt.colorbar(sc, label='Soil Moisture')
-        
-        # Plot the polygon
-        poly = mplPolygon(polygon, facecolor='none', edgecolor='red', linewidth=2)
-        ax.add_patch(poly)
-        
-        # Set the extent to focus on the area around the polygon
-        poly_bounds = Polygon(polygon).bounds
-        ax.set_xlim(poly_bounds[0] - 1, poly_bounds[2] + 1)
-        ax.set_ylim(poly_bounds[1] - 1, poly_bounds[3] + 1)
-        
-        plt.title('SMAP Data and Polygon')
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.show()
-        
+
+def _search_granules(polygon, start_date, end_date):
+    """SMAP granules intersecting the polygon's bbox over the date window."""
+    try:
+        import earthaccess
+    except ImportError as e:
+        logger.warning("earthaccess not installed: %s", e)
+        return []
+    lons, lats = zip(*polygon)
+    bbox = (min(lons), min(lats), max(lons), max(lats))
+    try:
+        granules = earthaccess.search_data(
+            short_name=SMAP_SHORT_NAME,
+            version=SMAP_VERSION,
+            temporal=(_to_date(start_date), _to_date(end_date)),
+            bounding_box=bbox,
+        )
     except Exception as e:
-        logging.error(f"Error visualizing SMAP data and polygon: {e}")
+        logger.warning("SMAP granule search failed: %s", e)
+        return []
+    return list(granules) if granules else []
 
-def main(start_date, end_date, lat, lon, visual):
-    auth = get_earthdata_auth()
 
-    huc8_polygon = get_huc_polygon(lat, lon, huc_level=8)
-    if not huc8_polygon:
-        logging.error("Failed to retrieve HUC8 polygon")
-        return
+def _granule_date(granule) -> Optional[date]:
+    """
+    Observation date for a granule. SMAP L3 filenames embed YYYYMMDD
+    (e.g. SMAP_L3_SM_P_E_20240115_R18290_001.h5), so we lift it from there
+    and fall back to the granule's temporal metadata if the filename pattern
+    doesn't match.
+    """
+    try:
+        links = granule.data_links() if hasattr(granule, 'data_links') else []
+        for link in links or []:
+            name = link.rsplit('/', 1)[-1]
+            for token in name.split('_'):
+                if len(token) == 8 and token.isdigit():
+                    try:
+                        return datetime.strptime(token, "%Y%m%d").date()
+                    except ValueError:
+                        continue
+    except Exception:
+        pass
+    try:
+        umm = granule.get("umm", {}) if hasattr(granule, 'get') else {}
+        beg = (umm.get("TemporalExtent", {})
+                  .get("RangeDateTime", {})
+                  .get("BeginningDateTime"))
+        if beg:
+            return datetime.strptime(beg[:10], "%Y-%m-%d").date()
+    except Exception:
+        pass
+    return None
 
-    simplified_polygon = simplify_polygon(huc8_polygon)
-    logging.info(f"Simplified polygon coordinates: {simplified_polygon}")
 
-    downloaded_file, temp_dir = search_and_download_smap_data(start_date, end_date, auth, simplified_polygon)
-    
-    if downloaded_file and temp_dir:
-        try:
-            # Visualize SMAP data and polygon
-            visualize_smap_and_polygon(downloaded_file, simplified_polygon)
-            
-            # Extract soil moisture data
-            average_soil_moisture, used_polygon = extract_soil_moisture(downloaded_file, simplified_polygon)
-            
-            if average_soil_moisture is not None:
-                logging.info(f"Average soil moisture: {average_soil_moisture:.4f}")
-                if visual and matplotlib_available:
-                    pass
-                    #visualize_soil_moisture_simple(used_polygon, average_soil_moisture)
-            else:
-                logging.error("Failed to calculate soil moisture.")
-            
-        finally:
-            # Clean up: remove the temporary directory
-            shutil.rmtree(temp_dir)
-            logging.info(f"Removed temporary directory: {temp_dir}")
-    else:
-        logging.error("Failed to find or download SMAP data")
+def _extract_polygon_mean(hdf_path: str, polygon,
+                          use_quality_flag: bool = True) -> Optional[float]:
+    """
+    Average volumetric soil moisture across all valid SMAP pixels inside the
+    polygon's bounding box, across both AM and PM passes. Returns None when
+    no valid pixel intersects (cloudy / RFI day, frozen ground, or polygon
+    entirely off the EASE-grid for that pass).
+
+    Pixels are filtered against the explicit fill value, the [0, 1] valid
+    range, and -- when the dataset is present -- the SMAP retrieval_qual_flag
+    bit 0 ("recommended quality"). Without the quality filter, winter Colorado
+    retrievals include frozen-ground pixels that look numerically plausible
+    but the SMAP team flags as not recommended.
+
+    Bbox is sufficient at SMAP's 9 km grid spacing -- the HUC8 footprint is
+    rarely much larger than a handful of cells and the bbox vs true polygon
+    distinction is below the retrieval noise floor.
+    """
+    try:
+        import h5py
+        import numpy as np
+    except ImportError as e:
+        logger.warning("h5py/numpy unavailable: %s", e)
+        return None
+
+    lons, lats = zip(*polygon)
+    min_lon, max_lon = min(lons), max(lons)
+    min_lat, max_lat = min(lats), max(lats)
+
+    # SMAP L3 v006 splits AM and PM passes into separate top-level groups.
+    pass_groups = [
+        'Soil_Moisture_Retrieval_Data_AM',
+        'Soil_Moisture_Retrieval_Data_PM',
+        'Soil_Moisture_Retrieval_Data',
+    ]
+
+    collected = []
+    try:
+        with h5py.File(hdf_path, 'r') as f:
+            for grp_name in pass_groups:
+                if grp_name not in f:
+                    continue
+                grp = f[grp_name]
+                if not all(k in grp for k in ('soil_moisture', 'latitude', 'longitude')):
+                    continue
+                sm = grp['soil_moisture'][:]
+                lat = grp['latitude'][:]
+                lon = grp['longitude'][:]
+                in_bbox = ((lon >= min_lon) & (lon <= max_lon) &
+                           (lat >= min_lat) & (lat <= max_lat))
+                valid = ((sm != FILL_VALUE) & (sm >= VALID_MIN) & (sm <= VALID_MAX) &
+                         (lon != FILL_VALUE) & (lat != FILL_VALUE))
+                # Quality flag: drop pixels where the recommended-quality bit
+                # is set. Older granules occasionally omit the dataset; in that
+                # case we proceed without the filter rather than dropping all.
+                if use_quality_flag and 'retrieval_qual_flag' in grp:
+                    qflag = grp['retrieval_qual_flag'][:].astype('int32')
+                    recommended = ((qflag >> QUAL_RECOMMENDED_BIT) & 1) == 0
+                    valid = valid & recommended
+                mask = in_bbox & valid
+                if mask.any():
+                    collected.extend(sm[mask].astype(float).tolist())
+    except Exception as e:
+        logger.warning("Failed to read %s: %s", hdf_path, e)
+        return None
+
+    if not collected:
+        return None
+    return float(sum(collected) / len(collected))
+
+
+def _granule_cache_key(granule) -> Optional[str]:
+    """
+    Stable id for a granule, used as the cache key. Falls back through
+    `.data_links()` (the most reliable per-granule identifier) before giving
+    up; granules without a usable id are simply not cached.
+    """
+    try:
+        links = granule.data_links() if hasattr(granule, 'data_links') else []
+        for link in links or []:
+            name = link.rsplit('/', 1)[-1]
+            if name:
+                return name
+    except Exception:
+        pass
+    return None
+
+
+def _get_cache_dir() -> str:
+    """
+    Persistent SMAP granule cache directory. Defaults to a subdirectory of the
+    system tempdir; override with OPENFLOW_SMAP_CACHE_DIR to share the cache
+    across runs (e.g. a CI cache action).
+    """
+    base = (os.environ.get('OPENFLOW_SMAP_CACHE_DIR') or
+            os.path.join(tempfile.gettempdir(), 'openflow_smap_cache'))
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _download_granule(granule, cache_dir):
+    """
+    Download `granule` into `cache_dir`, or return its cached path. Returns
+    None on failure (and does NOT delete the cached file -- the cache is
+    intentionally process-lifetime+).
+    """
+    key = _granule_cache_key(granule)
+    if key:
+        cached = _GRANULE_PATH_CACHE.get(key)
+        if cached and os.path.exists(cached):
+            logger.debug("Granule cache hit: %s", key)
+            return cached
+        # Also check disk in case a previous process populated the dir.
+        on_disk = os.path.join(cache_dir, key)
+        if os.path.exists(on_disk):
+            _GRANULE_PATH_CACHE[key] = on_disk
+            return on_disk
+    try:
+        import earthaccess
+    except ImportError:
+        return None
+    try:
+        files = earthaccess.download([granule], local_path=cache_dir)
+    except Exception as e:
+        logger.warning("Granule download failed: %s", e)
+        return None
+    if not files:
+        return None
+    path = files[0]
+    if key:
+        _GRANULE_PATH_CACHE[key] = path
+    return path
+
+
+def main(lat: float, lon: float, start_date, end_date) -> pd.DataFrame:
+    """
+    Fetch the SMAP L3 enhanced soil-moisture timeseries for the HUC8 enclosing
+    (lat, lon) over [start_date, end_date].
+
+    Returns a DataFrame with columns ['Date', 'soil_moisture'] where
+    soil_moisture is volumetric m^3/m^3 in [0, 1]. Multiple AM/PM passes on
+    the same day are averaged. Empty DataFrame on any failure -- the
+    combine_data spine treats missing soil moisture the same way it treats
+    missing SWE (defaults to 0, never drops the row).
+    """
+    try:
+        polygon = _get_huc8_polygon(lat, lon)
+    except Exception as e:
+        logger.warning("HUC8 polygon lookup failed: %s", e)
+        return _empty()
+    if not polygon:
+        logger.warning("No HUC8 polygon found for (%s, %s)", lat, lon)
+        return _empty()
+
+    if _login_earthdata() is None:
+        return _empty()
+
+    granules = _search_granules(polygon, start_date, end_date)
+    if not granules:
+        logger.warning("No SMAP granules found in [%s, %s] for the polygon",
+                       start_date, end_date)
+        return _empty()
+    logger.info("Found %d SMAP granules", len(granules))
+
+    cache_dir = _get_cache_dir()
+    rows = []
+    for granule in granules:
+        obs_date = _granule_date(granule)
+        if obs_date is None:
+            continue
+        path = _download_granule(granule, cache_dir)
+        if not path:
+            continue
+        # Cached files are intentionally NOT removed -- the next station's
+        # call to main() in this process will hit the cache for the same
+        # global daily granule.
+        value = _extract_polygon_mean(path, polygon)
+        if value is None:
+            continue
+        rows.append((obs_date.strftime('%Y-%m-%d'), value))
+
+    if not rows:
+        return _empty()
+
+    df = pd.DataFrame(rows, columns=['Date', 'soil_moisture'])
+    df['soil_moisture'] = pd.to_numeric(df['soil_moisture'], errors='coerce')
+    # AM + PM passes on the same date collapse to a single daily mean.
+    daily = df.groupby('Date', as_index=False)['soil_moisture'].mean()
+    return daily.sort_values('Date').reset_index(drop=True)
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Calculate average soil moisture for a HUC8 polygon from SMAP L3 data.')
-    parser.add_argument('--start-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='Start Date in YYYY-MM-DD format')
-    parser.add_argument('--end-date', type=lambda d: datetime.datetime.strptime(d, '%Y-%m-%d').date(), required=True, help='End Date in YYYY-MM-DD format')
-    parser.add_argument('--lat', type=float, required=True, help='Latitude of the point within the desired HUC8 polygon')
-    parser.add_argument('--lon', type=float, required=True, help='Longitude of the point within the desired HUC8 polygon')
-    parser.add_argument('--visual', action='store_true', help='Enable matplotlib visualization')
+    parser = argparse.ArgumentParser(
+        description='Fetch SMAP L3 enhanced soil moisture timeseries by HUC8.')
+    parser.add_argument('--lat', type=float, required=True)
+    parser.add_argument('--lon', type=float, required=True)
+    parser.add_argument('--start-date', type=str, required=True, help='YYYY-MM-DD')
+    parser.add_argument('--end-date', type=str, required=True, help='YYYY-MM-DD')
     args = parser.parse_args()
-
-    main(args.start_date, args.end_date, args.lat, args.lon, args.visual)
+    df = main(args.lat, args.lon, args.start_date, args.end_date)
+    if df.empty:
+        print("No data")
+    else:
+        print(df.to_string(index=False))

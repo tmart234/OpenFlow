@@ -4,6 +4,19 @@ on:
   schedule:
     - cron: '0 0 * * 1' # Run weekly at midnight on Monday
   workflow_dispatch:
+    inputs:
+      disable_smap:
+        description: 'Skip SMAP soil moisture (ablation)'
+        type: boolean
+        default: false
+      disable_drought:
+        description: 'Skip USDM drought (ablation)'
+        type: boolean
+        default: false
+      disable_reservoir:
+        description: 'Skip USBR reservoir (ablation)'
+        type: boolean
+        default: false
 
 jobs:
   train:
@@ -19,11 +32,24 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
+      # earthaccess + h5py + shapely are needed for the SMAP soil-moisture
+      # fetch wired into combine_data. They are installed AFTER tensorflow so
+      # pip resolves the shared transitive deps (notably typing-extensions)
+      # against the tensorflow pin. If the version resolver cannot find a
+      # compatible earthaccess, combine_data still runs -- the SMAP fetch
+      # silently degrades to "no data" and soil_moisture defaults to 0.
       run: |
         python -m pip install --upgrade pip
         pip install -r openFlowML/requirements.txt
+        pip install earthaccess h5py shapely
 
     - name: Train model
+      env:
+        EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+        EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        OPENFLOW_DISABLE_SMAP: ${{ inputs.disable_smap && '1' || '' }}
+        OPENFLOW_DISABLE_DROUGHT: ${{ inputs.disable_drought && '1' || '' }}
+        OPENFLOW_DISABLE_RESERVOIR: ${{ inputs.disable_reservoir && '1' || '' }}
       run: python openFlowML/train.py
 
     # The model is not usable for inference without the scaler parameters

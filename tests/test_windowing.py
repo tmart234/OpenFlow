@@ -20,6 +20,12 @@ def _make_station_frame(site_id, station_idx, basin_idx, n_days=120, start='2022
         'TMIN': rng.standard_normal(n_days),
         'TMAX': rng.standard_normal(n_days),
         'SWE': rng.standard_normal(n_days),
+        'soil_moisture': rng.standard_normal(n_days),
+        'sm_observed': rng.integers(0, 2, n_days),
+        'drought_index': rng.standard_normal(n_days),
+        'reservoir_storage': rng.standard_normal(n_days),
+        'reservoir_release': rng.standard_normal(n_days),
+        'reservoir_observed': rng.integers(0, 2, n_days),
         'doy_sin': np.sin(2 * np.pi * np.arange(n_days) / 365),
         'doy_cos': np.cos(2 * np.pi * np.arange(n_days) / 365),
     })
@@ -39,6 +45,21 @@ def test_decoder_features_carry_no_flow_information():
     assert 'Max Flow' not in windowing.DECODER_FEATURES
     # SWE is also a current-conditions feature -- no skillful 14-day forecast.
     assert 'SWE' not in windowing.DECODER_FEATURES
+    # Same for soil moisture: SMAP is encoder-only, never in the decoder window.
+    assert 'soil_moisture' not in windowing.DECODER_FEATURES
+    assert 'soil_moisture' in windowing.ENCODER_FEATURES
+    # The sm_observed indicator is also encoder-only.
+    assert 'sm_observed' in windowing.ENCODER_FEATURES
+    assert 'sm_observed' not in windowing.DECODER_FEATURES
+    # USDM drought + USBR reservoir are encoder-only too -- none has a
+    # skillful 14-day forecast available.
+    assert 'drought_index' in windowing.ENCODER_FEATURES
+    assert 'drought_index' not in windowing.DECODER_FEATURES
+    assert 'reservoir_storage' in windowing.ENCODER_FEATURES
+    assert 'reservoir_release' in windowing.ENCODER_FEATURES
+    assert 'reservoir_observed' in windowing.ENCODER_FEATURES
+    for c in ('reservoir_storage', 'reservoir_release', 'reservoir_observed'):
+        assert c not in windowing.DECODER_FEATURES
 
 
 def test_build_windows_shapes_are_correct():
@@ -143,5 +164,11 @@ def test_persistence_anchor_is_the_last_encoder_day_target_values():
 
 def test_build_windows_rejects_dataframe_missing_required_columns():
     df = _make_station_frame('USGS:A', 1, 1).drop(columns=['SWE'])
+    with pytest.raises(ValueError):
+        windowing.build_windows(df)
+
+
+def test_build_windows_rejects_dataframe_missing_soil_moisture():
+    df = _make_station_frame('USGS:A', 1, 1).drop(columns=['soil_moisture'])
     with pytest.raises(ValueError):
         windowing.build_windows(df)
