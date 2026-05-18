@@ -1,0 +1,33 @@
+# Station -> USBR RISE catalog-item-id mapping for reservoir features.
+#
+# Format (comma-separated, one record per line):
+#   <site_id>, <reservoir_name>, <storage_itemId>, <release_itemId>
+#
+# Where:
+#   - site_id matches an entry in .github/site_ids.txt (e.g. USGS:09163500)
+#   - reservoir_name is human-readable, used only for logging
+#   - storage_itemId is a USBR RISE catalog-item id for a storage timeseries
+#     (acre-feet, ideally daily)
+#   - release_itemId is a USBR RISE catalog-item id for an outflow / release
+#     timeseries (cfs, ideally daily). Use an empty trailing comma if the
+#     reservoir has no release series available.
+#
+# A station with no entries here is treated as unregulated -- both reservoir
+# features default to 0 and the reservoir_observed indicator stays at 0,
+# which is the correct semantic for an unregulated headwater gauge.
+#
+# To find catalog-item ids, browse https://data.usbr.gov/rise/ or query
+#   https://data.usbr.gov/rise/api/catalog-item?query=<reservoir name>
+# and look for the daily storage / release records you want.
+#
+# Multiple reservoirs may map to one station; storage values are summed
+# (total water held back) and release values are summed (total outflow) at
+# read time.
+#
+# Lines beginning with # are comments and ignored. Empty lines are ignored.
+#
+# Example (commented out until you've verified the right itemIds for your
+# stations -- the IDs below are illustrative placeholders):
+#
+# USGS:09163500, Lake Powell,        6126,  6127
+# USGS:09114500, Blue Mesa Reservoir, 6135,  6136

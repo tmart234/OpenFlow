@@ -149,6 +149,34 @@ def test_normalize_keeps_sm_observed_as_binary_indicator(tmp_path):
     assert 'sm_observed' not in scalers
 
 
+def test_normalize_scales_drought_and_reservoir_when_present(tmp_path):
+    import json
+    df = _make_combined()
+    df['drought_index'] = np.linspace(0.0, 400.0, 20)
+    df['reservoir_storage'] = np.linspace(800_000.0, 1_200_000.0, 20)
+    df['reservoir_release'] = np.linspace(50.0, 250.0, 20)
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    for col in ('drought_index', 'reservoir_storage', 'reservoir_release'):
+        assert col in scalers
+        # All three are continuous; z-scored, no log transform.
+        assert scalers[col]['transform'] == 'identity'
+        assert abs(out[col].mean()) < 1e-6
+        assert abs(out[col].std(ddof=0) - 1.0) < 1e-6
+
+
+def test_normalize_keeps_reservoir_observed_as_binary(tmp_path):
+    import json
+    df = _make_combined()
+    df['reservoir_observed'] = [1, 0] * 10
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    assert set(out['reservoir_observed'].unique()) <= {0, 1}
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    assert 'reservoir_observed' not in scalers
+
+
 def test_normalize_defaults_sm_observed_to_zero_when_missing():
     df = _make_combined()
     df['sm_observed'] = [1, np.nan, 1, np.nan] * 5

@@ -190,6 +190,73 @@ def test_merge_defaults_soil_moisture_to_zero_only_when_no_observations():
     assert (merged['sm_observed'] == 0).all()
 
 
+def test_merge_attaches_drought_index_with_ffill():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    # USDM weekly snapshots on Jan 4 and Jan 11.
+    drought = pd.DataFrame({
+        'Date': [dates[3], dates[10]],
+        'drought_index': [100.0, 250.0],
+    })
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST',
+        datetime(2022, 1, 1), datetime(2022, 1, 20),
+        drought_data=drought)
+    assert 'drought_index' in merged.columns
+    rows = merged.set_index(pd.to_datetime(merged['Date']))
+    # Pre-first-snapshot days have no value to ffill from -> 0 (the default).
+    assert rows.loc['2022-01-01', 'drought_index'] == 0.0
+    # The snapshot day takes the first value.
+    assert rows.loc['2022-01-04', 'drought_index'] == 100.0
+    # ffilled through the week.
+    assert rows.loc['2022-01-10', 'drought_index'] == 100.0
+    # Next snapshot kicks in.
+    assert rows.loc['2022-01-11', 'drought_index'] == 250.0
+    assert rows.loc['2022-01-20', 'drought_index'] == 250.0
+
+
+def test_merge_defaults_drought_index_to_zero_when_not_provided():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert 'drought_index' in merged.columns
+    assert (merged['drought_index'] == 0.0).all()
+
+
+def test_merge_attaches_reservoir_storage_and_release():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    reservoir = pd.DataFrame({
+        'Date': dates[::5],  # every 5 days
+        'reservoir_storage': [1000.0, 1100.0, 1050.0, 1000.0],
+        'reservoir_release': [50.0, 60.0, 55.0, 50.0],
+    })
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST',
+        datetime(2022, 1, 1), datetime(2022, 1, 20),
+        reservoir_data=reservoir)
+    assert 'reservoir_storage' in merged.columns
+    assert 'reservoir_release' in merged.columns
+    assert 'reservoir_observed' in merged.columns
+    # Observed where the reservoir series provided a value (post-interpolation).
+    assert merged['reservoir_observed'].sum() > 0
+    # Storage stays in the observed range after ffill / bfill.
+    s_min, s_max = 1000.0, 1100.0
+    assert merged['reservoir_storage'].max() <= s_max
+    assert merged['reservoir_storage'].min() >= s_min
+
+
+def test_merge_defaults_reservoir_to_zero_when_unregulated():
+    # Unregulated station: no reservoir_data passed -> storage / release default
+    # to 0 and reservoir_observed stays 0.
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert (merged['reservoir_storage'] == 0.0).all()
+    assert (merged['reservoir_release'] == 0.0).all()
+    assert (merged['reservoir_observed'] == 0).all()
+
+
 def test_merge_records_huc8_when_provided():
     noaa, flow = _make_frames()
     merged = combine_data.merge_dataframes(

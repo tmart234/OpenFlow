@@ -27,17 +27,17 @@ logger = logging.getLogger(__name__)
 
 # Required: rows missing any of these are dropped (no pooled-mean fill).
 CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
-# Optional continuous columns that get scaled when present. SWE and
-# soil_moisture are slow-varying; if either is missing for a row, default to
-# 0 rather than dropping the row (combine_data does smarter SM handling, but
-# this is the safety net).
-OPTIONAL_NUMERIC = ['SWE', 'soil_moisture']
+# Optional continuous columns that get scaled when present. SWE, soil_moisture,
+# drought_index, and the two reservoir columns are all slow-varying auxiliaries
+# that combine_data imputes when missing rather than dropping the row.
+OPTIONAL_NUMERIC = ['SWE', 'soil_moisture', 'drought_index',
+                    'reservoir_storage', 'reservoir_release']
 # Binary indicator columns: included as model inputs but NOT z-scored. Scaling
 # a 0/1 indicator destroys the semantics (the model needs to see 0 vs 1 as
-# distinct cases, not as samples from a centered normal). sm_observed marks
-# rows where soil_moisture is a real / short-gap-interpolated SMAP retrieval
-# vs imputed via the median fallback in combine_data.
-INDICATOR_COLUMNS = ['sm_observed']
+# distinct cases, not as samples from a centered normal).
+#   sm_observed         -- 1 = real / short-gap-interpolated SMAP retrieval
+#   reservoir_observed  -- 1 = station has a USBR mapping AND fetch succeeded
+INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 # Streamflow is log-normal -- log1p before z-scoring is standard hydrology
 # practice. Temperature/SWE stay linear.
@@ -155,14 +155,15 @@ def normalize_data(data, artifacts_dir=None):
         for column in present_numeric + present_indicator:
             data[column] = pd.to_numeric(data[column], errors='coerce')
 
-        # SWE and soil_moisture are slowly varying and often legitimately near
-        # zero -- any remaining missing value here defaults to 0 instead of
-        # forcing the row out, so a station with no nearby SNOTEL / no SMAP
-        # retrieval that day still contributes.
-        if 'SWE' in data.columns:
-            data['SWE'] = data['SWE'].fillna(0.0)
-        if 'soil_moisture' in data.columns:
-            data['soil_moisture'] = data['soil_moisture'].fillna(0.0)
+        # All optional numerics are slow-varying auxiliaries; combine_data
+        # imputes them with smarter per-source logic. The safety net here
+        # defaults any remaining missing value to 0 instead of dropping the
+        # row, so a station with no nearby SNOTEL / no SMAP retrieval /
+        # outside USDM coverage / no upstream reservoir still contributes.
+        for column in ('SWE', 'soil_moisture', 'drought_index',
+                       'reservoir_storage', 'reservoir_release'):
+            if column in data.columns:
+                data[column] = data[column].fillna(0.0)
         # Indicators default to 0 ("not observed") when missing.
         for column in present_indicator:
             data[column] = data[column].fillna(0).astype('int64')

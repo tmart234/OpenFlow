@@ -24,19 +24,23 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Encoder window: everything we know up to the prediction time. Flow is here
-# (these are observations); SWE -- current snowpack is a strong predictor of
-# snowmelt-fed runoff in Colorado; soil_moisture (SMAP L3 enhanced) is the
-# antecedent wetness state that gates how much new precipitation becomes runoff
-# vs infiltrates; sm_observed is the 0/1 indicator that flags whether
-# soil_moisture for that day was a real SMAP retrieval or imputed by
-# combine_data's median fallback.
+# Encoder window: everything we know up to the prediction time.
+#   flow (observations); SWE -- snowpack drives snowmelt-fed runoff in CO;
+#   soil_moisture (SMAP L3 enhanced) -- antecedent wetness gates infiltration
+#   vs runoff; sm_observed -- 1 = real / short-gap-interpolated SMAP, 0 =
+#   imputed via combine_data's median fallback; drought_index (USDM) -- HUC8
+#   drought intensity 0..500; reservoir_storage / reservoir_release (USBR
+#   RISE) -- upstream regulation state for regulated rivers, defaults to 0
+#   for unmapped (unregulated) stations; reservoir_observed -- 1 when the
+#   station actually has reservoir data, 0 when it's the unregulated default.
 ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX',
                     'SWE', 'soil_moisture', 'sm_observed',
+                    'drought_index',
+                    'reservoir_storage', 'reservoir_release', 'reservoir_observed',
                     'doy_sin', 'doy_cos']
 # Decoder window: ONLY features available at forecast time. No flow (that's
-# what we're predicting), no SWE / no soil_moisture (neither has a skillful
-# 14-day forecast available).
+# what we're predicting), no SWE / no soil_moisture / no drought / no
+# reservoir state (none of these have a skillful 14-day forecast available).
 DECODER_FEATURES = ['TMIN', 'TMAX', 'doy_sin', 'doy_cos']
 # Target: log-z-scored flow during the decoder days. Both columns are already
 # log1p-transformed and z-scored by normalize_data, so MSE/Huber here behaves.

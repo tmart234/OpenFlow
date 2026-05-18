@@ -4,6 +4,19 @@ on:
   schedule:
     - cron: '0 0 * * 1' # Run weekly at midnight on Monday
   workflow_dispatch:
+    inputs:
+      disable_smap:
+        description: 'Skip SMAP soil moisture (ablation)'
+        type: boolean
+        default: false
+      disable_drought:
+        description: 'Skip USDM drought (ablation)'
+        type: boolean
+        default: false
+      disable_reservoir:
+        description: 'Skip USBR reservoir (ablation)'
+        type: boolean
+        default: false
 
 jobs:
   train:
@@ -34,6 +47,9 @@ jobs:
       env:
         EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
         EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        OPENFLOW_DISABLE_SMAP: ${{ inputs.disable_smap && '1' || '' }}
+        OPENFLOW_DISABLE_DROUGHT: ${{ inputs.disable_drought && '1' || '' }}
+        OPENFLOW_DISABLE_RESERVOIR: ${{ inputs.disable_reservoir && '1' || '' }}
       run: python openFlowML/train.py
 
     # The model is not usable for inference without the scaler parameters

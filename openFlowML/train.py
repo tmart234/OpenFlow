@@ -83,6 +83,8 @@ def main():
     required = {'station_idx', 'basin_idx', 'site_id', 'Date',
                 'Min Flow', 'Max Flow', 'TMIN', 'TMAX',
                 'SWE', 'soil_moisture', 'sm_observed',
+                'drought_index',
+                'reservoir_storage', 'reservoir_release', 'reservoir_observed',
                 'doy_sin', 'doy_cos'}
     missing = required - set(data.columns)
     if missing:
@@ -144,17 +146,46 @@ def main():
         verbose=2,
     )
 
-    # 7. Evaluate against the persistence baseline on the held-out test set.
+    # 7. Evaluate against persistence + any external operational baselines
+    #    on the held-out test set. External baselines (CBRFC, S2F) return
+    #    None when their archive integration isn't wired in yet, in which
+    #    case they're silently skipped.
     if test_inputs is not None and len(splits.test) > 0:
         model_pred = net.predict(test_inputs, verbose=0)
         model_mae_per_h = _summarize_per_horizon(test_targets, model_pred)
         persistence_pred = _persistence_pred_for_samples(splits.test)
         persistence_mae_per_h = _summarize_per_horizon(test_targets, persistence_pred)
+
+        external_mae_per_h = {}
+        try:
+            from data import get_cbrfc
+            cbrfc_pred = get_cbrfc.baseline_predictions(splits.test)
+            if cbrfc_pred is not None:
+                external_mae_per_h['cbrfc'] = _summarize_per_horizon(
+                    test_targets, cbrfc_pred)
+        except Exception as e:
+            logger.warning("CBRFC baseline skipped: %s", e)
+        try:
+            from data import get_s2f
+            s2f_pred = get_s2f.baseline_predictions(splits.test)
+            if s2f_pred is not None:
+                external_mae_per_h['s2f'] = _summarize_per_horizon(
+                    test_targets, s2f_pred)
+        except Exception as e:
+            logger.warning("S2F baseline skipped: %s", e)
+
         logger.info("Test MAE (scaled space) per horizon day:")
-        for k, (m, p) in enumerate(zip(model_mae_per_h, persistence_mae_per_h), start=1):
+        for k in range(len(model_mae_per_h)):
+            m = model_mae_per_h[k]
+            p = persistence_mae_per_h[k]
             verdict = "BEATS" if m < p else "LOSES_TO"
-            logger.info("  day %2d: model=%.4f  persistence=%.4f  (%s baseline)",
-                        k, m, p, verdict)
+            extras = "".join(
+                f"  {name}={vals[k]:.4f}"
+                for name, vals in external_mae_per_h.items())
+            logger.info("  day %2d: model=%.4f  persistence=%.4f  (%s persistence)%s",
+                        k + 1, m, p, verdict, extras)
+        for name in external_mae_per_h:
+            logger.info("External baseline available: %s", name)
 
     # 8. Persist the model + training config alongside the scaler/index JSON
     #    that combine_data already wrote. These five artifacts together are
