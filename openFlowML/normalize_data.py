@@ -27,10 +27,17 @@ logger = logging.getLogger(__name__)
 
 # Required: rows missing any of these are dropped (no pooled-mean fill).
 CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
-# Optional columns that get scaled when present. SWE and soil_moisture are
-# slow-varying; if either is missing for a row, default to 0 rather than
-# dropping the row.
+# Optional continuous columns that get scaled when present. SWE and
+# soil_moisture are slow-varying; if either is missing for a row, default to
+# 0 rather than dropping the row (combine_data does smarter SM handling, but
+# this is the safety net).
 OPTIONAL_NUMERIC = ['SWE', 'soil_moisture']
+# Binary indicator columns: included as model inputs but NOT z-scored. Scaling
+# a 0/1 indicator destroys the semantics (the model needs to see 0 vs 1 as
+# distinct cases, not as samples from a centered normal). sm_observed marks
+# rows where soil_moisture is a real / short-gap-interpolated SMAP retrieval
+# vs imputed via the median fallback in combine_data.
+INDICATOR_COLUMNS = ['sm_observed']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 # Streamflow is log-normal -- log1p before z-scoring is standard hydrology
 # practice. Temperature/SWE stay linear.
@@ -141,9 +148,11 @@ def normalize_data(data, artifacts_dir=None):
         if missing_core:
             raise ValueError(f"Missing required columns in the data: {missing_core}")
 
-        # Coerce every numeric column we know about, including SWE if present.
+        # Coerce every numeric column we know about, including SWE if present,
+        # plus the binary indicator columns (still numeric, just not scaled).
         present_numeric = [c for c in NUMERIC_COLUMNS if c in data.columns]
-        for column in present_numeric:
+        present_indicator = [c for c in INDICATOR_COLUMNS if c in data.columns]
+        for column in present_numeric + present_indicator:
             data[column] = pd.to_numeric(data[column], errors='coerce')
 
         # SWE and soil_moisture are slowly varying and often legitimately near
@@ -154,6 +163,9 @@ def normalize_data(data, artifacts_dir=None):
             data['SWE'] = data['SWE'].fillna(0.0)
         if 'soil_moisture' in data.columns:
             data['soil_moisture'] = data['soil_moisture'].fillna(0.0)
+        # Indicators default to 0 ("not observed") when missing.
+        for column in present_indicator:
+            data[column] = data[column].fillna(0).astype('int64')
 
         # combine_data owns per-station gap handling for flow + temperature;
         # anything still missing in the core columns here is dropped rather

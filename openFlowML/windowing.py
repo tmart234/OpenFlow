@@ -28,9 +28,11 @@ logger = logging.getLogger(__name__)
 # (these are observations); SWE -- current snowpack is a strong predictor of
 # snowmelt-fed runoff in Colorado; soil_moisture (SMAP L3 enhanced) is the
 # antecedent wetness state that gates how much new precipitation becomes runoff
-# vs infiltrates.
+# vs infiltrates; sm_observed is the 0/1 indicator that flags whether
+# soil_moisture for that day was a real SMAP retrieval or imputed by
+# combine_data's median fallback.
 ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX',
-                    'SWE', 'soil_moisture',
+                    'SWE', 'soil_moisture', 'sm_observed',
                     'doy_sin', 'doy_cos']
 # Decoder window: ONLY features available at forecast time. No flow (that's
 # what we're predicting), no SWE / no soil_moisture (neither has a skillful

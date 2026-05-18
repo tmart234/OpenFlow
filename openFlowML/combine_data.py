@@ -106,9 +106,9 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         else:
             combined['SWE'] = float('nan')
 
-        # SMAP soil moisture: slow-varying surface state; same shape as SWE
-        # handling -- generous interior interpolation limit, missing values
-        # default to 0 instead of dropping the row.
+        # SMAP soil moisture: slow-varying surface state; generous interior
+        # interpolation limit (matches SWE). Edge handling happens AFTER the
+        # core-column dropna below, where we have the final row set.
         if sm_data is not None and not sm_data.empty:
             sm_daily = _to_daily_series(sm_data, ['soil_moisture'], daily_index)
             sm_daily['soil_moisture'] = pd.to_numeric(sm_daily['soil_moisture'], errors='coerce')
@@ -121,9 +121,23 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         # are NOT in CORE_COLUMNS, so a missing one never drops a row.
         before = len(combined)
         combined = combined.dropna(subset=CORE_COLUMNS)
-        # Any remaining SWE/SM gaps default to 0 ("no data" / out-of-season).
+        # SWE: 0 means "no snow", which IS a legitimate default; keep that.
         combined['SWE'] = combined['SWE'].fillna(0.0)
-        combined['soil_moisture'] = combined['soil_moisture'].fillna(0.0)
+        # Soil moisture: 0 means "Sahara desert", which is NOT a legitimate
+        # default for a SMAP gap (RFI / frozen ground / sensor outage). We
+        # carry the last interpolated value forward and backward (SM is slow-
+        # varying), then fall back to the station's median observed SM where
+        # ffill/bfill can't reach, and only to 0 if the station has no
+        # observations at all. An sm_observed indicator (1 = real or short-
+        # gap interpolated retrieval, 0 = imputed via ffill / median fallback)
+        # gives the model a way to tell the truth from the imputation.
+        sm_series = combined['soil_moisture']
+        combined['sm_observed'] = sm_series.notna().astype('int64')
+        sm_series = sm_series.ffill().bfill()
+        median = sm_series.median(skipna=True)
+        if pd.isna(median):
+            median = 0.0
+        combined['soil_moisture'] = sm_series.fillna(median)
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,

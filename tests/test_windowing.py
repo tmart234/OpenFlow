@@ -21,6 +21,7 @@ def _make_station_frame(site_id, station_idx, basin_idx, n_days=120, start='2022
         'TMAX': rng.standard_normal(n_days),
         'SWE': rng.standard_normal(n_days),
         'soil_moisture': rng.standard_normal(n_days),
+        'sm_observed': rng.integers(0, 2, n_days),
         'doy_sin': np.sin(2 * np.pi * np.arange(n_days) / 365),
         'doy_cos': np.cos(2 * np.pi * np.arange(n_days) / 365),
     })
@@ -43,6 +44,9 @@ def test_decoder_features_carry_no_flow_information():
     # Same for soil moisture: SMAP is encoder-only, never in the decoder window.
     assert 'soil_moisture' not in windowing.DECODER_FEATURES
     assert 'soil_moisture' in windowing.ENCODER_FEATURES
+    # The sm_observed indicator is also encoder-only.
+    assert 'sm_observed' in windowing.ENCODER_FEATURES
+    assert 'sm_observed' not in windowing.DECODER_FEATURES
 
 
 def test_build_windows_shapes_are_correct():

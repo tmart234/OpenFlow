@@ -3,17 +3,23 @@ SMAP L3 enhanced soil moisture (SPL3SMP_E v006) timeseries by HUC8.
 
 Given a station's lat/lon and a date window, this module looks up the enclosing
 HUC8 polygon, searches NASA Earthdata for every SMAP granule whose footprint
-intersects that polygon over the window, downloads them one at a time,
-extracts the average volumetric soil moisture inside the polygon for each
-granule, and returns a single daily series.
+intersects that polygon over the window, downloads them (with a granule cache
+shared across calls so neighboring stations don't redownload the same global
+daily file), filters each granule to recommended-quality pixels inside the
+polygon's bbox, and returns the daily polygon mean.
 
 Public API:
     main(lat, lon, start_date, end_date) -> DataFrame[Date, soil_moisture]
 
 A failure at any step (HUC8 lookup, Earthdata auth, search, download,
 extraction) degrades to an empty DataFrame -- combine_data treats missing
-soil moisture as "no data" (defaults to 0 in the spine) rather than dropping
-the row, mirroring the SWE handling.
+soil moisture as "no SMAP today" (forward-filled, then site-median fallback,
+plus an sm_observed indicator) rather than dropping the row.
+
+Performance: SPL3SMP_E granules are global daily files (~30-100 MB each), so
+two stations in different HUC8s on the same day pull the same granule. The
+module-level _GRANULE_PATH_CACHE deduplicates within a single process; set
+OPENFLOW_SMAP_CACHE_DIR to a persistent path to keep granules across runs.
 """
 
 import argparse
@@ -37,6 +43,13 @@ FILL_VALUE = -9999.0
 # Valid SMAP retrieval range for volumetric soil moisture (m^3/m^3).
 VALID_MIN = 0.0
 VALID_MAX = 1.0
+# retrieval_qual_flag bit 0: 0 = retrieval is recommended quality, 1 = not.
+# Conservative filter: drop any pixel where bit 0 is set.
+QUAL_RECOMMENDED_BIT = 0
+
+# Process-level cache so the per-station SMAP loop doesn't re-download the
+# same global daily granule for every basin. Keyed by granule filename.
+_GRANULE_PATH_CACHE: dict = {}
 
 
 def _empty() -> pd.DataFrame:
@@ -146,12 +159,19 @@ def _granule_date(granule) -> Optional[date]:
     return None
 
 
-def _extract_polygon_mean(hdf_path: str, polygon) -> Optional[float]:
+def _extract_polygon_mean(hdf_path: str, polygon,
+                          use_quality_flag: bool = True) -> Optional[float]:
     """
     Average volumetric soil moisture across all valid SMAP pixels inside the
     polygon's bounding box, across both AM and PM passes. Returns None when
-    no valid pixel intersects (cloudy / RFI day, or polygon entirely off the
-    EASE-grid for that pass).
+    no valid pixel intersects (cloudy / RFI day, frozen ground, or polygon
+    entirely off the EASE-grid for that pass).
+
+    Pixels are filtered against the explicit fill value, the [0, 1] valid
+    range, and -- when the dataset is present -- the SMAP retrieval_qual_flag
+    bit 0 ("recommended quality"). Without the quality filter, winter Colorado
+    retrievals include frozen-ground pixels that look numerically plausible
+    but the SMAP team flags as not recommended.
 
     Bbox is sufficient at SMAP's 9 km grid spacing -- the HUC8 footprint is
     rarely much larger than a handful of cells and the bbox vs true polygon
@@ -191,6 +211,13 @@ def _extract_polygon_mean(hdf_path: str, polygon) -> Optional[float]:
                            (lat >= min_lat) & (lat <= max_lat))
                 valid = ((sm != FILL_VALUE) & (sm >= VALID_MIN) & (sm <= VALID_MAX) &
                          (lon != FILL_VALUE) & (lat != FILL_VALUE))
+                # Quality flag: drop pixels where the recommended-quality bit
+                # is set. Older granules occasionally omit the dataset; in that
+                # case we proceed without the filter rather than dropping all.
+                if use_quality_flag and 'retrieval_qual_flag' in grp:
+                    qflag = grp['retrieval_qual_flag'][:].astype('int32')
+                    recommended = ((qflag >> QUAL_RECOMMENDED_BIT) & 1) == 0
+                    valid = valid & recommended
                 mask = in_bbox & valid
                 if mask.any():
                     collected.extend(sm[mask].astype(float).tolist())
@@ -203,20 +230,67 @@ def _extract_polygon_mean(hdf_path: str, polygon) -> Optional[float]:
     return float(sum(collected) / len(collected))
 
 
-def _download_granule(granule, tmpdir):
-    """earthaccess.download wrapper that returns the local file path or None."""
+def _granule_cache_key(granule) -> Optional[str]:
+    """
+    Stable id for a granule, used as the cache key. Falls back through
+    `.data_links()` (the most reliable per-granule identifier) before giving
+    up; granules without a usable id are simply not cached.
+    """
+    try:
+        links = granule.data_links() if hasattr(granule, 'data_links') else []
+        for link in links or []:
+            name = link.rsplit('/', 1)[-1]
+            if name:
+                return name
+    except Exception:
+        pass
+    return None
+
+
+def _get_cache_dir() -> str:
+    """
+    Persistent SMAP granule cache directory. Defaults to a subdirectory of the
+    system tempdir; override with OPENFLOW_SMAP_CACHE_DIR to share the cache
+    across runs (e.g. a CI cache action).
+    """
+    base = (os.environ.get('OPENFLOW_SMAP_CACHE_DIR') or
+            os.path.join(tempfile.gettempdir(), 'openflow_smap_cache'))
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _download_granule(granule, cache_dir):
+    """
+    Download `granule` into `cache_dir`, or return its cached path. Returns
+    None on failure (and does NOT delete the cached file -- the cache is
+    intentionally process-lifetime+).
+    """
+    key = _granule_cache_key(granule)
+    if key:
+        cached = _GRANULE_PATH_CACHE.get(key)
+        if cached and os.path.exists(cached):
+            logger.debug("Granule cache hit: %s", key)
+            return cached
+        # Also check disk in case a previous process populated the dir.
+        on_disk = os.path.join(cache_dir, key)
+        if os.path.exists(on_disk):
+            _GRANULE_PATH_CACHE[key] = on_disk
+            return on_disk
     try:
         import earthaccess
     except ImportError:
         return None
     try:
-        files = earthaccess.download([granule], local_path=tmpdir)
+        files = earthaccess.download([granule], local_path=cache_dir)
     except Exception as e:
         logger.warning("Granule download failed: %s", e)
         return None
     if not files:
         return None
-    return files[0]
+    path = files[0]
+    if key:
+        _GRANULE_PATH_CACHE[key] = path
+    return path
 
 
 def main(lat: float, lon: float, start_date, end_date) -> pd.DataFrame:
@@ -249,25 +323,22 @@ def main(lat: float, lon: float, start_date, end_date) -> pd.DataFrame:
         return _empty()
     logger.info("Found %d SMAP granules", len(granules))
 
+    cache_dir = _get_cache_dir()
     rows = []
-    with tempfile.TemporaryDirectory(prefix='smap_') as tmpdir:
-        for granule in granules:
-            obs_date = _granule_date(granule)
-            if obs_date is None:
-                continue
-            path = _download_granule(granule, tmpdir)
-            if not path:
-                continue
-            try:
-                value = _extract_polygon_mean(path, polygon)
-            finally:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            if value is None:
-                continue
-            rows.append((obs_date.strftime('%Y-%m-%d'), value))
+    for granule in granules:
+        obs_date = _granule_date(granule)
+        if obs_date is None:
+            continue
+        path = _download_granule(granule, cache_dir)
+        if not path:
+            continue
+        # Cached files are intentionally NOT removed -- the next station's
+        # call to main() in this process will hit the cache for the same
+        # global daily granule.
+        value = _extract_polygon_mean(path, polygon)
+        if value is None:
+            continue
+        rows.append((obs_date.strftime('%Y-%m-%d'), value))
 
     if not rows:
         return _empty()

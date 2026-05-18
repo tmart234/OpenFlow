@@ -136,6 +136,29 @@ def test_normalize_fills_missing_soil_moisture_with_zero():
     assert out['soil_moisture'].isnull().sum() == 0
 
 
+def test_normalize_keeps_sm_observed_as_binary_indicator(tmp_path):
+    import json
+    df = _make_combined()
+    df['soil_moisture'] = np.linspace(0.05, 0.45, 20)
+    df['sm_observed'] = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0] * 2
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    # Indicator MUST NOT be z-scored -- the model needs to see 0 vs 1.
+    assert set(out['sm_observed'].unique()) <= {0, 1}
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    assert 'sm_observed' not in scalers
+
+
+def test_normalize_defaults_sm_observed_to_zero_when_missing():
+    df = _make_combined()
+    df['sm_observed'] = [1, np.nan, 1, np.nan] * 5
+    out = normalize_data.normalize_data(df)
+    assert out is not None
+    # Missing rows default to 0 ("not observed").
+    assert out['sm_observed'].isnull().sum() == 0
+    assert set(out['sm_observed'].unique()) <= {0, 1}
+
+
 def test_flow_columns_are_log_transformed_before_scaling(tmp_path):
     import json
     df = _make_combined()
