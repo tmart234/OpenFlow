@@ -16,27 +16,23 @@ Public API:
         None when CBRFC coverage is sparse enough that the comparison would
         be meaningless.
 
-IMPLEMENTATION STATUS:
-    The CBRFC publishes operational deterministic forecasts via the
-    Advanced Hydrologic Prediction Service (AHPS) at water.weather.gov, and
-    Ensemble Streamflow Prediction (ESP) products through their own portal at
-    cbrfc.noaa.gov. Both have *current-day* access; the **historical archive**
-    needed for backtesting against our test-set anchor dates is the gap:
+Data sources:
+  - Live (anchor_date >= today): AHPS public hydrograph XML at water.weather.gov.
+    The page only exposes the current issuance, so this is the "what does CBRFC
+    think tomorrow's flow is right now" lookup.
+  - Historical (anchor_date < today): NWS NWPS forecast archive at
+    api.water.noaa.gov, which accepts a `reference_time` query parameter and
+    returns the deterministic stage/flow forecast issued at that timestamp.
+    This is the path used for backtesting against test-set anchor dates.
 
-      - AHPS does not expose historical issuance via its REST API; the
-        archived forecasts live in tarballs at
-        https://water.weather.gov/ahps/download.php
-      - CBRFC's ESP archive is accessible per-basin via their THREDDS server
-        but requires a per-issuance lookup that is meaningfully more involved
-        than this stub.
-
-    Filling either path in (the obvious follow-up commit) lets the baseline
-    actually evaluate against the test set. Until then, fetch() returns empty
-    for any anchor_date != today, and baseline_predictions() returns None so
-    train.py skips the comparison cleanly.
+LID mapping (OpenFlow site_id -> NWS LID) is curated in cbrfc_lid_map.json
+alongside this file. A missing mapping is a silent skip -- CBRFC is an
+optional comparison baseline, not a training input.
 """
 
+import json
 import logging
+import os
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -51,8 +47,31 @@ if not logging.getLogger().hasHandlers():
 
 # AHPS public site forecast page (one page per gauge by NWS LID).
 AHPS_FORECAST_URL = "https://water.weather.gov/ahps2/hydrograph_to_xml.php"
+# NWPS forecast archive: accepts a historical `reference_time` and returns the
+# deterministic stage/flow forecast issued at that timestamp as JSON.
+NWPS_FORECAST_URL = "https://api.water.noaa.gov/nwps/v1/gauges/{lid}/stageflow/forecast"
 # Default 14-day horizon matches windowing.DECODER_DAYS.
 DEFAULT_HORIZON_DAYS = 14
+
+_LID_MAP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'cbrfc_lid_map.json')
+
+
+def _load_lid_table() -> dict:
+    """Load site_id -> NWS LID from disk. Cached on the function."""
+    cached = getattr(_load_lid_table, '_cache', None)
+    if cached is not None:
+        return cached
+    try:
+        with open(_LID_MAP_PATH) as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning("Could not read %s (%s); CBRFC baseline disabled", _LID_MAP_PATH, e)
+        raw = {}
+    # Drop comment / metadata keys (anything starting with underscore).
+    table = {k: v for k, v in raw.items() if not k.startswith('_')}
+    _load_lid_table._cache = table
+    return table
 
 
 def _empty() -> pd.DataFrame:
@@ -68,20 +87,8 @@ def _to_date(d) -> date:
 
 
 def _ahps_lid_for_site(site_id: str) -> Optional[str]:
-    """
-    Map a USGS / DWR site id to an NWS / AHPS LID (5-letter location id).
-    The mapping isn't algorithmic; it's a curated lookup. Returns None if no
-    LID is known for the site, in which case fetch() returns empty.
-
-    Populate this when wiring CBRFC for a specific gauge:
-      {'USGS:09163500': 'CRSC2', ...}
-    """
-    return _AHPS_LID_TABLE.get(site_id)
-
-
-_AHPS_LID_TABLE: dict = {
-    # site_id -> NWS LID. Empty by default; fill in per gauge as needed.
-}
+    """Map an OpenFlow site_id (USGS:XXXX or DWR:XXXX) to its NWS LID, or None."""
+    return _load_lid_table().get(site_id)
 
 
 def fetch_current(site_id: str, horizon_days: int = DEFAULT_HORIZON_DAYS) -> pd.DataFrame:
@@ -92,7 +99,7 @@ def fetch_current(site_id: str, horizon_days: int = DEFAULT_HORIZON_DAYS) -> pd.
 
     The AHPS public forecast page only exposes the current forecast issuance,
     so this is the "what does CBRFC think tomorrow's flow is right now"
-    helper. Historical issuances need the archive (see module docstring).
+    helper. Historical issuances use the NWPS archive (_fetch_nwps_historical).
     """
     lid = _ahps_lid_for_site(site_id)
     if not lid:
@@ -150,23 +157,75 @@ def _parse_ahps_forecast_xml(text: str, horizon_days: int) -> List[tuple]:
     return list(daily.itertuples(index=False, name=None))
 
 
+def _fetch_nwps_historical(lid: str, anchor: date,
+                           horizon_days: int) -> List[tuple]:
+    """
+    Pull the CBRFC forecast issued at `anchor` from the NWPS archive.
+
+    Returns a list of (YYYY-MM-DD, cfs) tuples for the next `horizon_days`
+    days after the issuance, or an empty list on any error (404, parse
+    failure, no forecast for that anchor). Sub-daily values are collapsed to
+    daily mean to match the persistence / model output cadence.
+    """
+    url = NWPS_FORECAST_URL.format(lid=lid)
+    # NWPS issues its deterministic forecast around 12Z; align the reference
+    # time there so any anchor lands on a real issuance.
+    reference_time = f"{anchor.strftime('%Y-%m-%d')}T12:00:00Z"
+    params = {'reference_time': reference_time}
+    response = data_utils.request_with_retry(url, params=params)
+    if response is None:
+        return []
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.debug("NWPS returned non-JSON for %s @ %s", lid, anchor)
+        return []
+    # NWPS schema: {"data": [{"validTime": "...", "primary": "..."}, ...]}.
+    # The wrapper key drifts between schema versions; tolerate both shapes.
+    data = payload.get('data') or payload.get('forecast', {}).get('data') or []
+    if not data:
+        return []
+    rows = []
+    for point in data:
+        valid = point.get('validTime') or point.get('valid')
+        primary = point.get('primary')
+        if not valid or primary is None:
+            continue
+        try:
+            d = datetime.fromisoformat(str(valid).replace('Z', '+00:00')).date()
+            v = float(primary)
+        except (ValueError, TypeError):
+            continue
+        rows.append((d.strftime('%Y-%m-%d'), v))
+    if not rows:
+        return []
+    df = pd.DataFrame(rows, columns=['Date', 'cbrfc_flow'])
+    daily = df.groupby('Date', as_index=False)['cbrfc_flow'].mean()
+    daily = daily.sort_values('Date').head(horizon_days)
+    return list(daily.itertuples(index=False, name=None))
+
+
 def fetch(site_id: str, anchor_date,
           horizon_days: int = DEFAULT_HORIZON_DAYS) -> pd.DataFrame:
     """
     CBRFC forecast for `site_id` issued on or before `anchor_date`, for the
     `horizon_days` days following the anchor.
 
-    For anchor_date == today, this is equivalent to fetch_current. For any
-    historical anchor_date, the AHPS API does not expose the issuance; this
-    returns empty until the historical archive integration lands (see module
-    docstring).
+    For anchor_date >= today, returns the current AHPS issuance (live path).
+    For any historical anchor_date, queries the NWPS forecast archive at the
+    matching reference_time and returns the issuance from that day.
     """
     anchor = _to_date(anchor_date)
     if anchor >= date.today():
         return fetch_current(site_id, horizon_days=horizon_days)
-    logger.debug("CBRFC historical forecast for %s @ %s requires archive integration",
-                 site_id, anchor)
-    return _empty()
+    lid = _ahps_lid_for_site(site_id)
+    if not lid:
+        logger.info("No AHPS LID mapped for %s; CBRFC historical skipped", site_id)
+        return _empty()
+    rows = _fetch_nwps_historical(lid, anchor, horizon_days)
+    if not rows:
+        return _empty()
+    return pd.DataFrame(rows, columns=['Date', 'cbrfc_flow'])
 
 
 def baseline_predictions(test_samples) -> Optional[np.ndarray]:
@@ -182,8 +241,6 @@ def baseline_predictions(test_samples) -> Optional[np.ndarray]:
     """
     if not test_samples:
         return None
-    # Until the historical CBRFC archive is wired in there's nothing to
-    # backtest against; signal "no comparison" cleanly to the caller.
     found = 0
     horizon = test_samples[0].target_Y.shape[0]
     rows = []

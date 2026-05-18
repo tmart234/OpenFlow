@@ -41,9 +41,9 @@ def _save_keras_model(model_obj, base_path):
     """
     Save the trained model.
 
-    Keras 2.13's preferred format is still .h5; we keep the .h5 for the
-    existing iOS conversion path (Phase 6) but also write the native .keras
-    format as the modern artifact.
+    Keras 2.13's preferred format is still .h5; the .h5 is the canonical
+    training output and the source of truth for Phase 6 mobile conversion
+    (CoreML + TFLite). See docs/INFERENCE.md.
     """
     h5_path = os.path.join(base_path, 'lstm_model.h5')
     model_obj.save(h5_path)
@@ -204,6 +204,10 @@ def main():
         json.dump(config, f, indent=2)
     logger.info("Saved model -> %s, training_config.json alongside scalers/index JSON",
                 h5_path)
+    # Phase 6 mobile conversion (CoreML + TFLite + manifest) is run as a
+    # separate workflow step against this same .h5 so that a conversion
+    # regression cannot lose the trained model. See export_mobile.py and
+    # the "Export mobile artifacts" step in ml_training.yml.
 
 
 if __name__ == '__main__':

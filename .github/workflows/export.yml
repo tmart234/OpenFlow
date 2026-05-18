@@ -1,0 +1,37 @@
+name: Mobile Export Parity
+
+# Heavy: installs tensorflow + coremltools. NOT in the default tests.yml
+# selection because (a) coremltools is a big install and (b) the parity
+# checks only matter when the export module or the model graph itself
+# changes. Runs on:
+#   - workflow_dispatch (manual sanity check before merging an export change)
+#   - PRs that touch export_mobile.py or model.py (catches regressions in
+#     the conversion paths or the embedding/LSTM graph that breaks them)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'openFlowML/export_mobile.py'
+      - 'openFlowML/model.py'
+      - 'tests/test_export_parity.py'
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r openFlowML/requirements.txt
+        pip install pytest
+
+    - name: Run mobile export parity tests
+      run: python -m pytest -v tests/test_export_parity.py
