@@ -236,6 +236,12 @@ def main():
         'upstream_registry': 'upstream_gauges.json',
         'basin_precip_known_days': windowing.BASIN_PRECIP_KNOWN_DAYS,
         'basin_zones': 'basin_zones.json',
+        # Sources switched off for this run (ablation levers / missing
+        # credentials). Inference must switch off the same ones so it sees
+        # the placeholders the model was trained on.
+        'disabled_sources': sorted(
+            name for name in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP')
+            if os.getenv(f'OPENFLOW_DISABLE_{name}', '').strip() in ('1', 'true', 'True')),
     }
     with open(os.path.join(base_path, 'training_config.json'), 'w') as f:
         json.dump(config, f, indent=2)

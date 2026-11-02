@@ -26,6 +26,7 @@ MUTED = '#8a8984'
 GRID = '#e6e5e1'
 FORECAST = '#2a78d6'
 OFFICIAL = '#eb6834'
+ML = '#1baf7a'
 FLOOD = {'action': '#c98500', 'minor': '#e34948', 'moderate': '#b8322f', 'major': '#7d1f1d'}
 # Rain panel: zones are entities 3-5 of the figure (after forecast + official).
 ZONE_COLORS = {'local': '#1baf7a', 'mid': '#eda100', 'far': '#e87ba4'}
@@ -82,11 +83,16 @@ def plot_forecast(out_path: str, *,
                   units: str = 'cfs',
                   peak_callout: bool = True,
                   xlim=None,
-                  rain: Optional[dict] = None) -> dict:
+                  rain: Optional[dict] = None,
+                  ml: Optional[dict] = None) -> dict:
     """
     Render the chart to `out_path` (PNG). Times may be tz-aware (converted to
     `tz` for display) or naive (taken as already local). `obs_*` may extend
     past `now` (hindcasts: the truth over the forecast window).
+
+    `ml` (optional) overlays a daily ML forecast: {'dates': local naive
+    dates, 'min': cfs, 'max': cfs, 'label': str} drawn as one min-max bar per
+    day plus a line through the daily midpoints.
 
     `rain` (optional) adds a lower panel of daily basin rain by travel-time
     zone: {'dates': local naive dates, 'zones': {zone: mm/day array},
@@ -140,6 +146,18 @@ def plot_forecast(out_path: str, *,
             ymax = max(ymax, np.nanmax(ov))
         tmin.append(ot.min())
         tmax.append(ot.max())
+
+    if ml is not None and len(ml.get('dates', [])):
+        md = pd.DatetimeIndex(pd.to_datetime(ml['dates']))
+        lo = np.asarray(ml['min'], dtype=float)
+        hi = np.asarray(ml['max'], dtype=float)
+        for d, a, b in zip(md, lo, hi):
+            ax.fill_between([d, d + pd.Timedelta(hours=23)], [a, a], [b, b], color=ML, alpha=0.22,
+                            lw=0, zorder=2)
+        ax.plot(md + pd.Timedelta(hours=12), (lo + hi) / 2, color=ML, lw=1.8, marker='o',
+                markersize=4, label=ml.get('label', 'OpenFlow ML model (daily min–max)'), zorder=4)
+        ymax = max(ymax, np.nanmax(hi))
+        tmax.append(md.max() + pd.Timedelta(days=1))
 
     if official_times is not None and official_values is not None and len(official_times):
         st = _local_naive(official_times, tz)

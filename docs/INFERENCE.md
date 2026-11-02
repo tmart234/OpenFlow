@@ -34,6 +34,25 @@ for entry in manifest["files"]:
     assert h.hexdigest() == entry["sha256"], entry["name"]
 ```
 
+## Python reference implementation
+
+`openFlowML/ml_inference.py` runs a trained model for a station as of today. It is the executable version of this document:
+- **Encoder (last 60 days):** built with the same code as training (`combine_data`). Gaps are bridged as described below.
+- **Decoder (next 14 days):** forecast weather, routed upstream flow and basin rain/snow, using the hold and mask rules from `windowing`.
+- **Output:** daily min/max cfs, inverted with `scalers.json`.
+
+Run it from the CLI with `python openFlowML/flow_forecast.py --site taos-box --model-dir <release dir>`. That draws the model's daily min–max next to the routing or NWS forecast. The **Flow Forecast** workflow does the same automatically with the newest `model-*` release.
+
+**Units.** Training used raw NOAA GHCND daily summaries:
+- `TMIN` / `TMAX` in **tenths of °C**;
+- `precipitation` in mm.
+
+Forecast temperatures must be converted to these units (°C × 10). (`data/get_forecast.py` returns °F, which does not match.)
+
+**Gaps between the data sources:**
+- **NOAA lag:** NOAA daily data runs 2–4 days behind. The reference bridges those days by interpolating temperature toward the NWS forecast for today, with precipitation from the observed local-zone basin rain.
+- **Disabled sources:** `training_config.disabled_sources` lists data sources that training switched off (e.g. `SMAP` without Earthdata credentials). Inference switches the same ones off, so the model sees the placeholders it was trained on.
+
 ## Input tensors
 
 The model takes a dict of 5 inputs. Names are stable across exports:

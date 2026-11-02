@@ -37,6 +37,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import charts  # noqa: E402
 import routing  # noqa: E402
+import ml_inference  # noqa: E402
 from data import basin_zones, get_basin_precip, get_upstream, nwps  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,14 @@ DEFAULT_RAIN = {'lag_hours': 12, 'k_hours': 48, 'runoff_ratio': 0.03}
 # pinned to either end is absorbing something else (usually local tributary
 # inflow during a storm) and is replaced by the registry defaults.
 UPSTREAM_COEF_BOUNDS = (0.25, 2.5)
+# Calibration searches each upstream gauge's travel time within this many
+# hours of its registry `lag_hours`, and its attenuation K up to
+# max(48 h, 3x registry `k_hours`). Without a prior, two correlated gauges can
+# trade places (one fitted with ~0 lag, the other with a 4-day lag that
+# replays today's peak at the end of the week).
+LAG_PRIOR_HOURS = 24
+# The rain term's response to rain on the ungauged (nearby) area is fast.
+RAIN_LAG_GRID = tuple(range(0, 49, 6))
 
 
 class ForecastError(RuntimeError):
@@ -168,6 +178,18 @@ def _target_only_forecast(target: dict, grid: pd.DatetimeIndex, use_official: bo
                                floor=floor)
 
 
+def _prior_grids(cfg: dict):
+    """Per-upstream-gauge (lag_grid, k_grid) windows around the registry priors."""
+    grids = []
+    for g in cfg['upstream']:
+        lag = int(g.get('lag_hours', 24 * g.get('lag_days', 1)))
+        k = float(g.get('k_hours', 12))
+        lags = [l for l in routing.DEFAULT_LAG_GRID if abs(l - lag) <= LAG_PRIOR_HOURS] or [lag]
+        ks = [x for x in routing.DEFAULT_K_GRID if x <= max(48.0, 3 * k)] or [k]
+        grids.append((lags, ks))
+    return grids
+
+
 def _plausible(fit: routing.RoutingFit, n_upstream: int) -> bool:
     """Upstream weights comfortably inside UPSTREAM_COEF_BOUNDS (not pinned to a bound)."""
     lo, hi = UPSTREAM_COEF_BOUNDS
@@ -177,13 +199,17 @@ def _plausible(fit: routing.RoutingFit, n_upstream: int) -> bool:
 def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAYS,
         out_dir: str = '.', make_chart: bool = True, registry=None,
         bias_tau_hours: float = DEFAULT_BIAS_TAU_HOURS, use_rain: bool = True,
-        zones=None, rain_panel: bool = False) -> dict:
+        zones=None, rain_panel: bool = False, model_dir: Optional[str] = None,
+        model_artifacts: Optional[dict] = None) -> dict:
     """
     Forecast one station. The mode depends on what exists for it:
       routing    upstream gauges in the registry -> upstream routing (+ rain term)
       nws        no upstream gauges, but a current NWS RFC forecast at the
                  target -> that forecast, then a recession to the week's end
       recession  neither -> recession from the latest observation
+    With model_dir (a trained-model directory or downloaded release), the
+    OpenFlow ML model's daily min-max forecast is added to the summary and
+    drawn on the chart for comparison (ml_inference.py).
     """
     site_id, cfg = get_upstream.resolve_site(site, registry)
     tz = cfg.get('timezone', 'UTC')
@@ -249,7 +275,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                       and all(routing.is_informative(x) for x in cal_inputs))
         if calibrated:
             try:
-                fits = routing.fit(tgt[:inow + 1], cal_inputs, coef_bounds=UPSTREAM_COEF_BOUNDS)
+                fits = routing.fit(tgt[:inow + 1], cal_inputs, coef_bounds=UPSTREAM_COEF_BOUNDS,
+                                   grids=_prior_grids(cfg))
                 if fits and not _plausible(fits[0], len(inputs)):
                     logger.warning("Calibration pinned to a weight bound (%s); using registry defaults",
                                    [round(c, 2) for c in fits[0].coefs])
@@ -258,7 +285,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                     # Two-stage: upstream travel times first, then the rain
                     # term on top (runoff ratio bounded to [0, 1]).
                     fits = routing.add_input(tgt[:inow + 1], cal_inputs, fits,
-                                             rain_flux[:inow + 1], max_coef=1.0)
+                                             rain_flux[:inow + 1], lag_grid=RAIN_LAG_GRID,
+                                             max_coef=1.0)
             except ValueError as e:
                 logger.warning("Calibration failed (%s); using registry defaults", e)
         rain_mode = 'off' if rain_flux is None else ('calibrated' if (fits and rain_fit) else 'default')
@@ -327,8 +355,24 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                                              if target['issued'] is not None else None),
         'flood_thresholds_cfs': thresholds,
         'basin_rain': None,
+        'ml': None,
         'files': {'csv': base + '.csv', 'json': base + '.json'},
     }
+    ml_daily = None
+    if model_dir or model_artifacts:
+        try:
+            res = ml_inference.forecast(site_id, model_dir, art=model_artifacts)
+            ml_daily = res['daily']
+            ml_daily = ml_daily[(ml_daily['Date'] >= pd.Timestamp(daily.index[0]))
+                                & (ml_daily['Date'] <= pd.Timestamp(daily.index[-1]))]
+            summary['ml'] = {
+                'version': res['version'], **res['info'],
+                'daily': [{'date': str(r.Date.date()), 'min_cfs': round(float(r.min_cfs)),
+                           'max_cfs': round(float(r.max_cfs))} for r in ml_daily.itertuples()],
+            }
+        except Exception as e:  # the ML overlay must never break the forecast
+            logger.warning("ML forecast unavailable for %s: %s", site_id, e)
+            summary['ml'] = {'error': str(e)}
     if rain is not None:
         info = rain.get('info') or {}
         summary['basin_rain'] = {
@@ -381,6 +425,15 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             footnote += (f"\nLocal rain term ({br['rain_term']}, runoff ratio {br['runoff_ratio']:.3f}): "
                          f"{u['past_7_days']:.0f} mm fell on the {br['ungauged_area_km2']:,.0f} km² ungauged area "
                          f"in the last 7 days; NWS forecasts {u['forecast']:.0f} mm more.")
+        ml_kw = {}
+        if ml_daily is not None and len(ml_daily):
+            m = summary['ml']
+            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily min–max, "
+                         f"from data through {m['anchor']}"
+                         f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}.")
+            ml_kw = {'ml': {'dates': ml_daily['Date'], 'min': ml_daily['min_cfs'].to_numpy(),
+                            'max': ml_daily['max_cfs'].to_numpy(),
+                            'label': 'OpenFlow ML model (daily min–max)'}}
         title = f"{short}: flow forecast {pd.Timestamp(first):%b %-d}–{pd.Timestamp(last):%b %-d, %Y}"
         where = f"{cfg['reach']} · {name}" if cfg.get('reach') else name
         subtitle = f"{where} · USGS {usgs_id} / NWS {cfg['nws_lid']} · times {tz_abbr}"
@@ -393,7 +446,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             rain=(_rain_panel(rain, tz, grid[start_out].tz_convert(tz).tz_localize(None),
                               end.tz_convert(tz).tz_localize(None))
                   if (rain_panel and rain is not None) else None),
-            **band_kw, **off_kw)
+            **band_kw, **off_kw, **ml_kw)
         summary['files']['png'] = base + '.png'
 
     with open(base + '.json', 'w') as f:
@@ -442,6 +495,12 @@ def format_summary(s: dict) -> str:
         if br['rain_term'] != 'off':
             lines.append(f"  local rain term: {br['rain_term']}, runoff ratio {br['runoff_ratio']}, "
                          f"ungauged area {br['ungauged_area_km2']:,.0f} km2")
+    m = s.get('ml')
+    if m and m.get('daily'):
+        lines.append(f"  ML model{(' ' + m['version']) if m.get('version') else ''} (data through {m['anchor']}): "
+                     + ', '.join(f"{pd.Timestamp(d['date']):%a} {d['min_cfs']:,}–{d['max_cfs']:,}" for d in m['daily']))
+    elif m and m.get('error'):
+        lines.append(f"  ML model: unavailable ({m['error']})")
     if s.get('nws_official_forecast_issued_utc'):
         lines.append(f"  NWS official forecast for this gauge issued {s['nws_official_forecast_issued_utc']}")
     for k, v in s['files'].items():
@@ -464,6 +523,8 @@ def main(argv=None) -> int:
     parser.add_argument('--no-chart', action='store_true', help='Skip the PNG chart')
     parser.add_argument('--no-rain', action='store_true',
                         help='Skip basin rain (gridMET + NWS QPF) and the local rain term')
+    parser.add_argument('--model-dir', default=None,
+                        help='Trained model directory / downloaded release: overlay the ML forecast')
     parser.add_argument('--rain-panel', action='store_true',
                         help='Add the daily basin-rain-by-zone panel under the hydrograph (off by default)')
     parser.add_argument('-q', '--quiet', action='store_true')
@@ -474,7 +535,7 @@ def main(argv=None) -> int:
         summary = run(args.site, days=args.days, calib_days=args.calib_days,
                       out_dir=args.out_dir, make_chart=not args.no_chart,
                       bias_tau_hours=args.bias_tau_hours, use_rain=not args.no_rain,
-                      rain_panel=args.rain_panel)
+                      rain_panel=args.rain_panel, model_dir=args.model_dir)
     except (ForecastError, KeyError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

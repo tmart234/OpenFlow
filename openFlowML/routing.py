@@ -153,13 +153,16 @@ def fit(target: np.ndarray,
         top_n: int = 5,
         warmup_hours: int = WARMUP_HOURS,
         sweeps: int = 3,
-        coef_bounds: Optional[Tuple[float, float]] = None) -> List[RoutingFit]:
+        coef_bounds: Optional[Tuple[float, float]] = None,
+        grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None) -> List[RoutingFit]:
     """
     Calibrate (lag_i, K_i) by grid search and (c_i, b) by least squares.
 
     Exhaustive for <= 2 upstream inputs; coordinate descent (one input's
     (lag, K) at a time, `sweeps` passes) beyond that so cost stays linear in
-    the number of inputs. Parameter sets with any negative c_i are rejected
+    the number of inputs. `grids` gives each input its own (lag_grid,
+    k_grid) -- e.g. a window around a registry prior -- instead of the shared
+    lag_grid / k_grid. Parameter sets with any negative c_i are rejected
     (an upstream gauge cannot contribute negative flow), as are sets with a
     coefficient outside `coef_bounds` when given -- e.g. (0.25, 2.5): a gauge
     "tripling" on its way downstream means the fit is absorbing something
@@ -181,7 +184,11 @@ def fit(target: np.ndarray,
     if rows.sum() < 24:
         raise ValueError("not enough target observations to calibrate")
 
-    combos = list(itertools.product(lag_grid, k_grid))
+    if grids is None:
+        grids = [(lag_grid, k_grid)] * len(inputs)
+    if len(grids) != len(inputs):
+        raise ValueError("need one (lag_grid, k_grid) per input")
+    combos_per_input = [list(itertools.product(lg, kg)) for lg, kg in grids]
     cache: Dict[tuple, np.ndarray] = {}
 
     def routed(i, lag, k):
@@ -206,14 +213,14 @@ def fit(target: np.ndarray,
         return res
 
     if len(inputs) <= 2:
-        for params in itertools.product(combos, repeat=len(inputs)):
+        for params in itertools.product(*combos_per_input):
             evaluate(tuple(params))
     else:
-        current = [(lag_grid[len(lag_grid) // 3], k_grid[len(k_grid) // 3])] * len(inputs)
+        current = [(lg[len(lg) // 3], kg[len(kg) // 3]) for lg, kg in grids]
         for _ in range(sweeps):
             for i in range(len(inputs)):
                 best = None
-                for c in combos:
+                for c in combos_per_input[i]:
                     trial = list(current)
                     trial[i] = c
                     res = evaluate(tuple(trial))

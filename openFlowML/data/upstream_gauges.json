@@ -141,5 +141,52 @@
         "nws_lid": "DNRC2"
       }
     ]
+  },
+  "USGS:09180000": {
+    "name": "Dolores River near Cisco, UT",
+    "short_name": "Dolores River (Gateway–Dewey)",
+    "reach": "Dolores River, Gateway, CO to Dewey Bridge, UT (final Colorado-to-Utah section)",
+    "aliases": [
+      "dolores",
+      "dolores-gateway",
+      "gateway-dewey",
+      "dolores-cisco",
+      "DOLU1"
+    ],
+    "nws_lid": "DOLU1",
+    "timezone": "America/Denver",
+    "forecast_days": 5,
+    "upstream": [
+      {
+        "name": "Dolores River near Bedrock, CO",
+        "site_id": "USGS:09171100",
+        "usgs_id": "09171100",
+        "nws_lid": "DBDC2",
+        "lag_days": 1,
+        "weight": 1.0,
+        "lag_hours": 18,
+        "k_hours": 12
+      },
+      {
+        "name": "San Miguel River at Uravan, CO",
+        "site_id": "USGS:09177000",
+        "usgs_id": "09177000",
+        "nws_lid": "SMUC2",
+        "lag_days": 1,
+        "weight": 1.0,
+        "lag_hours": 16,
+        "k_hours": 12
+      }
+    ],
+    "context_gauges": [
+      {
+        "name": "Dolores River near Gateway, CO (section put-in)",
+        "nws_lid": "DGAC2"
+      },
+      {
+        "name": "San Miguel River near Placerville, CO",
+        "nws_lid": "SMPC2"
+      }
+    ]
   }
 }
