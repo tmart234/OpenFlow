@@ -160,19 +160,21 @@ def test_daily_summary_and_peak():
     assert v == 3000.0 and i == 47 and t == times[-1]
 
 
-def test_add_input_keeps_upstream_travel_times_and_recovers_rain_term():
+def test_add_input_keeps_upstream_fit_and_explains_the_residual():
     up = _pulse(center=150)
     rain = np.zeros(600)
-    rain[300:306] = 5000.0                       # a burst of local rain flux
+    rain[300:306] = 5000.0                       # a burst of local rain flux, after the pulse
     target = 100 + 1.1 * routing.route(up, 24, 12) + 0.05 * routing.route(rain, 12, 24)
     base = routing.fit(target, [up], lag_grid=range(0, 49, 6), k_grid=(1, 6, 12, 24, 48))
     fits = routing.add_input(target, [up], base, rain, lag_grid=range(0, 49, 6),
                              k_grid=(1, 6, 12, 24, 48), max_coef=1.0)
     best = fits[0]
-    assert best.lags[0] == 24 and best.ks[0] == 12          # stage-1 travel time kept
+    # Upstream travel time AND weight stay exactly as stage 1 found them.
+    assert best.lags[0] == base[0].lags[0] and best.ks[0] == base[0].ks[0]
+    assert best.coefs[0] == base[0].coefs[0]
     assert best.lags[1] == 12 and best.ks[1] == 24
-    assert best.coefs[1] == pytest.approx(0.05, rel=1e-3)
-    assert best.rmse < 1e-6
+    assert best.coefs[1] == pytest.approx(0.05, rel=0.25)
+    assert best.rmse < 0.5 * base[0].rmse
     assert len(best.predict([up, rain])) == 600
 
 
@@ -184,3 +186,12 @@ def test_add_input_bounds_the_extra_coefficient():
     base = routing.fit(target, [up], lag_grid=(0, 6, 12), k_grid=(1, 6))
     fits = routing.add_input(target, [up], base, rain, lag_grid=(0, 6), k_grid=(1, 6), max_coef=1.0)
     assert all(f.coefs[-1] <= 1.0 for f in fits)
+
+
+def test_fit_coef_bounds_reject_implausible_weights():
+    up = _pulse(center=150, height=300)
+    target = 3.0 * routing.route(up, 12, 6)          # a gauge "tripling" downstream
+    free = routing.fit(target, [up], lag_grid=(0, 6, 12), k_grid=(1, 6))
+    assert free[0].coefs[0] == pytest.approx(3.0)
+    bounded = routing.fit(target, [up], lag_grid=(0, 6, 12), k_grid=(1, 6), coef_bounds=(0.25, 2.5))
+    assert all(f.coefs[0] <= 2.5 for f in bounded)

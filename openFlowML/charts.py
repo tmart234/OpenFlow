@@ -93,8 +93,10 @@ def plot_forecast(out_path: str, *,
     'forecast_from': first forecast date or None (forecast bars are faded)}.
     A separate panel, never a second y-axis.
 
-    Returns {'peak_time', 'peak_value'} for the called-out forecast peak
-    (local, naive), or Nones when there is no forecast.
+    Returns {'peak_time', 'peak_value', 'callout'} for the called-out point
+    (local, naive): the forecast peak when it rises meaningfully above where
+    the forecast starts ('peak'), otherwise the forecast's end value on a
+    falling / steady river ('end'). Nones when there is no forecast.
     """
     import matplotlib
     matplotlib.use('Agg')
@@ -115,7 +117,7 @@ def plot_forecast(out_path: str, *,
 
     ymax = 0.0
     tmin, tmax = [], []
-    peak_info = {'peak_time': None, 'peak_value': None}
+    peak_info = {'peak_time': None, 'peak_value': None, 'callout': None}
 
     if fc_times is not None and fc_central is not None and len(fc_times):
         ft = _local_naive(fc_times, tz)
@@ -148,9 +150,15 @@ def plot_forecast(out_path: str, *,
 
     if fc_times is not None and fc_central is not None and len(fc_times) and peak_callout:
         ft = _local_naive(fc_times, tz)
-        i = int(np.nanargmax(fc_central))
-        pt, pv = ft[i], float(fc_central[i])
         fmt = '%a %b %-d' if _is_daily(ft) else '%a %b %-d, ~%-I %p'
+        start_v = float(fc_central[0])
+        i = int(np.nanargmax(fc_central))
+        # A "peak" is only worth calling out if it is meaningfully above where
+        # the forecast starts; on a falling river call out where it ends up.
+        rising = len(fc_central) > 1 and float(fc_central[i]) > 1.02 * start_v
+        if not rising:
+            i = len(fc_central) - 1
+        pt, pv = ft[i], float(fc_central[i])
         tz_abbr = ''
         ts_i = pd.DatetimeIndex(pd.to_datetime(fc_times))[i]
         if tz and ts_i.tzinfo is not None and not _is_daily(ft):
@@ -159,12 +167,18 @@ def plot_forecast(out_path: str, *,
         text_x = pt + span * 0.08
         if text_x > ft.max():
             text_x = pt - span * 0.25
-        ax.annotate(f"Peak ≈ {_round_cfs(pv):,.0f} {units}\n{pt.strftime(fmt)}{tz_abbr}",
-                    xy=(pt, pv), xytext=(text_x, pv + 0.15 * max(ymax, 1.0)),
+        if rising:
+            label = f"Peak ≈ {_round_cfs(pv):,.0f} {units}\n{pt.strftime(fmt)}{tz_abbr}"
+        else:
+            verb = 'Falling to' if pv < 0.95 * start_v else 'Holding near'
+            # A forecast ending at local midnight ends the previous day.
+            day = pt - pd.Timedelta(minutes=1) if (pt.hour, pt.minute) == (0, 0) else pt
+            label = f"{verb} ≈ {_round_cfs(pv):,.0f} {units}\nby {day.strftime('%a %b %-d')}"
+        ax.annotate(label, xy=(pt, pv), xytext=(text_x, pv + 0.15 * max(ymax, 1.0)),
                     fontsize=10, color=INK,
                     arrowprops=dict(arrowstyle='-', color=INK_2, lw=1))
         ax.scatter([pt], [pv], s=40, color=FORECAST, zorder=5, edgecolor=SURFACE, linewidth=2)
-        peak_info = {'peak_time': pt, 'peak_value': pv}
+        peak_info = {'peak_time': pt, 'peak_value': pv, 'callout': 'peak' if rising else 'end'}
 
     top = _nice_ceiling(ymax * 1.25)
     for name, value in sorted((thresholds or {}).items(), key=lambda kv: kv[1]):

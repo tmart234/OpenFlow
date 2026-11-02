@@ -12,13 +12,19 @@
     "                 the recent calibration window is too quiet to fit them; normally they are re-fit on the last ~4 weeks.",
     "Per target:",
     "  forecast_days -- how many days of RFC forecast to expect at the upstream gauges (ML decoder 'upstream_known' horizon = min(lag_days) + forecast_days)",
-    "Defaults for USGS:08276500 were calibrated on the Oct 23-31 2026 flood (Rio Grande at Alamosa + Conejos nr Mogote -> Taos Junction Bridge, RMSE ~150 cfs)."
+    "Defaults for USGS:08276500 were calibrated on the Oct 23-31 2026 flood (Rio Grande at Alamosa + Conejos nr Mogote -> Taos Junction Bridge, RMSE ~150 cfs).",
+    "Stations with an empty `upstream` list are forecast from the NWS RFC forecast for the gauge itself (mode `nws`) when one is current."
   ],
   "USGS:08276500": {
     "name": "Rio Grande below Taos Junction Bridge near Taos, NM",
     "short_name": "Lower Taos Box",
     "reach": "Lower Taos Box (John Dunn Bridge to Taos Junction Bridge)",
-    "aliases": ["taos-box", "lower-taos-box", "taos", "TJBN5"],
+    "aliases": [
+      "taos-box",
+      "lower-taos-box",
+      "taos",
+      "TJBN5"
+    ],
     "nws_lid": "TJBN5",
     "timezone": "America/Denver",
     "forecast_days": 5,
@@ -45,11 +51,26 @@
       }
     ],
     "context_gauges": [
-      {"name": "Rio Grande near Del Norte, CO", "nws_lid": "DNRC2"},
-      {"name": "Rio Grande near Lobatos, CO (state line)", "nws_lid": "LOBC2"},
-      {"name": "Rio Grande near Cerro, NM", "nws_lid": "CERN5"},
-      {"name": "Costilla Creek at Costilla, NM", "nws_lid": "COSN5"},
-      {"name": "Rio Pueblo de Taos below Los Cordovas, NM", "nws_lid": "TBCN5"}
+      {
+        "name": "Rio Grande near Del Norte, CO",
+        "nws_lid": "DNRC2"
+      },
+      {
+        "name": "Rio Grande near Lobatos, CO (state line)",
+        "nws_lid": "LOBC2"
+      },
+      {
+        "name": "Rio Grande near Cerro, NM",
+        "nws_lid": "CERN5"
+      },
+      {
+        "name": "Costilla Creek at Costilla, NM",
+        "nws_lid": "COSN5"
+      },
+      {
+        "name": "Rio Pueblo de Taos below Los Cordovas, NM",
+        "nws_lid": "TBCN5"
+      }
     ],
     "rain": {
       "_doc": "Rain on the ungauged part of the basin (basin_zones.json) -> local inflow in routing.py. Defaults are used when the calibration window has too little rain to fit them.",
@@ -57,5 +78,68 @@
       "k_hours": 48,
       "runoff_ratio": 0.03
     }
+  },
+  "DWR:ARKCANCO": {
+    "name": "Arkansas River at Cañon City, CO",
+    "short_name": "Royal Gorge",
+    "reach": "Royal Gorge of the Arkansas (Parkdale to Cañon City)",
+    "aliases": [
+      "royal-gorge",
+      "royal",
+      "arkansas-royal-gorge",
+      "CNCC2"
+    ],
+    "nws_lid": "CNCC2",
+    "timezone": "America/Denver",
+    "forecast_days": 0,
+    "upstream": [
+      {
+        "name": "Arkansas River near Wellsville, CO",
+        "site_id": "DWR:ARKWELCO",
+        "usgs_id": "07093700",
+        "nws_lid": "WSVC2",
+        "lag_days": 1,
+        "weight": 1.0,
+        "lag_hours": 12,
+        "k_hours": 12
+      }
+    ],
+    "context_gauges": [
+      {
+        "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in)",
+        "nws_lid": "PDLC2"
+      },
+      {
+        "name": "Arkansas River at Salida, CO",
+        "nws_lid": "SALC2"
+      }
+    ],
+    "rain": {
+      "_doc": "Local inflow from Grape Creek / Texas Creek etc. between Wellsville and Canon City.",
+      "lag_hours": 6,
+      "k_hours": 24,
+      "runoff_ratio": 0.03
+    }
+  },
+  "DWR:CONMOGCO": {
+    "name": "Conejos River near Mogote, CO",
+    "short_name": "Conejos River",
+    "reach": "Conejos River above Mogote",
+    "aliases": [
+      "conejos",
+      "conejos-river",
+      "mogote",
+      "MOGC2"
+    ],
+    "nws_lid": "MOGC2",
+    "timezone": "America/Denver",
+    "forecast_days": 0,
+    "upstream": [],
+    "context_gauges": [
+      {
+        "name": "Rio Grande near Del Norte, CO (neighbouring basin)",
+        "nws_lid": "DNRC2"
+      }
+    ]
   }
 }

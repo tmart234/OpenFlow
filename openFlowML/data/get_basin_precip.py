@@ -68,6 +68,10 @@ NWS_GRIDPOINT_URL = "https://api.weather.gov/gridpoints/{gridpoint}"
 NWS_HEADERS = {'User-Agent': 'OpenFlow (github.com/tmart234/OpenFlow)',
                'Accept': 'application/geo+json'}
 MAX_STAGE4_GAP_DAYS = 7
+# Initial abstraction for the routing rain term: the first few mm of basin-
+# mean rain per day wet the soil and canopy and produce no runoff, so light
+# showers don't raise the river while storms still do.
+ABSTRACTION_MM_PER_DAY = 5.0
 
 
 def _disabled() -> bool:
@@ -509,12 +513,15 @@ def inference_daily(site_id: str, today=None, encoder_days: int = 60, decoder_da
 
 def routing_rain_flux(cfg: dict, grid: pd.DatetimeIndex,
                       observed: Optional[pd.DataFrame],
-                      forecast_points: Optional[Dict[int, pd.DataFrame]]) -> Tuple[np.ndarray, dict]:
+                      forecast_points: Optional[Dict[int, pd.DataFrame]],
+                      abstraction_mm_per_day: float = ABSTRACTION_MM_PER_DAY) -> Tuple[np.ndarray, dict]:
     """
-    Hourly rain on the ungauged area as a volumetric flux (cfs) on `grid`
-    (UTC): each observed day (gridMET / Stage IV) spread evenly over its
-    24-h accumulation window, then the NWS hourly forecast. Hours with no
-    source are 0 and counted in info['missing_hours'].
+    Hourly EFFECTIVE rain on the ungauged area as a volumetric flux (cfs) on
+    `grid` (UTC): each observed day (gridMET / Stage IV) spread evenly over
+    its 24-h accumulation window, then the NWS hourly forecast; each UTC
+    day's rain is reduced by `abstraction_mm_per_day` (proportionally over
+    its hours, floored at 0). Hours with no source are 0 and counted in
+    info['missing_hours']. info['rate_mm_per_hour'] is the raw rain rate.
     """
     area = float((cfg.get('ungauged') or {}).get('area_km2', 0.0))
     rate = pd.Series(np.nan, index=grid)
@@ -534,7 +541,9 @@ def routing_rain_flux(cfg: dict, grid: pd.DatetimeIndex,
         sources.append('nws')
     missing = int(rate.isna().sum())
     rate = rate.fillna(0.0)
-    flux = basin_zones.mm_per_hour_to_cfs(rate.to_numpy(), area)
+    day_total = rate.groupby(rate.index.floor('D')).transform('sum')
+    keep = (1.0 - abstraction_mm_per_day / day_total.where(day_total > 0)).clip(lower=0).fillna(0.0)
+    flux = basin_zones.mm_per_hour_to_cfs((rate * keep).to_numpy(), area)
     return flux, {'area_km2': area, 'sources': sources, 'missing_hours': missing,
                   'rate_mm_per_hour': rate}
 

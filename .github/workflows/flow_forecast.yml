@@ -1,18 +1,18 @@
 name: Flow Forecast
 
-# On-demand upstream-routing forecast + chart for a registered station
-# (data/upstream_gauges.json), e.g. the Lower Taos Box. No trained model
-# needed. The CSV / JSON / PNG are uploaded as a workflow artifact.
+# On-demand weekly forecast + chart for registered stations
+# (data/upstream_gauges.json): Lower Taos Box, Royal Gorge, Conejos by
+# default. No trained model needed. The CSV / JSON / PNG are uploaded as a workflow artifact.
 # To run it on a schedule, add e.g.:
 #   schedule:
 #     - cron: '17 13 * * *'   # daily, ~6 AM Mountain
 on:
   workflow_dispatch:
     inputs:
-      site:
-        description: 'Station alias, site id, or NWS LID (e.g. taos-box)'
+      sites:
+        description: 'Comma-separated stations: alias, site id, or NWS LID'
         type: string
-        default: taos-box
+        default: taos-box,royal-gorge,conejos
       days:
         description: 'Local calendar days to forecast'
         type: string
@@ -41,12 +41,16 @@ jobs:
       # fails the step even though its output is piped through tee.
       shell: bash
       env:
-        SITE: ${{ inputs.site || 'taos-box' }}
+        SITES: ${{ inputs.sites || 'taos-box,royal-gorge,conejos' }}
         DAYS: ${{ inputs.days || '7' }}
       run: |
         mkdir -p forecast_out
-        python openFlowML/flow_forecast.py --site "$SITE" --days "$DAYS" \
-          --out-dir forecast_out | tee forecast_out/summary.txt
+        IFS=',' read -ra LIST <<< "$SITES"
+        for site in "${LIST[@]}"; do
+          python openFlowML/flow_forecast.py --site "$(echo "$site" | xargs)" --days "$DAYS" \
+            --out-dir forecast_out | tee -a forecast_out/summary.txt
+          echo >> forecast_out/summary.txt
+        done
         { echo '```'; cat forecast_out/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload forecast

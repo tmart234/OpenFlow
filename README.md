@@ -10,4 +10,4 @@ New here? See our wiki
 - [x] Mobile artifacts published per training run (CoreML + TFLite + manifest) — see [docs/INFERENCE.md](docs/INFERENCE.md)
 - [x] Upstream-gauge inputs: the model sees flood waves still upstream (e.g. Colorado's San Luis Valley -> Lower Taos Box) — see `openFlowML/data/upstream_gauges.json`
 - [x] Basin rain by travel-time zone: gridMET / NWS Stage IV / NWS forecast rain and snow averaged over the river-distance zones of each gauge's contributing area (not a single point, not a fixed HUC level) — see `openFlowML/data/README.md`
-- [x] Forecast CLI with charts (no trained model needed): `python openFlowML/flow_forecast.py --site taos-box` writes a CSV, JSON and PNG with the peak called out; also runnable from the **Flow Forecast** GitHub Action
+- [x] Forecast CLI with charts (no trained model needed): `python openFlowML/flow_forecast.py --site taos-box` (also `royal-gorge`, `conejos`) writes a CSV, JSON and PNG with the peak called out — upstream routing where upstream gauges are registered, else the official NWS forecast for the gauge; also runnable from the **Flow Forecast** GitHub Action

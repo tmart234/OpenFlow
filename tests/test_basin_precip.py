@@ -198,7 +198,7 @@ def test_routing_rain_flux_spreads_days_and_never_overwrites_observations():
                             index=pd.DatetimeIndex(['2026-11-01']))
     hours = pd.date_range('2026-11-01T00:00Z', periods=72, freq='1h')
     fpts = {0: pd.DataFrame({'precip_mm': 2.0, 'temp_c': 10.0}, index=hours)}
-    flux, info = gbp.routing_rain_flux(CFG, grid, observed, fpts)
+    flux, info = gbp.routing_rain_flux(CFG, grid, observed, fpts, abstraction_mm_per_day=0)
     rate = info['rate_mm_per_hour']
     assert rate['2026-11-01T12:00Z'] == pytest.approx(1.0)
     assert rate['2026-11-02T11:00Z'] == pytest.approx(1.0)
@@ -214,3 +214,15 @@ def test_zone_totals():
     t = gbp.zone_totals(CFG, observed, None, '2026-11-02', 'UTC', days=7)
     assert t['past']['rain_local'] == 6.0 and t['past_through'] == '2026-11-01'
     assert t['next'] == {}
+
+
+def test_routing_rain_flux_initial_abstraction_drops_light_rain():
+    grid = pd.date_range('2026-11-01T00:00Z', periods=48, freq='1h')
+    hours = grid
+    precip = np.r_[np.full(24, 3.0 / 24), np.full(24, 30.0 / 24)]   # 3 mm day, then 30 mm day
+    fpts = {0: pd.DataFrame({'precip_mm': precip, 'temp_c': 10.0}, index=hours)}
+    flux, info = gbp.routing_rain_flux(CFG, grid, None, fpts, abstraction_mm_per_day=5.0)
+    assert (flux[:24] == 0).all()                                     # light day: no runoff
+    full = basin_zones.mm_per_hour_to_cfs(30.0 / 24, 10000)
+    assert flux[30] == pytest.approx(full * (1 - 5.0 / 30.0))         # storm day: 25 of 30 mm
+    assert info['rate_mm_per_hour'].iloc[0] == pytest.approx(3.0 / 24)   # raw rate reported

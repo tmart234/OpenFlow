@@ -44,7 +44,7 @@ def test_plot_forecast_without_forecast_has_no_peak(tmp_path):
     t = _hourly('2026-11-01T00:00Z', 48)
     info = charts.plot_forecast(str(tmp_path / 'o.png'), title='Obs only',
                                 obs_times=t, obs_values=np.full(48, 500.0))
-    assert info == {'peak_time': None, 'peak_value': None}
+    assert info == {'peak_time': None, 'peak_value': None, 'callout': None}
 
 
 def test_plot_hindcast_writes_png(tmp_path):
@@ -78,3 +78,20 @@ def test_plot_forecast_with_rain_panel(tmp_path):
                                 footnote='a\nb\nc\nd')
     assert out.read_bytes()[:8] == PNG_MAGIC
     assert info['peak_value'] == pytest.approx(central.max())
+
+
+def test_falling_river_calls_out_the_end_value_not_a_peak(tmp_path):
+    fc_t = _hourly('2026-11-02T19:00Z', 24 * 6 + 1)          # ends at local midnight
+    central = np.linspace(607, 360, len(fc_t))
+    info = charts.plot_forecast(str(tmp_path / 'f.png'), title='Falling', fc_times=fc_t,
+                                fc_central=central, now=fc_t[0], tz='America/Denver')
+    assert info['callout'] == 'end'
+    assert info['peak_value'] == pytest.approx(360)
+
+
+def test_rising_river_calls_out_the_peak(tmp_path):
+    fc_t = _hourly('2026-11-02T19:00Z', 48)
+    central = np.r_[np.linspace(1000, 3000, 24), np.linspace(3000, 2000, 24)]
+    info = charts.plot_forecast(str(tmp_path / 'r.png'), title='Rising', fc_times=fc_t,
+                                fc_central=central, now=fc_t[0], tz='America/Denver')
+    assert info['callout'] == 'peak' and info['peak_value'] == pytest.approx(3000)
