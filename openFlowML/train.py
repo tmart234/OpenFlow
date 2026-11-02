@@ -15,6 +15,7 @@ tell whether the model is doing anything useful (i.e. better than "tomorrow
 import json
 import logging
 import os
+import shutil
 
 import numpy as np
 import tensorflow as tf
@@ -24,6 +25,7 @@ import normalize_data
 import baselines
 import windowing
 import model as model_mod
+from data import get_upstream
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -86,6 +88,7 @@ def main():
                 'SWE', 'soil_moisture', 'sm_observed',
                 'drought_index',
                 'reservoir_storage', 'reservoir_release', 'reservoir_observed',
+                'upstream_flow', 'upstream_observed',
                 'doy_sin', 'doy_cos'}
     missing = required - set(data.columns)
     if missing:
@@ -188,10 +191,31 @@ def main():
         for name in external_mae_per_h:
             logger.info("External baseline available: %s", name)
 
+        # Visual QA: one hindcast chart per station (its highest-flow test
+        # window), uploaded as a CI artifact. Best-effort -- a plotting
+        # problem must never lose a trained model.
+        try:
+            import hindcast
+            with open(os.path.join(base_path, 'scalers.json')) as f:
+                scalers = json.load(f)
+            names = {sid: cfg.get('short_name') or cfg.get('name', sid)
+                     for sid, cfg in get_upstream.load_registry().items()}
+            hindcast.write_hindcast_charts(
+                splits.test, model_pred, scalers, os.path.join(base_path, 'charts'),
+                names=names, model_version=os.environ.get('OPENFLOW_MODEL_VERSION'))
+        except Exception as e:
+            logger.warning("Hindcast charts skipped: %s", e)
+
     # 8. Persist the model + training config alongside the scaler/index JSON
     #    that combine_data already wrote. These five artifacts together are
     #    everything an inference pipeline needs.
     h5_path = _save_keras_model(net, base_path)
+    # The upstream registry travels with the model: inference needs each
+    # station's upstream gauges, lags and weights to rebuild upstream_flow.
+    shutil.copyfile(get_upstream.REGISTRY_PATH, os.path.join(base_path, 'upstream_gauges.json'))
+    known = (data.groupby('site_id')[windowing.UPSTREAM_KNOWN_DAYS_COLUMN].first()
+             .astype(int).to_dict()
+             if windowing.UPSTREAM_KNOWN_DAYS_COLUMN in data.columns else {})
     config = {
         'encoder_days': ENCODER_DAYS,
         'decoder_days': DECODER_DAYS,
@@ -200,6 +224,12 @@ def main():
         'target_features': windowing.TARGET_FEATURES,
         'num_stations': len(station_index),
         'num_basins': len(basin_index),
+        # Decoder columns built per forecast (not read from data) and the
+        # per-station known-days horizon for the upstream hold rule; see
+        # windowing.upstream_decoder_window and docs/INFERENCE.md.
+        'window_built_decoder_features': windowing.WINDOW_BUILT_DECODER_FEATURES,
+        'upstream_known_days': {k: int(v) for k, v in known.items()},
+        'upstream_registry': 'upstream_gauges.json',
     }
     with open(os.path.join(base_path, 'training_config.json'), 'w') as f:
         json.dump(config, f, indent=2)

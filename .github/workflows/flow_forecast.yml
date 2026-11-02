@@ -1,0 +1,57 @@
+name: Flow Forecast
+
+# On-demand upstream-routing forecast + chart for a registered station
+# (data/upstream_gauges.json), e.g. the Lower Taos Box. No trained model
+# needed. The CSV / JSON / PNG are uploaded as a workflow artifact.
+# To run it on a schedule, add e.g.:
+#   schedule:
+#     - cron: '17 13 * * *'   # daily, ~6 AM Mountain
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Station alias, site id, or NWS LID (e.g. taos-box)'
+        type: string
+        default: taos-box
+      days:
+        description: 'Local calendar days to forecast'
+        type: string
+        default: '7'
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7"
+
+    - name: Run forecast
+      # Explicit `shell: bash` runs with -o pipefail, so a failing forecast
+      # fails the step even though its output is piped through tee.
+      shell: bash
+      env:
+        SITE: ${{ inputs.site || 'taos-box' }}
+        DAYS: ${{ inputs.days || '7' }}
+      run: |
+        mkdir -p forecast_out
+        python openFlowML/flow_forecast.py --site "$SITE" --days "$DAYS" \
+          --out-dir forecast_out | tee forecast_out/summary.txt
+        { echo '```'; cat forecast_out/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload forecast
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: flow_forecast
+        path: forecast_out/
+        if-no-files-found: warn

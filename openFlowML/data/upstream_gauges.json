@@ -1,0 +1,50 @@
+{
+  "_doc": [
+    "Upstream gauge registry: which gauges feed each target station, and how.",
+    "Keys are OpenFlow site ids (same format as .github/site_ids.txt).",
+    "Per upstream gauge:",
+    "  site_id     -- daily history source for TRAINING (DWR:<abbrev> or USGS:<id>)",
+    "  nws_lid     -- NWS gauge id; NWPS supplies ~30 days of observations and the current RFC forecast (inference + routing CLI)",
+    "  lag_days    -- daily travel time used for the ML 'upstream_flow' feature: upstream_flow(d) = sum_i weight_i * Q_i(d - lag_days_i)",
+    "  weight      -- relative contribution in that routed sum (absorbs reach gains / diversion losses)",
+    "  lag_hours / k_hours -- hourly routing defaults (pure travel time + linear-reservoir attenuation) used by routing.py when",
+    "                 the recent calibration window is too quiet to fit them; normally they are re-fit on the last ~4 weeks.",
+    "Per target:",
+    "  forecast_days -- how many days of RFC forecast to expect at the upstream gauges (ML decoder 'upstream_known' horizon = min(lag_days) + forecast_days)",
+    "Defaults for USGS:08276500 were calibrated on the Oct 23-31 2026 flood (Rio Grande at Alamosa + Conejos nr Mogote -> Taos Junction Bridge, RMSE ~150 cfs)."
+  ],
+  "USGS:08276500": {
+    "name": "Rio Grande below Taos Junction Bridge near Taos, NM",
+    "short_name": "Lower Taos Box",
+    "reach": "Lower Taos Box (John Dunn Bridge to Taos Junction Bridge)",
+    "aliases": ["taos-box", "lower-taos-box", "taos", "TJBN5"],
+    "nws_lid": "TJBN5",
+    "timezone": "America/Denver",
+    "forecast_days": 5,
+    "upstream": [
+      {
+        "name": "Rio Grande at Alamosa, CO",
+        "site_id": "DWR:RIOALACO",
+        "nws_lid": "ALAC2",
+        "lag_days": 2,
+        "weight": 1.3,
+        "lag_hours": 30,
+        "k_hours": 24
+      },
+      {
+        "name": "Conejos River near Mogote, CO",
+        "site_id": "DWR:CONMOGCO",
+        "nws_lid": "MOGC2",
+        "lag_days": 5,
+        "weight": 0.7,
+        "lag_hours": 48,
+        "k_hours": 72
+      }
+    ],
+    "context_gauges": [
+      {"name": "Rio Grande near Del Norte, CO", "nws_lid": "DNRC2"},
+      {"name": "Rio Grande near Lobatos, CO (state line)", "nws_lid": "LOBC2"},
+      {"name": "Rio Grande near Cerro, NM", "nws_lid": "CERN5"}
+    ]
+  }
+}

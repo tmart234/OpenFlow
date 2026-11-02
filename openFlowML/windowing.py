@@ -35,10 +35,17 @@ logger = logging.getLogger(__name__)
 #   RISE) -- upstream regulation state for regulated rivers, defaults to 0
 #   for unmapped (unregulated) stations; reservoir_observed -- 1 when the
 #   station actually has reservoir data, 0 when it's the unregulated default.
+#   upstream_flow -- routed daily inflow from the station's upstream gauges
+#   (data/get_upstream.py: sum_i weight_i * Q_i(d - lag_i)); this is how the
+#   model sees a flood wave that is still upstream, which local weather and
+#   the station's own history cannot show; upstream_observed -- 1 when the
+#   station has upstream gauges and that day's routed value is real, 0 for
+#   the placeholder (stations without upstream gauges, data gaps).
 ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
                     'SWE', 'soil_moisture', 'sm_observed',
                     'drought_index',
                     'reservoir_storage', 'reservoir_release', 'reservoir_observed',
+                    'upstream_flow', 'upstream_observed',
                     'doy_sin', 'doy_cos']
 # Decoder window: ONLY features available at forecast time. No flow (that's
 # what we're predicting), no SWE / no soil_moisture / no drought / no
@@ -46,7 +53,24 @@ ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
 # Precipitation IS forecast-available -- Open-Meteo (and the NWS/NOAA QPF
 # layer behind it) ships a 14-day daily precipitation_sum that get_forecast.py
 # fetches at inference time, so it goes in the decoder window.
-DECODER_FEATURES = ['TMIN', 'TMAX', 'precipitation', 'doy_sin', 'doy_cos']
+#
+# Upstream flow is also forecast-available: routed with a travel-time lag, the
+# first min(lag_days) decoder days are ALREADY OBSERVED upstream, and the NWS
+# River Forecast Center publishes ~5-day flow forecasts at the upstream gauges
+# after that. So decoder day d carries the routed upstream value for d <=
+# upstream_known_days (per station, see get_upstream.known_days) and HOLDS the
+# last known value after that; `upstream_known` (0/1, built per window here,
+# not a dataset column) tells the model which days are real vs held. Like the
+# weather features, training uses the observed upstream flow as a "perfect"
+# forecast for the known days.
+DECODER_FEATURES = ['TMIN', 'TMAX', 'precipitation',
+                    'upstream_flow', 'upstream_known',
+                    'doy_sin', 'doy_cos']
+# Decoder features built per window rather than read from a dataset column.
+WINDOW_BUILT_DECODER_FEATURES = ['upstream_known']
+# Per-station column (unscaled int) giving how many leading decoder days have
+# a known upstream value. Missing column == 0 (no upstream gauges).
+UPSTREAM_KNOWN_DAYS_COLUMN = 'upstream_known_days'
 # Target: log-z-scored flow during the decoder days. Both columns are already
 # log1p-transformed and z-scored by normalize_data, so MSE/Huber here behaves.
 TARGET_FEATURES = ['Min Flow', 'Max Flow']
@@ -70,6 +94,36 @@ class WindowedSample:
     basin_idx: int
     site_id: str
     anchor_date: pd.Timestamp       # first day of the encoder window
+
+
+def upstream_decoder_window(future_values: np.ndarray,
+                            future_observed: np.ndarray,
+                            known_days: int,
+                            last_value: float,
+                            last_observed: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Decoder-window upstream inputs for one forecast.
+
+    future_values / future_observed: the routed upstream_flow (scaled) and its
+    upstream_observed indicator for each decoder day. For day d (0-based):
+      - d < known_days and observed  -> use the value, upstream_known = 1
+      - otherwise                    -> hold the last known value (starting
+                                        from the last encoder day), known = 0
+    This is THE rule inference must reproduce (docs/INFERENCE.md); keep it the
+    single implementation both training and flow_forecast.py call.
+    """
+    n = len(future_values)
+    values = np.empty(n, dtype=float)
+    known = np.zeros(n, dtype=float)
+    hold = float(last_value) if last_observed else 0.0
+    for d in range(n):
+        if d < known_days and future_observed[d] >= 0.5 and np.isfinite(future_values[d]):
+            values[d] = future_values[d]
+            known[d] = 1.0
+            hold = values[d]
+        else:
+            values[d] = hold
+    return values, known
 
 
 @dataclass
@@ -100,7 +154,16 @@ def _build_windows_for_station(station_df: pd.DataFrame,
     day_gaps = np.diff(dates).astype('timedelta64[D]').astype(int)
 
     enc_matrix = df[ENCODER_FEATURES].to_numpy(dtype=float)
-    dec_matrix = df[DECODER_FEATURES].to_numpy(dtype=float)
+    dec_frame = df.reindex(columns=DECODER_FEATURES)
+    for col in WINDOW_BUILT_DECODER_FEATURES:
+        dec_frame[col] = 0.0
+    dec_matrix = dec_frame.to_numpy(dtype=float)
+    up_values = df['upstream_flow'].to_numpy(dtype=float)
+    up_observed = df['upstream_observed'].to_numpy(dtype=float)
+    known_days = (int(df[UPSTREAM_KNOWN_DAYS_COLUMN].iloc[0])
+                  if UPSTREAM_KNOWN_DAYS_COLUMN in df.columns else 0)
+    dec_up_col = DECODER_FEATURES.index('upstream_flow')
+    dec_known_col = DECODER_FEATURES.index('upstream_known')
     tgt_matrix = df[TARGET_FEATURES].to_numpy(dtype=float)
     # Indices within ENCODER_FEATURES of the columns that match TARGET_FEATURES,
     # so we can lift the persistence anchor straight from the encoder slice.
@@ -116,8 +179,13 @@ def _build_windows_for_station(station_df: pd.DataFrame,
         if day_gaps[start:start + total - 1].max() != 1:
             continue
         enc = enc_matrix[start:start + encoder_days]
-        dec = dec_matrix[start + encoder_days:start + total]
+        dec = dec_matrix[start + encoder_days:start + total].copy()
         tgt = tgt_matrix[start + encoder_days:start + total]
+        last = start + encoder_days - 1
+        dec[:, dec_up_col], dec[:, dec_known_col] = upstream_decoder_window(
+            up_values[start + encoder_days:start + total],
+            up_observed[start + encoder_days:start + total],
+            known_days, up_values[last], up_observed[last])
         if not (np.isfinite(enc).all() and np.isfinite(dec).all() and np.isfinite(tgt).all()):
             continue
         persistence_anchor = enc[-1, target_indices_in_encoder].astype(float)
@@ -143,8 +211,8 @@ def build_windows(df: pd.DataFrame,
     (one row per (station, date), with feature columns scaled and station_idx
     and basin_idx assigned).
     """
-    required = set(ENCODER_FEATURES) | set(DECODER_FEATURES) | set(TARGET_FEATURES) | {
-        'Date', 'site_id', 'station_idx'}
+    required = (set(ENCODER_FEATURES) | set(DECODER_FEATURES) | set(TARGET_FEATURES) | {
+        'Date', 'site_id', 'station_idx'}) - set(WINDOW_BUILT_DECODER_FEATURES)
     missing = sorted(required - set(df.columns))
     if missing:
         raise ValueError(f"Missing required columns for windowing: {missing}")

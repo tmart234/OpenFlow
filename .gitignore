@@ -60,3 +60,10 @@ WW-app.xcodeproj/xcuserdata/tylermartin.xcuserdatad/xcdebugger/Breakpoints_v2.xc
 /basin_index.json
 /training_config.json
 __pycache__/
+
+# Generated forecast / hindcast outputs
+charts/
+forecast_out/
+*_forecast.png
+*_forecast.csv
+*_forecast.json
