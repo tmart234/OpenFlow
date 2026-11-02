@@ -41,11 +41,20 @@ logger = logging.getLogger(__name__)
 #   the station's own history cannot show; upstream_observed -- 1 when the
 #   station has upstream gauges and that day's routed value is real, 0 for
 #   the placeholder (stations without upstream gauges, data gaps).
+#   rain_/snow_{local,mid,far} -- basin-mean daily rain and snowfall (water
+#   equivalent) over the station's contributing area, split into river-
+#   distance zones (data/basin_zones.py): rain near the gauge arrives within a
+#   day, rain on the headwaters days later, and snow is stored rather than
+#   run off. The point `precipitation` (nearest rain gauge) stays as a
+#   fallback; basin_precip_observed -- 1 when the zone values are real.
+BASIN_PRECIP_FEATURES = ['rain_local', 'rain_mid', 'rain_far',
+                         'snow_local', 'snow_mid', 'snow_far']
 ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
                     'SWE', 'soil_moisture', 'sm_observed',
                     'drought_index',
                     'reservoir_storage', 'reservoir_release', 'reservoir_observed',
                     'upstream_flow', 'upstream_observed',
+                    *BASIN_PRECIP_FEATURES, 'basin_precip_observed',
                     'doy_sin', 'doy_cos']
 # Decoder window: ONLY features available at forecast time. No flow (that's
 # what we're predicting), no SWE / no soil_moisture / no drought / no
@@ -63,11 +72,19 @@ ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
 # not a dataset column) tells the model which days are real vs held. Like the
 # weather features, training uses the observed upstream flow as a "perfect"
 # forecast for the known days.
+#
+# Basin zone rain/snow are forecast-available too, from NWS gridpoint QPF,
+# which reaches ~7 days: decoder days d < BASIN_PRECIP_KNOWN_DAYS carry the
+# value (training: the observed gridMET value, the same "perfect forecast"
+# assumption as the weather columns), later days are 0.0 (the scaled mean)
+# with basin_precip_known = 0, matching what inference can actually supply.
 DECODER_FEATURES = ['TMIN', 'TMAX', 'precipitation',
                     'upstream_flow', 'upstream_known',
+                    *BASIN_PRECIP_FEATURES, 'basin_precip_known',
                     'doy_sin', 'doy_cos']
 # Decoder features built per window rather than read from a dataset column.
-WINDOW_BUILT_DECODER_FEATURES = ['upstream_known']
+WINDOW_BUILT_DECODER_FEATURES = ['upstream_known', 'basin_precip_known']
+BASIN_PRECIP_KNOWN_DAYS = 7
 # Per-station column (unscaled int) giving how many leading decoder days have
 # a known upstream value. Missing column == 0 (no upstream gauges).
 UPSTREAM_KNOWN_DAYS_COLUMN = 'upstream_known_days'
@@ -126,6 +143,22 @@ def upstream_decoder_window(future_values: np.ndarray,
     return values, known
 
 
+def basin_precip_decoder_window(values: np.ndarray, observed: np.ndarray,
+                                known_days: int = BASIN_PRECIP_KNOWN_DAYS) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Decoder-window basin precip inputs for one forecast. values[H, 6] are
+    the scaled zone rain/snow per decoder day, observed[H] their indicator.
+    Day d keeps its values (known = 1) when d < known_days and observed;
+    otherwise the values become 0.0 (scaled mean) and known = 0. The single
+    implementation shared by training and inference (docs/INFERENCE.md).
+    """
+    values = np.asarray(values, dtype=float)
+    observed = np.asarray(observed, dtype=float)
+    known = (np.arange(len(values)) < known_days) & (observed >= 0.5) \
+        & np.isfinite(values).all(axis=1)
+    return np.where(known[:, None], values, 0.0), known.astype(float)
+
+
 @dataclass
 class SplitWindows:
     train: List[WindowedSample]
@@ -164,6 +197,9 @@ def _build_windows_for_station(station_df: pd.DataFrame,
                   if UPSTREAM_KNOWN_DAYS_COLUMN in df.columns else 0)
     dec_up_col = DECODER_FEATURES.index('upstream_flow')
     dec_known_col = DECODER_FEATURES.index('upstream_known')
+    bp_cols = [DECODER_FEATURES.index(c) for c in BASIN_PRECIP_FEATURES]
+    bp_known_col = DECODER_FEATURES.index('basin_precip_known')
+    bp_observed = df['basin_precip_observed'].to_numpy(dtype=float)
     tgt_matrix = df[TARGET_FEATURES].to_numpy(dtype=float)
     # Indices within ENCODER_FEATURES of the columns that match TARGET_FEATURES,
     # so we can lift the persistence anchor straight from the encoder slice.
@@ -186,6 +222,8 @@ def _build_windows_for_station(station_df: pd.DataFrame,
             up_values[start + encoder_days:start + total],
             up_observed[start + encoder_days:start + total],
             known_days, up_values[last], up_observed[last])
+        dec[:, bp_cols], dec[:, bp_known_col] = basin_precip_decoder_window(
+            dec[:, bp_cols], bp_observed[start + encoder_days:start + total])
         if not (np.isfinite(enc).all() and np.isfinite(dec).all() and np.isfinite(tgt).all()):
             continue
         persistence_anchor = enc[-1, target_indices_in_encoder].astype(float)

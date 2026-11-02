@@ -33,7 +33,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7"
+        # scipy reads gridMET (NetCDF-3); h5py reads the NWS Stage IV analysis.
+        pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7" scipy h5py
 
     - name: Run forecast
       # Explicit `shell: bash` runs with -o pipefail, so a failing forecast

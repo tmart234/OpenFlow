@@ -21,6 +21,10 @@ on:
         description: 'Skip upstream-gauge inputs (ablation)'
         type: boolean
         default: false
+      disable_basin_precip:
+        description: 'Skip basin zone rain/snow inputs (ablation)'
+        type: boolean
+        default: false
 
 jobs:
   train:
@@ -63,6 +67,7 @@ jobs:
         OPENFLOW_DISABLE_DROUGHT: ${{ inputs.disable_drought && '1' || '' }}
         OPENFLOW_DISABLE_RESERVOIR: ${{ inputs.disable_reservoir && '1' || '' }}
         OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
+        OPENFLOW_DISABLE_BASIN_PRECIP: ${{ inputs.disable_basin_precip && '1' || '' }}
         OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
       run: python openFlowML/train.py
 
@@ -117,6 +122,7 @@ jobs:
           basin_index.json
           training_config.json
           upstream_gauges.json
+          basin_zones.json
           manifest.json
 
     # Belt-and-braces: even on release-step failure, the artifact upload
@@ -136,6 +142,7 @@ jobs:
           ./basin_index.json
           ./training_config.json
           ./upstream_gauges.json
+          ./basin_zones.json
           ./manifest.json
         if-no-files-found: warn
 

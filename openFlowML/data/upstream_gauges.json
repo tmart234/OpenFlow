@@ -4,6 +4,7 @@
     "Keys are OpenFlow site ids (same format as .github/site_ids.txt).",
     "Per upstream gauge:",
     "  site_id     -- daily history source for TRAINING (DWR:<abbrev> or USGS:<id>)",
+    "  usgs_id     -- USGS id used to delineate the gauged area (NLDI) when building basin_zones.json",
     "  nws_lid     -- NWS gauge id; NWPS supplies ~30 days of observations and the current RFC forecast (inference + routing CLI)",
     "  lag_days    -- daily travel time used for the ML 'upstream_flow' feature: upstream_flow(d) = sum_i weight_i * Q_i(d - lag_days_i)",
     "  weight      -- relative contribution in that routed sum (absorbs reach gains / diversion losses)",
@@ -25,6 +26,7 @@
       {
         "name": "Rio Grande at Alamosa, CO",
         "site_id": "DWR:RIOALACO",
+        "usgs_id": "08223000",
         "nws_lid": "ALAC2",
         "lag_days": 2,
         "weight": 1.3,
@@ -34,6 +36,7 @@
       {
         "name": "Conejos River near Mogote, CO",
         "site_id": "DWR:CONMOGCO",
+        "usgs_id": "08246500",
         "nws_lid": "MOGC2",
         "lag_days": 5,
         "weight": 0.7,
@@ -44,7 +47,15 @@
     "context_gauges": [
       {"name": "Rio Grande near Del Norte, CO", "nws_lid": "DNRC2"},
       {"name": "Rio Grande near Lobatos, CO (state line)", "nws_lid": "LOBC2"},
-      {"name": "Rio Grande near Cerro, NM", "nws_lid": "CERN5"}
-    ]
+      {"name": "Rio Grande near Cerro, NM", "nws_lid": "CERN5"},
+      {"name": "Costilla Creek at Costilla, NM", "nws_lid": "COSN5"},
+      {"name": "Rio Pueblo de Taos below Los Cordovas, NM", "nws_lid": "TBCN5"}
+    ],
+    "rain": {
+      "_doc": "Rain on the ungauged part of the basin (basin_zones.json) -> local inflow in routing.py. Defaults are used when the calibration window has too little rain to fit them.",
+      "lag_hours": 12,
+      "k_hours": 48,
+      "runoff_ratio": 0.03
+    }
   }
 }

@@ -158,3 +158,29 @@ def test_daily_summary_and_peak():
     assert s.index[0].isoformat() == '2026-11-02'
     t, v, i = routing.peak(times, central)
     assert v == 3000.0 and i == 47 and t == times[-1]
+
+
+def test_add_input_keeps_upstream_travel_times_and_recovers_rain_term():
+    up = _pulse(center=150)
+    rain = np.zeros(600)
+    rain[300:306] = 5000.0                       # a burst of local rain flux
+    target = 100 + 1.1 * routing.route(up, 24, 12) + 0.05 * routing.route(rain, 12, 24)
+    base = routing.fit(target, [up], lag_grid=range(0, 49, 6), k_grid=(1, 6, 12, 24, 48))
+    fits = routing.add_input(target, [up], base, rain, lag_grid=range(0, 49, 6),
+                             k_grid=(1, 6, 12, 24, 48), max_coef=1.0)
+    best = fits[0]
+    assert best.lags[0] == 24 and best.ks[0] == 12          # stage-1 travel time kept
+    assert best.lags[1] == 12 and best.ks[1] == 24
+    assert best.coefs[1] == pytest.approx(0.05, rel=1e-3)
+    assert best.rmse < 1e-6
+    assert len(best.predict([up, rain])) == 600
+
+
+def test_add_input_bounds_the_extra_coefficient():
+    up = _pulse(center=150)
+    rain = np.zeros(600)
+    rain[300:306] = 10.0
+    target = routing.route(up, 6, 6) + 50 * routing.route(rain, 6, 6)   # "ratio" 50 > 1
+    base = routing.fit(target, [up], lag_grid=(0, 6, 12), k_grid=(1, 6))
+    fits = routing.add_input(target, [up], base, rain, lag_grid=(0, 6), k_grid=(1, 6), max_coef=1.0)
+    assert all(f.coefs[-1] <= 1.0 for f in fits)

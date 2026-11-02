@@ -17,6 +17,7 @@ Every successful weekly training run on `main` produces a GitHub Release tagged 
 | `basin_index.json` | Map HUC8 → embedding index. Index `0` is reserved for "unseen". |
 | `training_config.json` | Schema: encoder/decoder window sizes, feature names, vocab sizes, per-station `upstream_known_days`. |
 | `upstream_gauges.json` | Upstream-gauge registry: for each station, the upstream gauges (training `site_id`, NWS `nws_lid`), `lag_days`, `weight`, and `forecast_days`. Needed to build the `upstream_flow` inputs. |
+| `basin_zones.json` | Per-station travel-time precipitation zones: zone polygons (local / mid / far by river distance), the ungauged area, and area-weighted sample `points` with their NWS gridpoint (`WFO/x,y`). Needed to build the basin rain/snow inputs. |
 | `manifest.json` | sha256 + byte size per artifact, plus tool versions and the schema block. Verify on download. |
 
 ### Verifying a downloaded release
@@ -86,6 +87,38 @@ where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the 
 `windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
 
 `openFlowML/flow_forecast.py` builds these same upstream inputs from live NWPS data. It routes them hourly, without the ML model, to produce the CLI and CI forecast charts.
+
+## Basin rain / snow inputs (travel-time zones)
+
+Every station in `basin_zones.json` has its contributing area (from the USGS NLDI network; closed basins excluded) split into three zones by river distance to the gauge. The default split is `zone_km = [100, 250]`:
+
+- `local` (100 river-km or less)
+- `mid` (100–250 river-km)
+- `far` (over 250 river-km)
+
+The model gets one rain and one snow column per zone:
+
+- encoder and decoder: `rain_local`, `rain_mid`, `rain_far`, `snow_local`, `snow_mid`, `snow_far`
+- encoder only: `basin_precip_observed`
+- decoder only: `basin_precip_known`
+
+**Units and scaling.** Values are the zone-mean daily precipitation in mm, split into rain and snow (water equivalent). Scale each column with its `scalers.json` entry (log1p, then z-score).
+
+**Rain vs snow** uses one rule everywhere: the liquid fraction is `clip((T + 1) / 4, 0, 1)` with `T` the daily mean air temperature in °C (`basin_zones.liquid_fraction`). Rain is `precip × fraction`; snow is the rest.
+
+**Encoder days.** Training used gridMET daily grids (`pr`, `tmmn`, `tmmx`) averaged over each zone polygon. At inference:
+
+- Use gridMET (about 2 days behind real time).
+- Fill the remaining days with the NWS Stage IV daily analysis: `nws_precip_1day_YYYYMMDD_conus.nc`, covering the 24 h ending at 12Z on that date, mapped to the previous local day. Split rain/snow using the zone's latest gridMET mean temperature.
+- `basin_precip_observed` = 1 when the day has a value. Otherwise set all six columns to `0.0` *in scaled space* and the indicator to 0.
+
+**Decoder days.** Use NWS gridpoint forecasts (`https://api.weather.gov/gridpoints/{nws}` for each sample point):
+
+- `quantitativePrecipitation` is 6-hourly mm, spread evenly over its hours; `temperature` is hourly.
+- Sum to local calendar days per point, split rain/snow on that day's mean temperature, then take the area-weighted mean over the zone's points. Weights are `w`, normalised within the zone.
+- Decoder day `d` (0-based) keeps its values with `basin_precip_known = 1` when `d < training_config.basin_precip_known_days` (7) and the forecast exists. Later days are `0.0` with `basin_precip_known = 0`.
+
+`windowing.basin_precip_decoder_window` implements this rule. `data/get_basin_precip.inference_daily` is the reference for assembling the daily values. The point `precipitation` column (nearest rain gauge plus point forecast) is unchanged and still required.
 
 ## Output tensor
 

@@ -221,6 +221,41 @@ def fit(target: np.ndarray,
     return fits[:top_n]
 
 
+def add_input(target: np.ndarray, inputs: Sequence[np.ndarray], base_fits: Sequence[RoutingFit],
+              extra: np.ndarray, lag_grid: Sequence[int] = DEFAULT_LAG_GRID,
+              k_grid: Sequence[float] = DEFAULT_K_GRID, max_coef: Optional[float] = None,
+              warmup_hours: int = WARMUP_HOURS) -> List[RoutingFit]:
+    """
+    Second-stage fit: keep each base fit's upstream travel times (lag, K)
+    and search only the extra input's (lag, K), re-solving every coefficient
+    and the intercept jointly. Used for the rain term, so the upstream travel
+    times stay identified by the upstream hydrographs and rain cannot steal
+    them during a storm where both rise together. A base fit whose best
+    extra term violates the bounds is kept with a zero extra coefficient.
+    """
+    target = np.asarray(target, dtype=float)
+    extra = np.asarray(extra, dtype=float)
+    rows = np.isfinite(target)
+    rows[:min(warmup_hours, len(target))] = False
+    extra_routed = {(lag, k): route(extra, lag, k) for lag in lag_grid for k in k_grid}
+    out = []
+    for base in base_fits:
+        fixed = [route(np.asarray(x, float), lag, k) for x, lag, k in zip(inputs, base.lags, base.ks)]
+        best = None
+        for (lag, k), r in extra_routed.items():
+            coefs, b, rmse = _solve(target, fixed + [r], rows)
+            if (coefs < 0).any() or (max_coef is not None and coefs[-1] > max_coef):
+                continue
+            if best is None or rmse < best.rmse:
+                best = RoutingFit(list(base.lags) + [int(lag)], list(base.ks) + [float(k)],
+                                  coefs.tolist(), b, rmse, source=base.source)
+        if best is None:
+            best = RoutingFit(list(base.lags) + [int(lag_grid[0])], list(base.ks) + [float(k_grid[0])],
+                              list(base.coefs) + [0.0], base.intercept, base.rmse, source=base.source)
+        out.append(best)
+    return sorted(out, key=lambda f: f.rmse)
+
+
 def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
                 lags: Sequence[int], ks: Sequence[float],
                 weights: Sequence[float], warmup_hours: int = WARMUP_HOURS) -> RoutingFit:

@@ -64,3 +64,17 @@ def test_nice_ceiling_and_rounding():
     assert charts._nice_ceiling(0) == 1.0
     assert charts._round_cfs(3932.0) == 3900
     assert charts._round_cfs(456.0) == 460
+
+
+def test_plot_forecast_with_rain_panel(tmp_path):
+    fc_t = _hourly('2026-11-02T17:00Z', 24 * 5)
+    central = 1000 + 500 * np.sin(np.arange(len(fc_t)) / 20.0) ** 2
+    days = pd.date_range('2026-10-30', '2026-11-06')
+    rain = {'dates': days, 'zones': {'local': np.arange(8.0), 'mid': np.ones(8), 'far': np.zeros(8)},
+            'forecast_from': pd.Timestamp('2026-11-03')}
+    out = tmp_path / 'r.png'
+    info = charts.plot_forecast(str(out), title='Rain', fc_times=fc_t, fc_central=central,
+                                now=fc_t[0], tz='America/Denver', rain=rain,
+                                footnote='a\nb\nc\nd')
+    assert out.read_bytes()[:8] == PNG_MAGIC
+    assert info['peak_value'] == pytest.approx(central.max())

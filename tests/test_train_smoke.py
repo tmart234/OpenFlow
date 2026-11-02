@@ -37,6 +37,9 @@ def _station(site_id, huc8, upstream, n_days=420, seed=0):
         'upstream_flow': up if upstream else 0.0,
         'upstream_observed': 1 if upstream else 0,
         'upstream_known_days': 7 if upstream else 0,
+        **{c: rng.exponential(2.0, n_days) for c in
+           ('rain_local', 'rain_mid', 'rain_far', 'snow_local', 'snow_mid', 'snow_far')},
+        'basin_precip_observed': 1,
     })
     return df
 
@@ -65,9 +68,13 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
         config = json.load(f)
     assert 'upstream_flow' in config['encoder_features']
     assert 'upstream_known' in config['decoder_features']
-    assert config['window_built_decoder_features'] == ['upstream_known']
+    assert config['window_built_decoder_features'] == ['upstream_known', 'basin_precip_known']
     assert config['upstream_known_days'] == {'USGS:08276500': 7, 'USGS:09114500': 0}
     assert config['upstream_registry'] == 'upstream_gauges.json'
+    assert config['basin_precip_known_days'] == 7
+    assert 'rain_local' in config['encoder_features'] and 'basin_precip_known' in config['decoder_features']
+    with open(os.path.join(base, 'basin_zones.json')) as f:
+        assert 'USGS:08276500' in json.load(f)
     with open(os.path.join(base, 'upstream_gauges.json')) as f:
         assert 'USGS:08276500' in json.load(f)
     with open(os.path.join(base, 'scalers.json')) as f:

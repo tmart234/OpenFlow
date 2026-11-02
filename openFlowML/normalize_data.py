@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+
+import windowing
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -33,23 +35,27 @@ CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 # is treated similarly to flow (log1p before z-score) -- daily precip is
 # heavy-tailed and the same rationale that justifies log1p for streamflow
 # (spread error across base/peak regimes) applies here.
+BASIN_PRECIP_COLUMNS = list(windowing.BASIN_PRECIP_FEATURES)
 OPTIONAL_NUMERIC = ['SWE', 'soil_moisture', 'drought_index',
                     'reservoir_storage', 'reservoir_release',
-                    'precipitation', 'upstream_flow']
+                    'precipitation', 'upstream_flow', *BASIN_PRECIP_COLUMNS]
 # Binary indicator columns: included as model inputs but NOT z-scored. Scaling
 # a 0/1 indicator destroys the semantics (the model needs to see 0 vs 1 as
 # distinct cases, not as samples from a centered normal).
 #   sm_observed         -- 1 = real / short-gap-interpolated SMAP retrieval
 #   reservoir_observed  -- 1 = station has a USBR mapping AND fetch succeeded
 #   upstream_observed   -- 1 = station has upstream gauges AND the routed value is real
-INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed', 'upstream_observed']
+#   basin_precip_observed -- 1 = station has basin zones AND gridMET had the day
+INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed', 'upstream_observed',
+                     'basin_precip_observed']
 # Columns whose scaler is fit ONLY on rows where the paired indicator is 1,
 # and whose unobserved rows are set to 0.0 (the observed mean) after
 # scaling. Upstream flow is 0 cfs for every station without upstream gauges;
 # fitting the scaler on those placeholders would make the real values'
 # scale meaningless, and log1p(0) would put the placeholder far out in the
 # tail. The indicator column tells the model the placeholder isn't real.
-SCALER_FIT_MASKS = {'upstream_flow': 'upstream_observed'}
+SCALER_FIT_MASKS = {'upstream_flow': 'upstream_observed',
+                    **{c: 'basin_precip_observed' for c in BASIN_PRECIP_COLUMNS}}
 # Per-station metadata ints passed through unscaled (not model features).
 PASSTHROUGH_INT_COLUMNS = ['upstream_known_days']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
@@ -57,7 +63,8 @@ NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 # practice. Temperature/SWE stay linear. Precipitation is also heavy-tailed
 # (most days zero, occasional storms in the 99th percentile dominate the
 # raw scale), so it gets the same log1p treatment as flow.
-LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow', 'precipitation', 'upstream_flow'}
+LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow', 'precipitation', 'upstream_flow',
+                         *BASIN_PRECIP_COLUMNS}
 
 
 def add_day_of_year_features(data):
@@ -190,7 +197,7 @@ def normalize_data(data, artifacts_dir=None):
         # same as "no rain today" without much harm.
         for column in ('SWE', 'soil_moisture', 'drought_index',
                        'reservoir_storage', 'reservoir_release',
-                       'precipitation', 'upstream_flow'):
+                       'precipitation', 'upstream_flow', *BASIN_PRECIP_COLUMNS):
             if column in data.columns:
                 data[column] = data[column].fillna(0.0)
         # Indicators default to 0 ("not observed") when missing.

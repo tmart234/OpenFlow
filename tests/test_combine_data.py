@@ -359,3 +359,26 @@ def test_merge_does_not_carry_upstream_across_long_gaps():
         upstream_data=upstream, upstream_known_days=7).set_index('Date')
     assert merged.loc['2022-01-10', 'upstream_observed'] == 0
     assert merged.loc['2022-01-02', 'upstream_observed'] == 1
+
+
+def test_merge_attaches_basin_precip_without_interpolating_rain():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    cols = ['rain_local', 'rain_mid', 'rain_far', 'snow_local', 'snow_mid', 'snow_far']
+    bp = pd.DataFrame({'Date': dates, **{c: 2.0 for c in cols}})
+    bp.loc[10, cols] = np.nan                   # one missing day stays missing
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20),
+        basin_precip_data=bp).set_index('Date')
+    assert merged.loc['2022-01-11', 'basin_precip_observed'] == 0
+    assert merged.loc['2022-01-11', 'rain_local'] == 0.0
+    assert merged.loc['2022-01-12', 'basin_precip_observed'] == 1
+    assert merged.loc['2022-01-12', 'snow_far'] == 2.0
+
+
+def test_merge_defaults_basin_precip_to_placeholder():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert (merged['basin_precip_observed'] == 0).all()
+    assert (merged['rain_mid'] == 0.0).all()

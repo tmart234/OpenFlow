@@ -25,7 +25,7 @@ import normalize_data
 import baselines
 import windowing
 import model as model_mod
-from data import get_upstream
+from data import basin_zones, get_upstream
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -89,6 +89,7 @@ def main():
                 'drought_index',
                 'reservoir_storage', 'reservoir_release', 'reservoir_observed',
                 'upstream_flow', 'upstream_observed',
+                *windowing.BASIN_PRECIP_FEATURES, 'basin_precip_observed',
                 'doy_sin', 'doy_cos'}
     missing = required - set(data.columns)
     if missing:
@@ -213,6 +214,9 @@ def main():
     # The upstream registry travels with the model: inference needs each
     # station's upstream gauges, lags and weights to rebuild upstream_flow.
     shutil.copyfile(get_upstream.REGISTRY_PATH, os.path.join(base_path, 'upstream_gauges.json'))
+    # Same for the basin zones: inference needs each station's zone sample
+    # points (and their NWS gridpoints) to build the rain/snow inputs.
+    shutil.copyfile(basin_zones.ZONES_PATH, os.path.join(base_path, 'basin_zones.json'))
     known = (data.groupby('site_id')[windowing.UPSTREAM_KNOWN_DAYS_COLUMN].first()
              .astype(int).to_dict()
              if windowing.UPSTREAM_KNOWN_DAYS_COLUMN in data.columns else {})
@@ -230,6 +234,8 @@ def main():
         'window_built_decoder_features': windowing.WINDOW_BUILT_DECODER_FEATURES,
         'upstream_known_days': {k: int(v) for k, v in known.items()},
         'upstream_registry': 'upstream_gauges.json',
+        'basin_precip_known_days': windowing.BASIN_PRECIP_KNOWN_DAYS,
+        'basin_zones': 'basin_zones.json',
     }
     with open(os.path.join(base_path, 'training_config.json'), 'w') as f:
         json.dump(config, f, indent=2)

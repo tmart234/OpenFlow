@@ -287,3 +287,18 @@ def test_normalize_without_any_upstream_rows_still_succeeds(tmp_path):
     out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
     assert out is not None
     assert (out['upstream_flow'] == 0.0).all()
+
+
+def test_normalize_scales_basin_precip_on_observed_rows(tmp_path):
+    df = _make_combined()
+    cols = ['rain_local', 'rain_mid', 'rain_far', 'snow_local', 'snow_mid', 'snow_far']
+    for c in cols:
+        df[c] = [0.0, 5.0, 12.0, 0.0, 30.0, 1.0, 0.0, 0.0, 2.0, 8.0] + [0.0] * 10
+    df['basin_precip_observed'] = [1] * 10 + [0] * 10
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    for c in cols:
+        assert scalers[c]['transform'] == 'log1p'
+        assert abs(out[out['site_id'] == 'USGS:A'][c].mean()) < 1e-6
+        assert (out[out['site_id'] == 'DWR:B'][c] == 0.0).all()
+    assert 'basin_precip_observed' not in scalers

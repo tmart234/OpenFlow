@@ -5,6 +5,7 @@ import data.get_CODWR_flow as get_CODWR_flow
 import data.get_noaa as get_noaa
 import data.get_swe as get_swe
 import data.get_upstream as get_upstream
+import data.get_basin_precip as get_basin_precip
 import normalize_data
 import windowing
 import pandas as pd
@@ -37,6 +38,13 @@ Upstream gauges:
     flow are known at forecast time; windowing uses it). Stations without
     upstream gauges get the 0 placeholder + indicator 0, like reservoirs.
   - Set OPENFLOW_DISABLE_UPSTREAM=1 to run the ablation without it.
+
+Basin precipitation by travel-time zone:
+  - Stations in data/basin_zones.json get rain_/snow_{local,mid,far}: gridMET
+    daily rain and snowfall averaged over each river-distance zone of the
+    contributing area (data/get_basin_precip.py), with basin_precip_observed.
+    Rain is never interpolated across missing days (observed = 0 instead).
+  - Set OPENFLOW_DISABLE_BASIN_PRECIP=1 to run the ablation without it.
 """
 
 if not logging.getLogger().hasHandlers():
@@ -90,7 +98,8 @@ def _to_daily_series(df, value_columns, daily_index):
 def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
                      swe_data=None, sm_data=None,
                      drought_data=None, reservoir_data=None,
-                     huc8=None, upstream_data=None, upstream_known_days=0):
+                     huc8=None, upstream_data=None, upstream_known_days=0,
+                     basin_precip_data=None):
     """
     Merge a site's flow, NOAA temperature, SWE, SMAP soil moisture, USDM
     drought, and USBR reservoir series onto one regular daily index.
@@ -203,6 +212,17 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         else:
             combined['upstream_flow'] = float('nan')
 
+        # Basin zone rain / snow (mm/day). No interpolation: a missing day
+        # of rain is unknown, not the average of its neighbours.
+        bp_cols = get_basin_precip.FEATURE_COLUMNS
+        if basin_precip_data is not None and not basin_precip_data.empty:
+            bp_daily = _to_daily_series(basin_precip_data, bp_cols, daily_index)
+            for col in bp_cols:
+                combined[col] = pd.to_numeric(bp_daily[col], errors='coerce')
+        else:
+            for col in bp_cols:
+                combined[col] = float('nan')
+
         # Drop rows still missing any core flow/temp value. SWE / soil_moisture
         # / precipitation are NOT in CORE_COLUMNS, so a missing one never
         # drops a row.
@@ -260,6 +280,10 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         combined['upstream_flow'] = up_series.fillna(0.0)
         combined['upstream_known_days'] = (
             int(upstream_known_days) if combined['upstream_observed'].any() else 0)
+
+        combined['basin_precip_observed'] = (
+            combined[bp_cols].notna().all(axis=1).astype('int64'))
+        combined[bp_cols] = combined[bp_cols].fillna(0.0)
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,
@@ -290,7 +314,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     Returns a dict with keys:
       noaa_data, swe_data, sm_data, drought_data, reservoir_data,
-      upstream_data, upstream_known_days, huc8
+      upstream_data, upstream_known_days, basin_precip_data, huc8
     Any data frame may be empty (auxiliary features degrade gracefully; only
     missing NOAA causes the caller to skip the site). huc8 may be None.
 
@@ -394,12 +418,21 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     except Exception as e:
         logger.warning("Upstream fetch failed for %s: %s", site_id, e)
 
+    # Basin precipitation by travel-time zone (gridMET over basin_zones.json).
+    try:
+        basin_precip_data = get_basin_precip.get_zone_precip_daily(
+            f"{prefix}:{site_id}", start_date, end_date)
+    except Exception as e:
+        logger.warning("Basin precip fetch failed for %s: %s", site_id, e)
+        basin_precip_data = pd.DataFrame(columns=['Date'] + get_basin_precip.FEATURE_COLUMNS)
+
     return {
         'noaa_data': noaa_data,
         'swe_data': swe_data,
         'sm_data': sm_data,
         'drought_data': drought_data,
         'reservoir_data': reservoir_data,
+        'basin_precip_data': basin_precip_data,
         'upstream_data': upstream_data,
         'upstream_known_days': upstream_known_days,
         'huc8': huc8,
@@ -476,7 +509,8 @@ def main(training_num_years=7):
                 reservoir_data=fetched['reservoir_data'],
                 huc8=fetched['huc8'],
                 upstream_data=fetched.get('upstream_data'),
-                upstream_known_days=fetched.get('upstream_known_days', 0))
+                upstream_known_days=fetched.get('upstream_known_days', 0),
+                basin_precip_data=fetched.get('basin_precip_data'))
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue

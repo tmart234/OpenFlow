@@ -15,7 +15,7 @@ import pytest
 
 import flow_forecast
 import routing
-from data import nwps
+from data import get_basin_precip, nwps
 
 NOW = pd.Timestamp('2026-11-02T17:00Z')
 GRID = pd.date_range(NOW - pd.Timedelta(days=30), NOW + pd.Timedelta(days=9), freq='1h')
@@ -60,8 +60,14 @@ def _scenario(quiet=False):
 
 @pytest.fixture
 def fake_nwps(monkeypatch):
-    def install(payloads):
+    def install(payloads, observed=None, forecast_points=None):
         monkeypatch.setattr(nwps, 'get_stageflow', lambda lid: payloads.get(lid))
+        # Basin rain: no network; empty unless a test supplies data.
+        monkeypatch.setattr(get_basin_precip, 'observed_daily',
+                            lambda cfg, start, today, **kw: observed if observed is not None
+                            else pd.DataFrame())
+        monkeypatch.setattr(get_basin_precip, 'nws_points_hourly',
+                            lambda cfg: forecast_points or {})
         monkeypatch.setattr(nwps, 'get_gauge', lambda lid: {'flood': {'categories': {
             'action': {'flow': 7750}, 'minor': {'flow': 9800}}}})
     return install
@@ -131,3 +137,50 @@ def test_main_prints_summary(tmp_path, fake_nwps, capsys):
                                '--no-chart', '-q']) == 0
     out = capsys.readouterr().out
     assert 'peak:' in out and 'Rio Grande at Alamosa' in out
+
+
+def _rain_zones():
+    """A tiny station zone config: one ungauged local zone with one sample point."""
+    ring = [[-106.0, 36.0], [-105.0, 36.0], [-105.0, 37.0], [-106.0, 37.0], [-106.0, 36.0]]
+    return {'USGS:08276500': {
+        'zones': {'local': {'area_km2': 1000.0, 'rings': [ring]},
+                  'mid': {'area_km2': 0, 'rings': []}, 'far': {'area_km2': 0, 'rings': []}},
+        'ungauged': {'area_km2': 1000.0, 'rings': [ring]},
+        'points': [{'lat': 36.5, 'lon': -105.5, 'zone': 'local', 'ungauged': True, 'w': 1000.0,
+                    'nws': 'ABQ/1,1'}]}}
+
+
+def test_cli_rain_term_and_rain_panel(tmp_path, fake_nwps):
+    payloads, _ = _scenario()
+    days = pd.date_range(NOW.normalize().tz_localize(None) - pd.Timedelta(days=31),
+                         NOW.normalize().tz_localize(None) - pd.Timedelta(days=1))
+    rain = np.zeros(len(days))
+    rain[-12:-9] = [20.0, 35.0, 10.0]                 # a storm ~10 days ago
+    observed = pd.DataFrame({c: 0.0 for c in get_basin_precip.FEATURE_COLUMNS}, index=days)
+    observed['rain_local'] = rain
+    observed['rain_ungauged'] = rain
+    observed['precip_ungauged'] = rain
+    observed['source'] = 'gridmet'
+    observed['window_start'] = days.tz_localize('UTC')
+    # 12 mm of forecast rain tomorrow (local), nothing else.
+    hours = pd.date_range(NOW, periods=96, freq='1h')
+    precip = np.zeros(96)
+    precip[24:36] = 1.0
+    fpts = {0: pd.DataFrame({'precip_mm': precip, 'temp_c': 5.0}, index=hours)}
+    fake_nwps(payloads, observed=observed, forecast_points=fpts)
+    s = flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path), zones=_rain_zones())
+    br = s['basin_rain']
+    assert br['rain_term'] in ('calibrated', 'default')
+    assert br['ungauged_area_km2'] == 1000.0
+    assert br['ungauged_rain_mm']['forecast'] == pytest.approx(12.0, abs=0.5)
+    assert br['zone_totals_mm']['next']['rain_local'] == pytest.approx(12.0, abs=0.5)
+    assert 0 <= br['runoff_ratio'] <= 1
+    assert os.path.getsize(s['files']['png']) > 0
+
+
+def test_cli_without_rain_reports_none(tmp_path, fake_nwps):
+    payloads, _ = _scenario()
+    fake_nwps(payloads)
+    s = flow_forecast.run('taos-box', days=3, out_dir=str(tmp_path), make_chart=False,
+                          use_rain=False)
+    assert s['basin_rain'] is None

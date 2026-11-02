@@ -27,6 +27,9 @@ GRID = '#e6e5e1'
 FORECAST = '#2a78d6'
 OFFICIAL = '#eb6834'
 FLOOD = {'action': '#c98500', 'minor': '#e34948', 'moderate': '#b8322f', 'major': '#7d1f1d'}
+# Rain panel: zones are entities 3-5 of the figure (after forecast + official).
+ZONE_COLORS = {'local': '#1baf7a', 'mid': '#eda100', 'far': '#e87ba4'}
+ZONE_LABELS = {'local': 'local zone', 'mid': 'mid zone', 'far': 'far (headwaters) zone'}
 
 
 def _local_naive(times, tz: Optional[str]) -> pd.DatetimeIndex:
@@ -78,11 +81,17 @@ def plot_forecast(out_path: str, *,
                   official_label: str = 'NWS official forecast',
                   units: str = 'cfs',
                   peak_callout: bool = True,
-                  xlim=None) -> dict:
+                  xlim=None,
+                  rain: Optional[dict] = None) -> dict:
     """
     Render the chart to `out_path` (PNG). Times may be tz-aware (converted to
     `tz` for display) or naive (taken as already local). `obs_*` may extend
     past `now` (hindcasts: the truth over the forecast window).
+
+    `rain` (optional) adds a lower panel of daily basin rain by travel-time
+    zone: {'dates': local naive dates, 'zones': {zone: mm/day array},
+    'forecast_from': first forecast date or None (forecast bars are faded)}.
+    A separate panel, never a second y-axis.
 
     Returns {'peak_time', 'peak_value'} for the called-out forecast peak
     (local, naive), or Nones when there is no forecast.
@@ -93,7 +102,14 @@ def plot_forecast(out_path: str, *,
     import matplotlib.pyplot as plt
     from matplotlib.ticker import FuncFormatter
 
-    fig, ax = plt.subplots(figsize=(12, 6.2), dpi=150)
+    has_rain = rain is not None and len(rain.get('dates', [])) > 0
+    if has_rain:
+        fig, (ax, rax) = plt.subplots(2, 1, figsize=(12, 8.0), dpi=150, sharex=True,
+                                      gridspec_kw={'height_ratios': [3.3, 1.0]})
+        rax.set_facecolor(SURFACE)
+    else:
+        fig, ax = plt.subplots(figsize=(12, 6.2), dpi=150)
+        rax = None
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
 
@@ -164,6 +180,8 @@ def plot_forecast(out_path: str, *,
     if now is not None:
         nt = _local_naive([now], tz)[0]
         ax.axvline(nt, color=MUTED, lw=1)
+        if rax is not None:
+            rax.axvline(nt, color=MUTED, lw=1)
         daily = (fc_times is None or len(fc_times) == 0
                  or _is_daily(_local_naive(fc_times, tz)))
         label = nt.strftime('%a %b %-d') if daily else nt.strftime('%a %-I %p')
@@ -182,6 +200,8 @@ def plot_forecast(out_path: str, *,
         for d in pd.date_range(pd.Timestamp(mdates.num2date(x0)).tz_localize(None).normalize(),
                                pd.Timestamp(mdates.num2date(x1)).tz_localize(None), freq='D'):
             ax.axvline(d, color=GRID, lw=0.8, zorder=0)
+            if rax is not None:
+                rax.axvline(d, color=GRID, lw=0.8, zorder=0)
     elif days <= timedelta(days=90):
         ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=mdates.MO))
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %-d'))
@@ -201,14 +221,48 @@ def plot_forecast(out_path: str, *,
     if subtitle:
         ax.set_title(subtitle, loc='left', fontsize=10, color=INK_2)
     ax.legend(loc='upper left', frameon=False, fontsize=10, labelcolor=INK_2)
+    if rax is not None:
+        _rain_bars(rax, rain)
     bottom = 0.0
     if footnote:
         fig.text(0.06, 0.015, footnote, fontsize=8.3, color=INK_2, va='bottom')
         bottom = 0.03 + 0.022 * footnote.count('\n')
-    fig.tight_layout(rect=(0, bottom + 0.02, 1, 0.97))
+    fig.tight_layout(rect=(0, bottom + 0.02, 1, 0.97), h_pad=0.4)
     fig.savefig(out_path, facecolor=SURFACE)
     plt.close(fig)
     return peak_info
+
+
+def _rain_bars(rax, rain: dict) -> None:
+    """Grouped daily bars, one per zone; forecast days faded."""
+    from matplotlib.ticker import FuncFormatter
+    dates = pd.DatetimeIndex(rain['dates'])
+    fc_from = rain.get('forecast_from')
+    is_fc = (dates >= pd.Timestamp(fc_from)) if fc_from is not None else np.zeros(len(dates), bool)
+    zones = [z for z in ('local', 'mid', 'far') if z in rain['zones']]
+    width = 0.26
+    top = 0.0
+    for k, z in enumerate(zones):
+        vals = np.nan_to_num(np.asarray(rain['zones'][z], dtype=float))
+        x = dates + pd.Timedelta(hours=12 + (k - (len(zones) - 1) / 2) * width * 24)
+        rax.bar(x[~is_fc], vals[~is_fc], width=width * 0.92, color=ZONE_COLORS[z],
+                label=ZONE_LABELS[z], zorder=2)
+        if is_fc.any():
+            rax.bar(x[is_fc], vals[is_fc], width=width * 0.92, color=ZONE_COLORS[z],
+                    alpha=0.4, zorder=2)
+        top = max(top, vals.max() if len(vals) else 0)
+    rax.set_ylim(0, max(5.0, _nice_ceiling(top * 1.2)))
+    rax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
+    rax.grid(axis='y', color=GRID, lw=0.8)
+    rax.set_axisbelow(True)
+    for side in ('top', 'right', 'left'):
+        rax.spines[side].set_visible(False)
+    rax.spines['bottom'].set_color(MUTED)
+    rax.tick_params(colors=INK_2, length=0)
+    rax.set_ylabel('Rain (mm/day)', color=INK_2)
+    rax.legend(loc='upper left', frameon=False, fontsize=8.5, labelcolor=INK_2, ncol=3)
+    rax.text(1.0, 1.0, 'Basin-mean rain by river-distance zone (gridMET / NWS Stage IV; NWS forecast faded)',
+             transform=rax.transAxes, ha='right', va='bottom', fontsize=8.5, color=INK_2)
 
 
 def plot_hindcast(out_path: str, *, title: str, history_dates: Sequence,
