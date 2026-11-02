@@ -7,10 +7,15 @@ Inputs are assembled with the SAME code that built the training data:
   - encoder (last 60 days): combine_data.fetch_and_process_data +
     merge_dataframes (flow, NOAA GHCND weather, SWE, soil moisture, drought,
     reservoirs, upstream gauges, basin zone rain/snow), then the persisted
-    scalers.json. NOAA daily data runs ~2-4 days behind, so the days between
-    the last NOAA day and today are bridged: temperature interpolated toward
-    the NWS gridpoint forecast for today, precipitation from the observed
-    local-zone basin rain (gridMET / NWS Stage IV).
+    scalers.json. Recency fixes so the forecast starts from today:
+      * flow archives that end yesterday (CO DWR) are topped up with the
+        gauge's NWS (NWPS) observations through today;
+      * NOAA daily data runs ~2-4 days behind, so the days between the last
+        NOAA day and the last flow day are bridged: temperature interpolated
+        toward the NWS gridpoint forecast for today, precipitation from the
+        observed local-zone basin rain (gridMET / NWS Stage IV);
+      * when no nearby GHCND station has enough data in the short recent
+        window (e.g. Cisco, UT), gridMET at the gauge stands in (same units).
   - decoder (next 14 days): weather from Open-Meteo when it answers, else the
     NWS gridpoint forecast at the gauge (~7 days), then persistence of the
     last forecast day with no rain; routed upstream flow from upstream
@@ -89,11 +94,49 @@ def _coords(site_id: str) -> dict:
     return {'lat': float(c['latitude']), 'lon': float(c['longitude'])}
 
 
-def _flow(site_id: str, start, end) -> pd.DataFrame:
+def _flow(site_id: str, start, end, nws_lid: Optional[str] = None,
+          tz: str = 'America/Denver') -> pd.DataFrame:
+    """Daily Min/Max Flow; days after the archive's last day come from NWPS observations."""
     prefix, sid = site_id.split(':', 1)
     if prefix == 'DWR':
-        return get_CODWR_flow.get_historical_data(sid, start, end)
-    return get_flow.get_daily_flow_data(sid, start, end)
+        df = get_CODWR_flow.get_historical_data(sid, start, end)
+    else:
+        df = get_flow.get_daily_flow_data(sid, start, end)
+    if not nws_lid:
+        return df
+    last = pd.to_datetime(df['Date']).max() if df is not None and len(df) else pd.Timestamp(start)
+    try:
+        obs = nwps.parse_series(nwps.get_stageflow(nws_lid), 'observed')
+    except Exception as e:
+        logger.info("NWPS top-up unavailable for %s: %s", nws_lid, e)
+        return df
+    obs = obs.dropna(subset=['flow_cfs'])
+    if obs.empty:
+        return df
+    local = obs.set_index('time')['flow_cfs'].tz_convert(tz)
+    daily = local.groupby(local.index.date).agg(['min', 'max'])
+    daily.index = pd.DatetimeIndex(daily.index)
+    daily = daily[(daily.index > last) & (daily.index <= pd.Timestamp(end).normalize())]
+    if daily.empty:
+        return df
+    extra = pd.DataFrame({'Date': daily.index.strftime('%Y-%m-%d'),
+                          'Min Flow': daily['min'].to_numpy(), 'Max Flow': daily['max'].to_numpy()})
+    logger.info("Topped up %s flow with %d NWPS day(s)", site_id, len(extra))
+    return pd.concat([df, extra], ignore_index=True)
+
+
+def gridmet_point_weather(lat: float, lon: float, start, end) -> pd.DataFrame:
+    """NOAA-shaped daily weather from the gridMET cell at a point (tenths deg C, mm)."""
+    pad = 0.05
+    out = {}
+    for key, name in (('tmmn', 'TMIN'), ('tmmx', 'TMAX'), ('pr', 'precipitation')):
+        dates, la, lo, v = get_basin_precip._gridmet_subset(
+            key, lat - pad, lat + pad, lon - pad, lon + pad, start, end)
+        iy, ix = int(np.argmin(np.abs(la - lat))), int(np.argmin(np.abs(lo - lon)))
+        series = v[:, iy, ix]
+        out[name] = (series - 273.15) * 10.0 if key != 'pr' else series
+        out['Date'] = dates
+    return pd.DataFrame(out)[['Date', 'TMIN', 'TMAX', 'precipitation']]
 
 
 def nws_point_daily(lat: float, lon: float, tz: str) -> pd.DataFrame:
@@ -190,11 +233,13 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     prefix, sid = site_id.split(':', 1)
     coords = _coords(site_id)
 
-    flow = _flow(site_id, start.to_pydatetime(), today.to_pydatetime())
+    flow = _flow(site_id, start.to_pydatetime(), today.to_pydatetime(),
+                 nws_lid=(reg or {}).get('nws_lid'), tz=tz)
     if flow is None or flow.empty:
         raise InferenceError(f"no recent flow for {site_id}")
     fetched = combine_data.fetch_and_process_data(prefix, sid, start.to_pydatetime(),
-                                                  today.to_pydatetime(), flow)
+                                                  today.to_pydatetime(), flow,
+                                                  noaa_fallback=gridmet_point_weather)
     if not fetched or fetched.get('noaa_data') is None or fetched['noaa_data'].empty:
         raise InferenceError(f"no NOAA weather near {site_id}")
 

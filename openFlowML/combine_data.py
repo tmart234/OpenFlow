@@ -306,7 +306,7 @@ def _disabled(env_var):
     return os.getenv(env_var, '').strip() in ('1', 'true', 'True')
 
 
-def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
+def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None):
     """
     Resolve a site's coordinates and fetch all its auxiliary timeseries:
     NOAA temperature, NRCS SWE, SMAP soil moisture, USDM drought, USBR
@@ -340,6 +340,12 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = end_date.strftime('%Y-%m-%d')
     closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_str, end_str)
+
+    if (noaa_data is None or noaa_data.empty) and noaa_fallback is not None:
+        # Inference over a short recent window: no nearby GHCND station may
+        # pass the coverage gate even though one did over the training years.
+        logger.info("No NOAA station for %s; using fallback weather", site_id)
+        noaa_data = noaa_fallback(latitude, longitude, start_date, end_date)
 
     if noaa_data is None or noaa_data.empty:
         logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")

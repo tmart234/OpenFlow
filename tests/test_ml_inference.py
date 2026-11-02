@@ -64,7 +64,7 @@ def fake_sources(monkeypatch):
                                                                 get_basin_precip.FEATURE_COLUMNS}}),
     }
     monkeypatch.setattr(ml_inference, '_coords', lambda site: {'lat': 38.0, 'lon': -106.0})
-    monkeypatch.setattr(ml_inference, '_flow', lambda site, s, e: flow)
+    monkeypatch.setattr(ml_inference, '_flow', lambda site, s, e, **kw: flow)
     monkeypatch.setattr(combine_data, 'fetch_and_process_data', lambda *a, **k: fetched)
     wx_days = pd.date_range(TODAY, TODAY + pd.Timedelta(days=6), name='Date')
     monkeypatch.setattr(ml_inference, 'forecast_weather', lambda lat, lon, tz: pd.DataFrame(
@@ -132,3 +132,35 @@ def test_predict_end_to_end_with_tiny_model(fake_sources):
     assert list(daily.columns) == ['Date', 'min_cfs', 'max_cfs']
     assert len(daily) == 14 and (daily['min_cfs'] <= daily['max_cfs']).all()
     assert (daily['min_cfs'] > 0).all()
+
+
+def test_flow_is_topped_up_with_nwps_days_after_the_archive(monkeypatch):
+    from data import get_CODWR_flow
+    archive = pd.DataFrame({'Date': ['2026-10-31', '2026-11-01'], 'Min Flow': [800.0, 850.0],
+                            'Max Flow': [900.0, 950.0]})
+    monkeypatch.setattr(get_CODWR_flow, 'get_historical_data', lambda *a: archive)
+    obs_t = pd.date_range('2026-11-01T07:00Z', '2026-11-02T19:00Z', freq='1h')
+    flows = np.linspace(900, 3300, len(obs_t))
+    payload = {'observed': {'secondaryUnits': 'kcfs', 'data': [
+        {'validTime': t.strftime('%Y-%m-%dT%H:%M:%SZ'), 'primary': 1.0, 'secondary': q / 1000}
+        for t, q in zip(obs_t, flows)]}}
+    monkeypatch.setattr(nwps, 'get_stageflow', lambda lid: payload)
+    df = ml_inference._flow('DWR:CONMOGCO', pd.Timestamp('2026-10-01'), TODAY, nws_lid='MOGC2',
+                            tz='America/Denver')
+    assert list(df['Date']) == ['2026-10-31', '2026-11-01', '2026-11-02']
+    assert df.iloc[-1]['Max Flow'] == pytest.approx(3300, rel=0.01)   # today's surge
+    assert df.iloc[1]['Max Flow'] == 950.0                             # archive wins where present
+
+
+def test_gridmet_point_weather_is_in_training_units(monkeypatch):
+    dates = pd.DatetimeIndex(['2026-10-30', '2026-10-31'])
+    la, lo = np.array([38.80, 38.75]), np.array([-109.25, -109.20])
+
+    def fake(key, *a, **k):
+        v = {'tmmn': 273.15 + 1.5, 'tmmx': 273.15 + 12.0, 'pr': 4.0}[key]
+        return dates, la, lo, np.full((2, 2, 2), v)
+    monkeypatch.setattr(get_basin_precip, '_gridmet_subset', fake)
+    w = ml_inference.gridmet_point_weather(38.79, -109.2, dates[0], dates[-1])
+    assert list(w.columns) == ['Date', 'TMIN', 'TMAX', 'precipitation']
+    assert w['TMIN'].iloc[0] == pytest.approx(15.0) and w['TMAX'].iloc[0] == pytest.approx(120.0)
+    assert w['precipitation'].iloc[0] == 4.0
