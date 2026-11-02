@@ -253,3 +253,37 @@ def test_basin_index_collapses_blank_huc8_to_unknown():
     idx = normalize_data.build_basin_index(['14010001', '', '14010001'])
     # Empty strings are treated as unknown and do not get an index.
     assert set(idx) == {'14010001'}
+
+
+def test_normalize_fits_upstream_scaler_on_observed_rows_only(tmp_path):
+    df = _make_combined()
+    # Station A has upstream gauges, station B does not (placeholder 0s).
+    df['upstream_flow'] = [500.0, 800.0, 1200.0, 2000.0, 900.0, 700.0, 600.0, 650.0, 3000.0, 1000.0] + [0.0] * 10
+    df['upstream_observed'] = [1] * 10 + [0] * 10
+    df['upstream_known_days'] = [7] * 10 + [0] * 10
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    params = scalers['upstream_flow']
+    assert params['transform'] == 'log1p'
+    # Fit on station A only: the mean is the mean log flow of the real values.
+    real = np.log1p(df['upstream_flow'].iloc[:10].to_numpy())
+    assert abs(params['mean'] - real.mean()) < 1e-9
+    a = out[out['site_id'] == 'USGS:A']['upstream_flow']
+    assert abs(a.mean()) < 1e-6
+    # Placeholders sit at 0.0 in scaled space, not far out in the tail.
+    assert (out[out['site_id'] == 'DWR:B']['upstream_flow'] == 0.0).all()
+    # Indicator stays binary + unscaled; known days pass through as ints.
+    assert 'upstream_observed' not in scalers
+    assert set(out['upstream_observed'].unique()) <= {0, 1}
+    assert 'upstream_known_days' not in scalers
+    assert out.groupby('site_id')['upstream_known_days'].first().to_dict() == {'USGS:A': 7, 'DWR:B': 0}
+
+
+def test_normalize_without_any_upstream_rows_still_succeeds(tmp_path):
+    df = _make_combined()
+    df['upstream_flow'] = 0.0
+    df['upstream_observed'] = 0
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path))
+    assert out is not None
+    assert (out['upstream_flow'] == 0.0).all()

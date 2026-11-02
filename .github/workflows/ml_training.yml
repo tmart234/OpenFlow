@@ -17,6 +17,10 @@ on:
         description: 'Skip USBR reservoir (ablation)'
         type: boolean
         default: false
+      disable_upstream:
+        description: 'Skip upstream-gauge inputs (ablation)'
+        type: boolean
+        default: false
 
 jobs:
   train:
@@ -58,6 +62,8 @@ jobs:
         OPENFLOW_DISABLE_SMAP: ${{ inputs.disable_smap && '1' || '' }}
         OPENFLOW_DISABLE_DROUGHT: ${{ inputs.disable_drought && '1' || '' }}
         OPENFLOW_DISABLE_RESERVOIR: ${{ inputs.disable_reservoir && '1' || '' }}
+        OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
+        OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
       run: python openFlowML/train.py
 
     - name: Export mobile artifacts (CoreML + TFLite + manifest)
@@ -110,6 +116,7 @@ jobs:
           station_index.json
           basin_index.json
           training_config.json
+          upstream_gauges.json
           manifest.json
 
     # Belt-and-braces: even on release-step failure, the artifact upload
@@ -128,5 +135,16 @@ jobs:
           ./station_index.json
           ./basin_index.json
           ./training_config.json
+          ./upstream_gauges.json
           ./manifest.json
+        if-no-files-found: warn
+
+    # Per-station hindcast charts (highest-flow held-out test window, model
+    # forecast vs what happened, peak called out) for eyeballing each run.
+    - name: Upload hindcast charts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: hindcast_charts
+        path: ./charts/*.png
         if-no-files-found: warn

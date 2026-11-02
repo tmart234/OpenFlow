@@ -319,3 +319,43 @@ def test_merge_huc8_defaults_to_empty_when_not_provided():
         noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
     assert 'huc8' in merged.columns
     assert (merged['huc8'] == '').all()
+
+
+def test_merge_attaches_upstream_flow_with_indicator_and_known_days():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    upstream = pd.DataFrame({'Date': dates[2:], 'upstream_flow': np.linspace(500, 900, 18)})
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20),
+        upstream_data=upstream, upstream_known_days=7)
+    by_date = merged.set_index('Date')
+    # Days before the upstream series starts are placeholders, flagged 0.
+    assert by_date.loc['2022-01-01', 'upstream_observed'] == 0
+    assert by_date.loc['2022-01-01', 'upstream_flow'] == 0.0
+    assert by_date.loc['2022-01-10', 'upstream_observed'] == 1
+    assert by_date.loc['2022-01-10', 'upstream_flow'] > 500
+    assert (merged['upstream_known_days'] == 7).all()
+
+
+def test_merge_defaults_upstream_to_placeholder_when_station_has_none():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20),
+        upstream_known_days=7)
+    assert (merged['upstream_flow'] == 0.0).all()
+    assert (merged['upstream_observed'] == 0).all()
+    # No upstream data at all -> no known days, whatever the registry says.
+    assert (merged['upstream_known_days'] == 0).all()
+
+
+def test_merge_does_not_carry_upstream_across_long_gaps():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    values = np.full(20, 600.0)
+    values[3:15] = np.nan   # 12-day hole, longer than MAX_UPSTREAM_GAP_DAYS
+    upstream = pd.DataFrame({'Date': dates, 'upstream_flow': values})
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20),
+        upstream_data=upstream, upstream_known_days=7).set_index('Date')
+    assert merged.loc['2022-01-10', 'upstream_observed'] == 0
+    assert merged.loc['2022-01-02', 'upstream_observed'] == 1

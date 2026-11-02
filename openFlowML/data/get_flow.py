@@ -35,9 +35,9 @@ def _parse_rdb_flow(text):
     return rows
 
 
-def get_daily_flow_data(flow_site_id, start_date, end_date):
+def _fetch_iv_records(flow_site_id, start_date, end_date):
     """
-    Fetch USGS instantaneous flow for a site and aggregate it to daily min/max.
+    Fetch USGS instantaneous flow as (date_str, flow) records.
 
     The request is split into ~yearly chunks because the IV service silently
     truncates long-range requests; each chunk is fetched with retries.
@@ -60,13 +60,32 @@ def get_daily_flow_data(flow_site_id, start_date, end_date):
                          params['startDT'], params['endDT'], flow_site_id)
             continue
         records.extend(_parse_rdb_flow(response.text))
+    return records
 
+
+def get_daily_flow_data(flow_site_id, start_date, end_date):
+    """Fetch USGS instantaneous flow for a site and aggregate it to daily min/max."""
+    records = _fetch_iv_records(flow_site_id, start_date, end_date)
     if not records:
         return pd.DataFrame(columns=['Date', 'Min Flow', 'Max Flow'])
 
     df = pd.DataFrame(records, columns=['Date', 'flow'])
     daily = df.groupby('Date')['flow'].agg(['min', 'max']).reset_index()
     daily.columns = ['Date', 'Min Flow', 'Max Flow']
+    return daily.sort_values('Date').reset_index(drop=True)
+
+
+def get_daily_mean_flow(flow_site_id, start_date, end_date):
+    """
+    Fetch USGS instantaneous flow and aggregate it to the daily MEAN, as
+    DataFrame[Date, flow]. Used for upstream-gauge features, where volume
+    (mean) rather than the intraday range is what routes downstream.
+    """
+    records = _fetch_iv_records(flow_site_id, start_date, end_date)
+    if not records:
+        return pd.DataFrame(columns=['Date', 'flow'])
+    df = pd.DataFrame(records, columns=['Date', 'flow'])
+    daily = df.groupby('Date', as_index=False)['flow'].mean()
     return daily.sort_values('Date').reset_index(drop=True)
 
 

@@ -27,6 +27,9 @@ def _make_station_frame(site_id, station_idx, basin_idx, n_days=120, start='2022
         'reservoir_storage': rng.standard_normal(n_days),
         'reservoir_release': rng.standard_normal(n_days),
         'reservoir_observed': rng.integers(0, 2, n_days),
+        'upstream_flow': rng.standard_normal(n_days),
+        'upstream_observed': np.ones(n_days, dtype=int),
+        'upstream_known_days': 7,
         'doy_sin': np.sin(2 * np.pi * np.arange(n_days) / 365),
         'doy_cos': np.cos(2 * np.pi * np.arange(n_days) / 365),
     })
@@ -66,6 +69,15 @@ def test_decoder_features_carry_no_flow_information():
     # appears in BOTH windows -- observed in the encoder, QPF in the decoder.
     assert 'precipitation' in windowing.ENCODER_FEATURES
     assert 'precipitation' in windowing.DECODER_FEATURES
+    # Upstream flow is forecast-available (already observed upstream for the
+    # first lag days, then the RFC forecast), so it is in both windows; the
+    # observed indicator is encoder-only, the known-day mask decoder-only.
+    assert 'upstream_flow' in windowing.ENCODER_FEATURES
+    assert 'upstream_flow' in windowing.DECODER_FEATURES
+    assert 'upstream_observed' in windowing.ENCODER_FEATURES
+    assert 'upstream_observed' not in windowing.DECODER_FEATURES
+    assert 'upstream_known' in windowing.DECODER_FEATURES
+    assert 'upstream_known' not in windowing.ENCODER_FEATURES
 
 
 def test_build_windows_shapes_are_correct():
@@ -176,5 +188,69 @@ def test_build_windows_rejects_dataframe_missing_required_columns():
 
 def test_build_windows_rejects_dataframe_missing_soil_moisture():
     df = _make_station_frame('USGS:A', 1, 1).drop(columns=['soil_moisture'])
+    with pytest.raises(ValueError):
+        windowing.build_windows(df)
+
+
+def _decoder_col(name):
+    return windowing.DECODER_FEATURES.index(name)
+
+
+def test_upstream_decoder_window_uses_known_days_then_holds():
+    future = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    observed = np.ones(5)
+    values, known = windowing.upstream_decoder_window(future, observed, known_days=3,
+                                                      last_value=0.5)
+    np.testing.assert_array_equal(values, [1.0, 2.0, 3.0, 3.0, 3.0])
+    np.testing.assert_array_equal(known, [1, 1, 1, 0, 0])
+
+
+def test_upstream_decoder_window_zero_known_days_holds_last_encoder_value():
+    values, known = windowing.upstream_decoder_window(
+        np.array([9.0, 9.0]), np.ones(2), known_days=0, last_value=0.25)
+    np.testing.assert_array_equal(values, [0.25, 0.25])
+    np.testing.assert_array_equal(known, [0, 0])
+
+
+def test_upstream_decoder_window_unobserved_day_is_held_not_used():
+    values, known = windowing.upstream_decoder_window(
+        np.array([1.0, 7.0, 3.0]), np.array([1, 0, 1]), known_days=3, last_value=0.0)
+    np.testing.assert_array_equal(values, [1.0, 1.0, 3.0])
+    np.testing.assert_array_equal(known, [1, 0, 1])
+
+
+def test_upstream_decoder_window_placeholder_when_last_encoder_unobserved():
+    values, known = windowing.upstream_decoder_window(
+        np.array([5.0]), np.array([0]), known_days=1, last_value=3.0, last_observed=0)
+    np.testing.assert_array_equal(values, [0.0])
+    np.testing.assert_array_equal(known, [0])
+
+
+def test_windows_apply_upstream_known_horizon_per_station():
+    df = _make_station_frame('USGS:A', 1, 1, n_days=120)
+    df['upstream_known_days'] = 3
+    samples = windowing.build_windows(df, encoder_days=60, decoder_days=14)
+    s = samples[0]
+    up = df['upstream_flow'].to_numpy()
+    dec_up = s.decoder_X[:, _decoder_col('upstream_flow')]
+    dec_known = s.decoder_X[:, _decoder_col('upstream_known')]
+    # First 3 decoder days carry the real routed values, then the 3rd is held.
+    np.testing.assert_allclose(dec_up[:3], up[60:63])
+    np.testing.assert_allclose(dec_up[3:], up[62])
+    np.testing.assert_array_equal(dec_known, [1, 1, 1] + [0] * 11)
+
+
+def test_windows_without_upstream_column_default_to_no_known_days():
+    df = _make_station_frame('USGS:A', 1, 1, n_days=120).drop(columns=['upstream_known_days'])
+    samples = windowing.build_windows(df, encoder_days=60, decoder_days=14)
+    s = samples[0]
+    assert (s.decoder_X[:, _decoder_col('upstream_known')] == 0).all()
+    # Held at the last encoder day's value for the whole horizon.
+    last_enc = s.encoder_X[-1, windowing.ENCODER_FEATURES.index('upstream_flow')]
+    assert (s.decoder_X[:, _decoder_col('upstream_flow')] == last_enc).all()
+
+
+def test_build_windows_rejects_dataframe_missing_upstream_flow():
+    df = _make_station_frame('USGS:A', 1, 1).drop(columns=['upstream_flow'])
     with pytest.raises(ValueError):
         windowing.build_windows(df)

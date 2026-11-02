@@ -15,7 +15,8 @@ Every successful weekly training run on `main` produces a GitHub Release tagged 
 | `scalers.json` | Per-column scaler params (mean, scale, transform). Inputs and outputs are in scaled space; you invert with this. |
 | `station_index.json` | Map `site_id` → embedding index. Index `0` is reserved for "unseen". |
 | `basin_index.json` | Map HUC8 → embedding index. Index `0` is reserved for "unseen". |
-| `training_config.json` | Schema: encoder/decoder window sizes, feature names, vocab sizes. |
+| `training_config.json` | Schema: encoder/decoder window sizes, feature names, vocab sizes, per-station `upstream_known_days`. |
+| `upstream_gauges.json` | Upstream-gauge registry: for each station, the upstream gauges (training `site_id`, NWS `nws_lid`), `lag_days`, `weight`, and `forecast_days`. Needed to build the `upstream_flow` inputs. |
 | `manifest.json` | sha256 + byte size per artifact, plus tool versions and the schema block. Verify on download. |
 
 ### Verifying a downloaded release
@@ -59,6 +60,32 @@ def scale(raw, params):
 ```
 
 Indicator columns (`sm_observed`, `reservoir_observed`) are 0/1 and are **not** scaled — they don't appear in `scalers.json`.
+
+## Upstream-gauge inputs
+
+Stations listed in `upstream_gauges.json` (e.g. `USGS:08276500`, the Rio Grande below Taos Junction Bridge / Lower Taos Box) get two extra encoder columns and two extra decoder columns. They let the model see water that is already in the river upstream: a flood wave in Colorado that will reach the Taos Box days later, which local weather and the station's own history cannot show.
+
+**`upstream_flow` (encoder and decoder)** is the routed daily inflow:
+
+```
+upstream_flow(day d) = sum over upstream gauges i of  weight_i * Q_i(d - lag_days_i)
+```
+
+where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the `upstream_flow` entry in `scalers.json` (log1p, then z-score).
+
+- **Encoder days:** use observed daily means. Training used each gauge's `site_id`: the CO DWR daily archive for `DWR:` ids, USGS IV averaged to daily for `USGS:` ids. NWPS (`https://api.water.noaa.gov/nwps/v1/gauges/{nws_lid}/stageflow`, `observed`; flow is `secondary` in kcfs) covers about the last 30 days.
+- **Decoder days:** for days `d < lag_days_i`, `Q_i(d - lag_days_i)` is still an observation. After that, use the daily mean of the NWS River Forecast Center forecast at `nws_lid` (the `forecast` half of the same NWPS payload).
+
+**`upstream_observed` (encoder only, 0/1).** Set it to 1 when every upstream gauge has a value for that day. Otherwise, and for every station without upstream gauges, set `upstream_flow` to `0.0` *in scaled space* and `upstream_observed` to 0.
+
+**`upstream_known` (decoder only, 0/1)** is built per forecast, not read from data. Let `K = training_config.upstream_known_days[site_id]` (0 when the site is absent). This equals `min(lag_days) + forecast_days`, capped at `decoder_days`. For decoder day `d` (0-based):
+
+- `d < K` and the routed value exists: use it, `upstream_known = 1`.
+- otherwise: **hold** the last known value (starting from the last encoder day's `upstream_flow`) and set `upstream_known = 0`.
+
+`windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
+
+`openFlowML/flow_forecast.py` builds these same upstream inputs from live NWPS data. It routes them hourly, without the ML model, to produce the CLI and CI forecast charts.
 
 ## Output tensor
 

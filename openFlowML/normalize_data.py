@@ -35,19 +35,29 @@ CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 # (spread error across base/peak regimes) applies here.
 OPTIONAL_NUMERIC = ['SWE', 'soil_moisture', 'drought_index',
                     'reservoir_storage', 'reservoir_release',
-                    'precipitation']
+                    'precipitation', 'upstream_flow']
 # Binary indicator columns: included as model inputs but NOT z-scored. Scaling
 # a 0/1 indicator destroys the semantics (the model needs to see 0 vs 1 as
 # distinct cases, not as samples from a centered normal).
 #   sm_observed         -- 1 = real / short-gap-interpolated SMAP retrieval
 #   reservoir_observed  -- 1 = station has a USBR mapping AND fetch succeeded
-INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed']
+#   upstream_observed   -- 1 = station has upstream gauges AND the routed value is real
+INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed', 'upstream_observed']
+# Columns whose scaler is fit ONLY on rows where the paired indicator is 1,
+# and whose unobserved rows are set to 0.0 (the observed mean) after
+# scaling. Upstream flow is 0 cfs for every station without upstream gauges;
+# fitting the scaler on those placeholders would make the real values'
+# scale meaningless, and log1p(0) would put the placeholder far out in the
+# tail. The indicator column tells the model the placeholder isn't real.
+SCALER_FIT_MASKS = {'upstream_flow': 'upstream_observed'}
+# Per-station metadata ints passed through unscaled (not model features).
+PASSTHROUGH_INT_COLUMNS = ['upstream_known_days']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 # Streamflow is log-normal -- log1p before z-scoring is standard hydrology
 # practice. Temperature/SWE stay linear. Precipitation is also heavy-tailed
 # (most days zero, occasional storms in the 99th percentile dominate the
 # raw scale), so it gets the same log1p treatment as flow.
-LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow', 'precipitation'}
+LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow', 'precipitation', 'upstream_flow'}
 
 
 def add_day_of_year_features(data):
@@ -89,7 +99,7 @@ def build_basin_index(huc8_ids):
     return {huc: idx + 1 for idx, huc in enumerate(unique_ids)}
 
 
-def fit_scalers(data, columns, log_columns=LOG_TRANSFORM_COLUMNS):
+def fit_scalers(data, columns, log_columns=LOG_TRANSFORM_COLUMNS, fit_masks=None):
     """
     Fit a StandardScaler per column and return its parameters.
 
@@ -97,10 +107,18 @@ def fit_scalers(data, columns, log_columns=LOG_TRANSFORM_COLUMNS):
     streamflow is log-normal, and using log space is the standard hydrology
     move. The returned record carries a `transform` flag so apply/invert can
     reproduce it.
+
+    `fit_masks` maps column -> indicator column; when given (and the indicator
+    has any 1s) the scaler is fit only on rows where the indicator is 1.
     """
+    fit_masks = fit_masks or {}
     scalers = {}
     for column in columns:
-        values = data[[column]].astype('float64').values
+        frame = data
+        indicator = fit_masks.get(column)
+        if indicator and indicator in data.columns and (data[indicator] == 1).any():
+            frame = data[data[indicator] == 1]
+        values = frame[[column]].astype('float64').values
         transform = 'log1p' if column in log_columns else 'identity'
         if transform == 'log1p':
             values = np.log1p(values)
@@ -172,12 +190,15 @@ def normalize_data(data, artifacts_dir=None):
         # same as "no rain today" without much harm.
         for column in ('SWE', 'soil_moisture', 'drought_index',
                        'reservoir_storage', 'reservoir_release',
-                       'precipitation'):
+                       'precipitation', 'upstream_flow'):
             if column in data.columns:
                 data[column] = data[column].fillna(0.0)
         # Indicators default to 0 ("not observed") when missing.
         for column in present_indicator:
             data[column] = data[column].fillna(0).astype('int64')
+        for column in PASSTHROUGH_INT_COLUMNS:
+            if column in data.columns:
+                data[column] = pd.to_numeric(data[column], errors='coerce').fillna(0).astype('int64')
 
         # combine_data owns per-station gap handling for flow + temperature;
         # anything still missing in the core columns here is dropped rather
@@ -205,8 +226,11 @@ def normalize_data(data, artifacts_dir=None):
             basin_index = {}
             logger.warning("No 'huc8' column found; basin_idx not added")
 
-        scalers = fit_scalers(data, present_numeric)
+        scalers = fit_scalers(data, present_numeric, fit_masks=SCALER_FIT_MASKS)
         data = apply_scalers(data, scalers)
+        for column, indicator in SCALER_FIT_MASKS.items():
+            if column in data.columns and indicator in data.columns:
+                data.loc[data[indicator] == 0, column] = 0.0
 
         if artifacts_dir:
             os.makedirs(artifacts_dir, exist_ok=True)

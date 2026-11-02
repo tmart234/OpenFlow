@@ -44,6 +44,7 @@ TFLITE_NAME = 'lstm_model.tflite'
 TFLITE_INT8_NAME = 'lstm_model_int8.tflite'
 MANIFEST_NAME = 'manifest.json'
 TRAINING_CONFIG_NAME = 'training_config.json'
+UPSTREAM_REGISTRY_NAME = 'upstream_gauges.json'
 
 # Maximum per-output absolute error (scaled space) the int8-quantized TFLite
 # is allowed to introduce vs the float32 Keras model. Beyond this we ship
@@ -324,6 +325,8 @@ def write_manifest(base_path, config, artifact_files, tflite_mode,
             'target_features': config['target_features'],
             'num_stations': config['num_stations'],
             'num_basins': config['num_basins'],
+            'window_built_decoder_features': config.get('window_built_decoder_features', []),
+            'upstream_known_days': config.get('upstream_known_days', {}),
         },
         'files': files,
     }
@@ -370,7 +373,7 @@ def export_all(base_path):
                 pass
 
     artifact_files = [H5_NAME, 'scalers.json', 'station_index.json',
-                      'basin_index.json', TRAINING_CONFIG_NAME]
+                      'basin_index.json', TRAINING_CONFIG_NAME, UPSTREAM_REGISTRY_NAME]
     if mlpackage_zip:
         artifact_files.append(MLPACKAGE_ZIP_NAME)
     if tflite_result:

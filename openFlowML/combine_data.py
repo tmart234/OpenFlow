@@ -4,7 +4,9 @@ import data.get_flow as get_flow
 import data.get_CODWR_flow as get_CODWR_flow
 import data.get_noaa as get_noaa
 import data.get_swe as get_swe
+import data.get_upstream as get_upstream
 import normalize_data
+import windowing
 import pandas as pd
 import logging
 from data.utils import data_utils
@@ -26,6 +28,15 @@ Phase 4 (SMAP soil moisture):
   - Treated like SWE in the spine: slow-varying, longer interior interpolation
     limit, missing rows default to 0 rather than being dropped.
   - Set OPENFLOW_DISABLE_SMAP=1 to run the ablation baseline without SMAP.
+
+Upstream gauges:
+  - Stations listed in data/upstream_gauges.json get an `upstream_flow`
+    column: the routed daily inflow from their upstream gauges (see
+    data/get_upstream.py), with an `upstream_observed` indicator and a
+    per-station `upstream_known_days` (how many forecast days of upstream
+    flow are known at forecast time; windowing uses it). Stations without
+    upstream gauges get the 0 placeholder + indicator 0, like reservoirs.
+  - Set OPENFLOW_DISABLE_UPSTREAM=1 to run the ablation without it.
 """
 
 if not logging.getLogger().hasHandlers():
@@ -58,6 +69,9 @@ MAX_DROUGHT_GAP_DAYS = 14
 # (occasional missing days), so the regular MAX_GAP_DAYS interpolation limit
 # is enough. Reservoir state is also slow-varying.
 MAX_RESERVOIR_GAP_DAYS = 14
+# Upstream routed inflow behaves like flow (can change quickly), so it gets
+# the same short interior interpolation limit as the core flow columns.
+MAX_UPSTREAM_GAP_DAYS = MAX_GAP_DAYS
 
 
 def _to_daily_series(df, value_columns, daily_index):
@@ -76,7 +90,7 @@ def _to_daily_series(df, value_columns, daily_index):
 def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
                      swe_data=None, sm_data=None,
                      drought_data=None, reservoir_data=None,
-                     huc8=None):
+                     huc8=None, upstream_data=None, upstream_known_days=0):
     """
     Merge a site's flow, NOAA temperature, SWE, SMAP soil moisture, USDM
     drought, and USBR reservoir series onto one regular daily index.
@@ -177,6 +191,18 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
             combined['reservoir_storage'] = float('nan')
             combined['reservoir_release'] = float('nan')
 
+        # Upstream routed inflow (daily, already lagged + weighted onto the
+        # target's dates by get_upstream). Empty df = no upstream gauges.
+        if upstream_data is not None and not upstream_data.empty:
+            u_daily = _to_daily_series(upstream_data, ['upstream_flow'], daily_index)
+            u_daily['upstream_flow'] = pd.to_numeric(u_daily['upstream_flow'], errors='coerce')
+            # Whole-gap rule (not pandas' limit=n partial fill): a long
+            # upstream outage stays missing -> upstream_observed = 0.
+            combined['upstream_flow'] = get_upstream.interpolate_short_gaps(
+                u_daily['upstream_flow'], MAX_UPSTREAM_GAP_DAYS)
+        else:
+            combined['upstream_flow'] = float('nan')
+
         # Drop rows still missing any core flow/temp value. SWE / soil_moisture
         # / precipitation are NOT in CORE_COLUMNS, so a missing one never
         # drops a row.
@@ -225,6 +251,15 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         combined['reservoir_storage'] = res_series.ffill().bfill().fillna(0.0)
         rel_series = combined['reservoir_release']
         combined['reservoir_release'] = rel_series.ffill().bfill().fillna(0.0)
+
+        # Upstream: same indicator pattern as reservoirs. No ffill/bfill --
+        # carrying a stale upstream flow across a long gap would fake a
+        # signal; the 0 placeholder + upstream_observed = 0 is honest.
+        up_series = combined['upstream_flow']
+        combined['upstream_observed'] = up_series.notna().astype('int64')
+        combined['upstream_flow'] = up_series.fillna(0.0)
+        combined['upstream_known_days'] = (
+            int(upstream_known_days) if combined['upstream_observed'].any() else 0)
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,
@@ -254,7 +289,8 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     reservoir storage + release, and the enclosing HUC8 basin id.
 
     Returns a dict with keys:
-      noaa_data, swe_data, sm_data, drought_data, reservoir_data, huc8
+      noaa_data, swe_data, sm_data, drought_data, reservoir_data,
+      upstream_data, upstream_known_days, huc8
     Any data frame may be empty (auxiliary features degrade gracefully; only
     missing NOAA causes the caller to skip the site). huc8 may be None.
 
@@ -345,12 +381,27 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
         except Exception as e:
             logger.warning("USBR reservoir fetch failed for %s: %s", site_id, e)
 
+    # Upstream gauges (data/upstream_gauges.json): routed daily inflow. Empty
+    # when the station has none; graceful on failure.
+    upstream_data = pd.DataFrame(columns=['Date', 'upstream_flow'])
+    upstream_known_days = 0
+    try:
+        full_id = f"{prefix}:{site_id}"
+        upstream_data = get_upstream.get_upstream(full_id, start_date, end_date)
+        if not upstream_data.empty:
+            upstream_known_days = get_upstream.known_days(
+                get_upstream.upstream_config(full_id), windowing.DECODER_DAYS)
+    except Exception as e:
+        logger.warning("Upstream fetch failed for %s: %s", site_id, e)
+
     return {
         'noaa_data': noaa_data,
         'swe_data': swe_data,
         'sm_data': sm_data,
         'drought_data': drought_data,
         'reservoir_data': reservoir_data,
+        'upstream_data': upstream_data,
+        'upstream_known_days': upstream_known_days,
         'huc8': huc8,
     }
 
@@ -423,7 +474,9 @@ def main(training_num_years=7):
                 sm_data=fetched['sm_data'],
                 drought_data=fetched['drought_data'],
                 reservoir_data=fetched['reservoir_data'],
-                huc8=fetched['huc8'])
+                huc8=fetched['huc8'],
+                upstream_data=fetched.get('upstream_data'),
+                upstream_known_days=fetched.get('upstream_known_days', 0))
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue
