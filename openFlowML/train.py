@@ -45,7 +45,7 @@ LR_PATIENCE = 3           # epochs before ReduceLROnPlateau halves LR
 # Per-lead loss weight (1 / persistence MAE on that lead) ** LEAD_WEIGHT_POWER,
 # mean 1. Day-1 errors are small next to day-14 errors, so an unweighted loss
 # barely cares about tomorrow; 0 switches this off.
-LEAD_WEIGHT_POWER = 0.0
+LEAD_WEIGHT_POWER = 1.0
 # Members of the averaged ensemble (model.average_ensemble), each from its own
 # random seed. Averaging removes much of one network's day-to-day noise.
 ENSEMBLE_SIZE = int(os.getenv('OPENFLOW_ENSEMBLE_SIZE', '') or 3)

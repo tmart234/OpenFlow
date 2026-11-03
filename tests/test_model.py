@@ -112,3 +112,19 @@ def test_linear_skip_head_starts_at_zero_and_can_be_disabled():
         target_features=len(windowing.TARGET_FEATURES), encoder_days=windowing.ENCODER_DAYS,
         decoder_days=windowing.DECODER_DAYS, linear_skip=False)
     assert 'linear_skip' not in [l.name for l in plain.layers]
+
+
+def test_average_ensemble_is_the_mean_of_members_and_round_trips(tmp_path):
+    import tensorflow as tf
+    a, b = _build_smoke_model(), _build_smoke_model()
+    ens = model.average_ensemble([a, b])
+    x = _smoke_inputs()
+    want = (a.predict(x, verbose=0) + b.predict(x, verbose=0)) / 2
+    np.testing.assert_allclose(ens.predict(x, verbose=0), want, rtol=1e-5, atol=1e-6)
+    assert sorted(ens.input.keys()) == sorted(a.input.keys())
+    path = str(tmp_path / 'ens.h5')
+    ens.save(path)
+    loaded = tf.keras.models.load_model(path, custom_objects={'StationDropout': model.StationDropout},
+                                        compile=False)
+    np.testing.assert_allclose(loaded.predict(x, verbose=0), want, rtol=1e-5, atol=1e-6)
+    assert model.average_ensemble([a]) is a
