@@ -37,7 +37,13 @@
         "lag_days": 2,
         "weight": 1.3,
         "lag_hours": 30,
-        "k_hours": 24
+        "k_hours": 24,
+        "to_anchor": {
+          "_doc": "Hourly travel to the anchor (Lobatos), fitted on NWPS observations Oct 10 - Nov 2 2026, which include the Oct 23-28 flood (flow_forecast.anchor_supply).",
+          "lag_hours": 24,
+          "k_hours": 12,
+          "weight": 1.05
+        }
       },
       {
         "name": "Conejos River near Mogote, CO",
@@ -47,7 +53,13 @@
         "lag_days": 5,
         "weight": 0.7,
         "lag_hours": 48,
-        "k_hours": 72
+        "k_hours": 72,
+        "to_anchor": {
+          "_doc": "Hourly travel to the anchor (Lobatos), fitted on NWPS observations Oct 10 - Nov 2 2026, which include the Oct 23-28 flood (flow_forecast.anchor_supply).",
+          "lag_hours": 21,
+          "k_hours": 72,
+          "weight": 0.83
+        }
       }
     ],
     "anchor": {
@@ -58,7 +70,7 @@
       "nws_lid": "LOBC2",
       "lag_days": 1,
       "weight": 1.0,
-      "lag_hours": 24,
+      "lag_hours": 12,
       "k_hours": 12
     },
     "context_gauges": [

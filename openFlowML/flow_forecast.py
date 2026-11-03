@@ -206,14 +206,21 @@ def _lag_hours(g: dict) -> int:
 def anchor_supply(cfg: dict, upstream_inputs: Sequence[np.ndarray]) -> np.ndarray:
     """
     The upstream gauges' flow on the anchor gauge's clock: each gauge routed
-    with its registry weight, K and (lag to the target - anchor lag to the
-    target). Only its changes matter (routing.anchored_input scales them).
+    to the anchor with its `to_anchor` travel time (lag_hours, k_hours,
+    weight) from the registry. Without one, it falls back to the gauge's lag
+    to the target minus the anchor's lag, its K and its weight -- a rough
+    guess. For Alamosa that guess was 6 h, against about 24 h fitted on the
+    October 2026 flood, which put the routed Taos peak about 18 h early.
+    Only the supply's changes matter (routing.anchored_input scales them).
     """
     a_lag = _lag_hours(cfg['anchor'])
     out = np.zeros(len(upstream_inputs[0]))
     for g, x in zip(cfg['upstream'], upstream_inputs):
-        out = out + float(g.get('weight', 1.0)) * routing.route(
-            np.asarray(x, dtype=float), max(_lag_hours(g) - a_lag, 0), float(g.get('k_hours', 12)))
+        to = g.get('to_anchor') or {}
+        lag = int(to.get('lag_hours', max(_lag_hours(g) - a_lag, 0)))
+        k = float(to.get('k_hours', g.get('k_hours', 12)))
+        w = float(to.get('weight', g.get('weight', 1.0)))
+        out = out + w * routing.route(np.asarray(x, dtype=float), lag, k)
     return out
 
 
