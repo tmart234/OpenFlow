@@ -195,3 +195,27 @@ def test_fit_coef_bounds_reject_implausible_weights():
     assert free[0].coefs[0] == pytest.approx(3.0)
     bounded = routing.fit(target, [up], lag_grid=(0, 6, 12), k_grid=(1, 6), coef_bounds=(0.25, 2.5))
     assert all(f.coefs[0] <= 2.5 for f in bounded)
+
+
+def test_anchored_input_continues_with_the_pass_through_share_of_supply_changes():
+    supply = np.r_[np.full(200, 400.0), np.full(100, 700.0)]       # +300 cfs after hour 199
+    anchor = np.full(300, np.nan)
+    anchor[:200] = 100.0                                              # 25% passes the ditches
+    anchor[50:53] = np.nan                                            # a short outage
+    values, info = routing.anchored_input(anchor, supply)
+    assert info['ratio'] == pytest.approx(0.25) and info['last_index'] == 199
+    assert np.isfinite(values).all() and values[51] == pytest.approx(100.0)
+    assert values[250] == pytest.approx(100.0 + 0.25 * 300)
+
+
+def test_anchored_input_passes_more_of_a_rise_beyond_ditch_capacity():
+    supply = np.r_[np.full(200, 400.0), np.full(50, 4400.0)]         # +4,000 cfs flood
+    anchor = np.r_[np.full(200, 60.0), np.full(50, np.nan)]          # 15% passes now
+    values, info = routing.anchored_input(anchor, supply)
+    r = info['ratio']
+    want = 60 + r * 500 + 0.5 * 3500                                  # capacity 500, flood share 0.5
+    assert values[-1] == pytest.approx(want)
+    loose, _ = routing.anchored_input(anchor, supply, anchor_cfg={'divert_capacity_cfs': 1e9})
+    assert loose[-1] == pytest.approx(60 + r * 4000)                 # pure ratio without capacity
+    with pytest.raises(ValueError):
+        routing.anchored_input(np.full(10, np.nan), np.zeros(10))

@@ -362,6 +362,57 @@ def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
     return values, {'last_observed': last_obs_t, 'forecast_end': fc_end}
 
 
+# Anchor gauges (see anchored_input).
+ANCHOR_RATIO_HOURS = 7 * 24
+ANCHOR_RATIO_MAX = 1.5
+
+
+def anchored_input(anchor_obs: np.ndarray, supply: np.ndarray,
+                   ratio_hours: int = ANCHOR_RATIO_HOURS,
+                   max_ratio: float = ANCHOR_RATIO_MAX,
+                   anchor_cfg: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
+    """
+    Hourly input for an anchor gauge: a gauge below the diversions between
+    the upstream gauges and the target (Lobatos for the Taos Box). The hourly
+    twin of get_upstream.anchored_daily.
+
+    anchor_obs: the anchor's flow on the grid, NaN where not observed.
+    supply: the upstream gauges' flow routed to the anchor's clock, gap-free
+    (observations, then RFC forecasts, then a recession).
+
+    Observed hours keep the anchor (interior gaps interpolated; leading hours
+    take the first observation). After its last observation the anchor
+    continues as anchor_last + passed_change(supply - supply_last), floored
+    at 0. r = mean(anchor) / mean(supply) over the last `ratio_hours` hours
+    both exist, clipped to [0, max_ratio], is the share of an upstream change
+    currently getting past the diversions (about 0.1-0.4 in irrigation
+    season, about 0.9 in winter); the ditches' capacity is limited, so the
+    part of a big rise beyond it passes at a higher rate
+    (get_upstream.passed_change; anchor_cfg overrides its defaults).
+
+    Returns (values, info) with info = {'ratio', 'last_index'}.
+    """
+    a = pd.Series(np.asarray(anchor_obs, dtype=float))
+    supply = np.asarray(supply, dtype=float)
+    if len(a) != len(supply):
+        raise ValueError("anchor and supply must have equal length")
+    finite = np.where(np.isfinite(a.to_numpy()))[0]
+    if finite.size == 0:
+        raise ValueError("anchor gauge has no observations")
+    first, last = int(finite.min()), int(finite.max())
+    values = a.interpolate(limit_area='inside').to_numpy(dtype=float, copy=True)
+    values[:first] = values[first]
+    lo = max(first, last - ratio_hours + 1)
+    window = np.isfinite(values[lo:last + 1]) & np.isfinite(supply[lo:last + 1])
+    mean_supply = float(np.mean(supply[lo:last + 1][window])) if window.any() else 0.0
+    ratio = (float(np.clip(np.mean(values[lo:last + 1][window]) / mean_supply, 0.0, max_ratio))
+             if mean_supply > 0 else 0.0)
+    from data.get_upstream import passed_change
+    values[last + 1:] = np.maximum(
+        values[last] + passed_change(supply[last + 1:] - supply[last], ratio, anchor_cfg), 0.0)
+    return values, {'ratio': ratio, 'last_index': last}
+
+
 # --------------------------------------------------------------------------
 # Forecasting
 # --------------------------------------------------------------------------

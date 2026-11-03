@@ -235,3 +235,63 @@ def test_rain_panel_is_opt_in(tmp_path, fake_nwps, monkeypatch):
 
 def test_rain_term_is_never_an_instant_step():
     assert min(flow_forecast.RAIN_K_GRID) >= 12
+
+
+def _irrigation_scenario():
+    """Summer: 20% of the Alamosa/Mogote supply gets past the ditches to Lobatos."""
+    payloads, _ = _scenario()
+    a = (_pulse(NOW - pd.Timedelta(days=10), 1500, 20, 300) + _pulse(NOW + pd.Timedelta(hours=60), 300, 18, 0))
+    b = _pulse(NOW - pd.Timedelta(days=12), 800, 30, 200)
+    supply_at_lobatos = 1.3 * routing.route(a, 6, 24) + 0.7 * routing.route(b, 24, 72)
+    lob = 0.2 * supply_at_lobatos
+    truth = 120 + 1.2 * routing.route(lob, 24, 12)
+    obs = slice(0, INOW + 1)
+    fc_times = GRID[INOW + 1:INOW + 1 + 5 * 24]
+    payloads['TJBN5']['observed'] = _block(GRID[obs], truth[obs])
+    for lid, x in (('ALAC2', a), ('MOGC2', b)):
+        payloads[lid] = {'observed': _block(GRID[obs], x[obs]),
+                         'forecast': _block(fc_times, x[INOW + 1:INOW + 1 + 5 * 24],
+                                            issued='2026-11-02T14:15:00Z', every=6)}
+    payloads['LOBC2'] = {'observed': _block(GRID[obs], lob[obs]), 'forecast': {'data': []}}
+    return payloads, truth
+
+
+def test_irrigation_season_routes_through_the_lobatos_anchor(tmp_path, fake_nwps):
+    payloads, truth = _irrigation_scenario()
+    fake_nwps(payloads)
+    s = flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path), use_rain=False)
+    assert s['routing']['routed_from'] == 'anchor'
+    assert s['anchor']['nws_lid'] == 'LOBC2'
+    assert s['anchor']['pass_through_ratio'] == pytest.approx(0.2, abs=0.03)
+    future_max = truth[INOW + 1:INOW + 1 + 5 * 24].max()
+    assert s['peak']['cfs'] == pytest.approx(future_max, rel=0.15) or not s['peak']['ahead']
+    assert max(d['max_cfs'] for d in s['daily']) <= 1.15 * max(future_max, truth[INOW])
+
+
+def test_missing_anchor_gauge_falls_back_to_direct_routing(tmp_path, fake_nwps):
+    payloads, _ = _irrigation_scenario()
+    payloads.pop('LOBC2')
+    fake_nwps(payloads)
+    s = flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path), use_rain=False, make_chart=False)
+    assert s['routing']['routed_from'] == 'upstream' and s['anchor'] is None
+
+
+def test_routed_forecast_is_pure_and_matches_the_cli_core():
+    payloads, truth = _irrigation_scenario()
+    cfg = flow_forecast.get_upstream.load_registry()['USGS:08276500']
+    a = np.array([q['secondary'] for q in payloads['ALAC2']['observed']['data']]) * 1000
+    tgt = np.full(len(GRID), np.nan)
+    tgt[:INOW + 1] = truth[:INOW + 1]
+    ins = []
+    for lid in ('ALAC2', 'MOGC2'):
+        obs = pd.Series([q['secondary'] * 1000 for q in payloads[lid]['observed']['data']], index=GRID[:INOW + 1])
+        fc = pd.Series([q['secondary'] * 1000 for q in payloads[lid]['forecast']['data']],
+                       index=pd.DatetimeIndex([q['validTime'] for q in payloads[lid]['forecast']['data']]))
+        ins.append(routing.build_input(GRID, obs, fc)[0])
+    lob = np.full(len(GRID), np.nan)
+    lob[:INOW + 1] = [q['secondary'] * 1000 for q in payloads['LOBC2']['observed']['data']]
+    res = flow_forecast.routed_forecast(cfg, tgt, INOW, ins, anchor_obs=lob)
+    assert res['anchor']['ratio'] == pytest.approx(0.2, abs=0.03)
+    assert res['gauges'] == [cfg['anchor']] and len(res['ef'].central) == len(GRID)
+    direct = flow_forecast.routed_forecast({k: v for k, v in cfg.items() if k != 'anchor'}, tgt, INOW, ins)
+    assert direct['anchor'] is None and direct['gauges'] == cfg['upstream']
