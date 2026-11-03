@@ -219,3 +219,79 @@ def test_anchored_input_passes_more_of_a_rise_beyond_ditch_capacity():
     assert loose[-1] == pytest.approx(60 + r * 4000)                 # pure ratio without capacity
     with pytest.raises(ValueError):
         routing.anchored_input(np.full(10, np.nan), np.zeros(10))
+
+
+def test_find_crests_picks_floods_not_noise():
+    rng = np.random.default_rng(0)
+    x = 300 + rng.normal(0, 5, 1200)
+    x[200:260] += 3000 * np.exp(-0.5 * ((np.arange(60) - 30) / 8.0) ** 2)    # flood crest at ~230
+    x[700:760] += 1200 * np.exp(-0.5 * ((np.arange(60) - 30) / 8.0) ** 2)    # smaller flood at ~730
+    x[1000:1010] += 60                                                     # a bump, not a flood
+    crests = routing.find_crests(x)
+    assert len(crests) == 2 and abs(crests[0] - 230) <= 2 and abs(crests[1] - 730) <= 2
+
+
+def test_crest_timing_errors_sign_and_window():
+    pred = np.zeros(200)
+    pred[110] = 5.0                       # predicted 10 h after the crest at 100
+    assert routing.crest_timing_errors(pred, [100]).tolist() == [10.0]
+    pred2 = np.zeros(200)
+    pred2[90] = 5.0
+    assert routing.crest_timing_errors(pred2, [100]).tolist() == [-10.0]
+
+
+def test_fit_with_timing_weight_prefers_the_crest_timed_lag():
+    # The target follows the upstream input 12 h later at the crests, but a
+    # simultaneous local rise (same storm) makes a 0 h lag fit ordinary hours
+    # about as well.
+    n = 900
+    t = np.arange(n)
+    up = 200 + 2500 * np.exp(-0.5 * ((t - 300) / 10.0) ** 2) + 2500 * np.exp(-0.5 * ((t - 650) / 10.0) ** 2)
+    local = 1500 * (np.exp(-0.5 * ((t - 296) / 14.0) ** 2) + np.exp(-0.5 * ((t - 646) / 14.0) ** 2))
+    target = 100 + routing.route(up, 12, 1) + local
+    grids = [(list(range(0, 25, 2)), [1, 6])]
+    plain = routing.fit(target, [up], grids=grids)[0]
+    timed = routing.fit(target, [up], grids=grids, timing_weight=2.0)[0]
+    err = lambda f: np.abs(routing.crest_timing_errors(f.predict([up]), routing.find_crests(target))).mean()
+    assert timed.timing_mae_hours is not None and err(timed) <= err(plain)
+    assert timed.to_dict()['timing_mae_hours'] == timed.timing_mae_hours
+
+
+def test_anchored_input_fixed_ratio_passes_changes_one_to_one():
+    supply = np.r_[np.full(200, 1000.0), np.full(50, 2000.0)]        # Lobatos +1,000 cfs
+    anchor = np.r_[np.full(200, 700.0), np.full(50, np.nan)]          # Cerro: mean ratio 0.7
+    values, info = routing.anchored_input(anchor, supply, anchor_cfg={'fixed_ratio': 1.0})
+    assert info['ratio'] == 1.0 and values[-1] == pytest.approx(1700.0)
+
+
+def test_variable_shift_moves_high_water_faster_than_low_water():
+    # A rise from 300 to 3,000 cfs over hours 50-80, then steady.
+    y = np.r_[np.full(50, 300.0), np.linspace(300, 3000, 31), np.full(40, 3000.0)]
+    out = routing.variable_shift(y, 9, 0.3, 1000.0)
+    lag_low, lag_high = 9 * 0.3 ** -0.3, 9 * 3.0 ** -0.3        # ~12.9 h and ~6.5 h
+    assert out[int(lag_low) + 49] == pytest.approx(300.0)        # low water: slow
+    assert out[80 + int(np.ceil(lag_high))] == pytest.approx(3000.0)   # high water: fast
+    assert routing.shift(y, 9)[80 + int(np.ceil(lag_high))] < 3000.0   # a fixed 9 h lag is later
+    # A jump into low water cannot overtake it: the front arrives at the slow
+    # water's time (a steep front), not 6.5 h after it left.
+    step = routing.variable_shift(np.r_[np.full(50, 300.0), np.full(50, 3000.0)], 9, 0.3, 1000.0)
+    front = int(np.argmax(step > 1000))
+    assert 49 + lag_low - 1 <= front <= 49 + lag_low + 1
+    assert np.all(np.diff(out) >= -1e-9) and np.all(np.diff(step) >= -1e-9)
+
+
+def test_route_with_zero_exponent_is_the_fixed_lag():
+    x = np.r_[np.full(30, 100.0), np.linspace(100, 900, 20), np.full(30, 900.0)]
+    np.testing.assert_allclose(routing.route(x, 7, 3, (0.0, 1000.0)), routing.route(x, 7, 3))
+
+
+def test_fit_recovers_a_flow_dependent_travel_time():
+    t = np.arange(600)
+    x = 300 + 2500 * np.exp(-0.5 * ((t - 200) / 15.0) ** 2) + 600 * np.exp(-0.5 * ((t - 420) / 12.0) ** 2)
+    cel = (0.3, 1000.0)
+    target = 80 + routing.route(x, 9, 1, cel)
+    fits = routing.fit(target, [x], lag_grid=range(0, 21), k_grid=(1, 3), celerity=[cel])
+    assert fits[0].lags == [9] and fits[0].celerity == [cel]
+    np.testing.assert_allclose(fits[0].predict([x]), target, atol=1.0)
+    fixed = routing.fit(target, [x], lag_grid=range(0, 21), k_grid=(1, 3))
+    assert fixed[0].rmse > 5 * max(fits[0].rmse, 1e-6)

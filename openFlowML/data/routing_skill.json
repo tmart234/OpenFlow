@@ -1,0 +1,227 @@
+{
+  "USGS:09180000": {
+    "period": [
+      "2015-01-01",
+      "2026-11-03"
+    ],
+    "crests": 60,
+    "rain": true,
+    "updated": "2026-11-03",
+    "leads": {
+      "12": {
+        "median_abs_timing_h": 6.0,
+        "median_timing_h": 6.0,
+        "within_6h": 0.52,
+        "median_crest_ratio": 0.88
+      },
+      "24": {
+        "median_abs_timing_h": 8.5,
+        "median_timing_h": 8.0,
+        "within_6h": 0.45,
+        "median_crest_ratio": 0.91
+      },
+      "48": {
+        "median_abs_timing_h": 8.0,
+        "median_timing_h": 6.0,
+        "within_6h": 0.48,
+        "median_crest_ratio": 0.86
+      }
+    },
+    "rain_driven": {
+      "crests": 37,
+      "leads": {
+        "12": {
+          "median_abs_timing_h": 7.0,
+          "median_timing_h": 7.0,
+          "within_6h": 0.49,
+          "median_crest_ratio": 0.85
+        },
+        "24": {
+          "median_abs_timing_h": 9.0,
+          "median_timing_h": 9.0,
+          "within_6h": 0.38,
+          "median_crest_ratio": 0.86
+        },
+        "48": {
+          "median_abs_timing_h": 9.0,
+          "median_timing_h": 8.0,
+          "within_6h": 0.43,
+          "median_crest_ratio": 0.79
+        }
+      }
+    },
+    "other": {
+      "crests": 23,
+      "leads": {
+        "12": {
+          "median_abs_timing_h": 6.0,
+          "median_timing_h": 2.0,
+          "within_6h": 0.57,
+          "median_crest_ratio": 0.94
+        },
+        "24": {
+          "median_abs_timing_h": 6.0,
+          "median_timing_h": 3.0,
+          "within_6h": 0.57,
+          "median_crest_ratio": 0.94
+        },
+        "48": {
+          "median_abs_timing_h": 6.0,
+          "median_timing_h": 4.0,
+          "within_6h": 0.57,
+          "median_crest_ratio": 0.92
+        }
+      }
+    }
+  },
+  "DWR:ARKCANCO": {
+    "period": [
+      "2015-01-01",
+      "2026-11-03"
+    ],
+    "crests": 35,
+    "rain": true,
+    "updated": "2026-11-03",
+    "leads": {
+      "12": {
+        "median_abs_timing_h": 7.0,
+        "median_timing_h": 2.0,
+        "within_6h": 0.43,
+        "median_crest_ratio": 0.82
+      },
+      "24": {
+        "median_abs_timing_h": 7.0,
+        "median_timing_h": 2.0,
+        "within_6h": 0.46,
+        "median_crest_ratio": 0.78
+      },
+      "48": {
+        "median_abs_timing_h": 7.5,
+        "median_timing_h": 4.0,
+        "within_6h": 0.41,
+        "median_crest_ratio": 0.75
+      }
+    },
+    "rain_driven": {
+      "crests": 24,
+      "leads": {
+        "12": {
+          "median_abs_timing_h": 5.5,
+          "median_timing_h": 2.0,
+          "within_6h": 0.54,
+          "median_crest_ratio": 0.85
+        },
+        "24": {
+          "median_abs_timing_h": 5.5,
+          "median_timing_h": 2.0,
+          "within_6h": 0.54,
+          "median_crest_ratio": 0.84
+        },
+        "48": {
+          "median_abs_timing_h": 6.0,
+          "median_timing_h": 4.0,
+          "within_6h": 0.52,
+          "median_crest_ratio": 0.83
+        }
+      }
+    },
+    "other": {
+      "crests": 11,
+      "leads": {
+        "12": {
+          "median_abs_timing_h": 11.0,
+          "median_timing_h": 0.0,
+          "within_6h": 0.18,
+          "median_crest_ratio": 0.75
+        },
+        "24": {
+          "median_abs_timing_h": 17.0,
+          "median_timing_h": 0.0,
+          "within_6h": 0.27,
+          "median_crest_ratio": 0.75
+        },
+        "48": {
+          "median_abs_timing_h": 21.0,
+          "median_timing_h": 5.0,
+          "within_6h": 0.18,
+          "median_crest_ratio": 0.72
+        }
+      }
+    }
+  },
+  "USGS:08276500": {
+    "period": [
+      "2015-01-01",
+      "2026-11-03"
+    ],
+    "crests": 54,
+    "rain": true,
+    "updated": "2026-11-03",
+    "leads": {
+      "12": {
+        "median_abs_timing_h": 5.5,
+        "median_timing_h": 1.5,
+        "within_6h": 0.54,
+        "median_crest_ratio": 0.98
+      },
+      "24": {
+        "median_abs_timing_h": 13.0,
+        "median_timing_h": -4.0,
+        "within_6h": 0.3,
+        "median_crest_ratio": 0.96
+      },
+      "48": {
+        "median_abs_timing_h": 25.0,
+        "median_timing_h": -11.5,
+        "within_6h": 0.09,
+        "median_crest_ratio": 0.88
+      }
+    },
+    "rain_driven": {
+      "crests": 11,
+      "leads": {
+        "12": {
+          "median_abs_timing_h": 6.0,
+          "median_timing_h": 1.0,
+          "within_6h": 0.55,
+          "median_crest_ratio": 0.65
+        },
+        "24": {
+          "median_abs_timing_h": 22.0,
+          "median_timing_h": -6.0,
+          "within_6h": 0.18,
+          "median_crest_ratio": 0.63
+        },
+        "48": {
+          "median_abs_timing_h": 37.0,
+          "median_timing_h": -18.0,
+          "within_6h": 0.0,
+          "median_crest_ratio": 0.64
+        }
+      }
+    },
+    "other": {
+      "crests": 43,
+      "leads": {
+        "12": {
+          "median_abs_timing_h": 5.0,
+          "median_timing_h": 2.0,
+          "within_6h": 0.53,
+          "median_crest_ratio": 0.99
+        },
+        "24": {
+          "median_abs_timing_h": 11.0,
+          "median_timing_h": -4.0,
+          "within_6h": 0.33,
+          "median_crest_ratio": 0.99
+        },
+        "48": {
+          "median_abs_timing_h": 24.0,
+          "median_timing_h": -7.0,
+          "within_6h": 0.12,
+          "median_crest_ratio": 0.92
+        }
+      }
+    }
+  }
+}

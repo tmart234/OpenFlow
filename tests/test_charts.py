@@ -95,3 +95,20 @@ def test_rising_river_calls_out_the_peak(tmp_path):
     info = charts.plot_forecast(str(tmp_path / 'r.png'), title='Rising', fc_times=fc_t,
                                 fc_central=central, now=fc_t[0], tz='America/Denver')
     assert info['callout'] == 'peak' and info['peak_value'] == pytest.approx(3000)
+
+
+def test_ml_band_is_smooth_starts_at_the_observation_and_spans_the_days():
+    import numpy as np
+    import pandas as pd
+    import charts
+    dates = pd.to_datetime(['2026-11-03', '2026-11-04', '2026-11-05'])
+    t, lo, hi = charts.ml_band(dates, [1400, 1550, 2950], [1550, 1700, 3400],
+                               start_time=pd.Timestamp('2026-11-02 20:00'), start_value=1330)
+    assert t[0] == pd.Timestamp('2026-11-02 20:00') and lo[0] == hi[0] == 1330      # grows out of the obs
+    assert t[-1] == pd.Timestamp('2026-11-05 12:00')                                # ends at the last day's noon
+    noon = list(t).index(pd.Timestamp('2026-11-04 12:00'))
+    assert (lo[noon], hi[noon]) == (1550, 1700)                                      # passes the daily values
+    assert (lo <= hi).all() and np.all(np.abs(np.diff(hi)) < 120)                    # no jumps, hourly steps
+    assert lo.min() >= 1330 and hi.max() <= 3400                                     # PCHIP: no overshoot
+    t1, lo1, hi1 = charts.ml_band(dates[:1], [5.0], [3.0])
+    assert (lo1 == 3.0).all() and (hi1 == 5.0).all()

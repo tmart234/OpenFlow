@@ -37,7 +37,13 @@
         "lag_days": 2,
         "weight": 1.3,
         "lag_hours": 30,
-        "k_hours": 24
+        "k_hours": 24,
+        "to_anchor": {
+          "_doc": "Hourly travel to the anchor (Lobatos), fitted on NWPS observations Oct 10 - Nov 2 2026, which include the Oct 23-28 flood (flow_forecast.anchor_supply).",
+          "lag_hours": 24,
+          "k_hours": 12,
+          "weight": 1.05
+        }
       },
       {
         "name": "Conejos River near Mogote, CO",
@@ -47,7 +53,13 @@
         "lag_days": 5,
         "weight": 0.7,
         "lag_hours": 48,
-        "k_hours": 72
+        "k_hours": 72,
+        "to_anchor": {
+          "_doc": "Hourly travel to the anchor (Lobatos), fitted on NWPS observations Oct 10 - Nov 2 2026, which include the Oct 23-28 flood (flow_forecast.anchor_supply).",
+          "lag_hours": 21,
+          "k_hours": 72,
+          "weight": 0.83
+        }
       }
     ],
     "anchor": {
@@ -58,8 +70,55 @@
       "nws_lid": "LOBC2",
       "lag_days": 1,
       "weight": 1.0,
-      "lag_hours": 24,
+      "lag_hours": 12,
       "k_hours": 12
+    },
+    "routing": {
+      "_doc": "Hourly routing CLI only (flow_forecast.py, crest_backtest.py); the ML model keeps `anchor` (Lobatos, daily). The Rio Grande near Cerro crests a median 11 h before Taos Junction Bridge at ordinary flows (4-7 h above 1,000 cfs), and its rise is most of the Taos rise in nearly every flood, so the routing forecast routes Cerro, with a flow-dependent travel time (celerity) whose lag at q_ref is refitted each run. After Cerro's latest reading it continues with Lobatos (itself continued by Alamosa/Mogote) routed to Cerro's clock (from_anchor, flow-dependent, not refitted: a refit on the Oct 2026 flood put the Nov 3 rise ~6 h early). Nothing is diverted between them, so changes pass 1:1 (fixed_ratio). Tributaries entering below Cerro are added at full weight with their measured travel times (cross-correlation of hourly changes 2015-2026), not fitted.",
+      "anchor": {
+        "name": "Rio Grande near Cerro, NM",
+        "site_id": "USGS:08263500",
+        "usgs_id": "08263500",
+        "nws_lid": "CERN5",
+        "lag_hours": 9,
+        "k_hours": 1,
+        "weight": 1.0,
+        "fixed_ratio": 1.0,
+        "from_anchor": {
+          "lag_hours": 12,
+          "k_hours": 3,
+          "celerity": {
+            "_doc": "Lobatos -> Cerro: 12 h at 1,000 cfs, ~21 h at 250, ~7 h at 4,000 (kinematic exponent 0.4). Fitted on 113 Lobatos crests 2015-2026; matches the Nov 3 2026 rise (11-12 h at ~950 cfs) and the Oct 24-25 2026 front (21 h from ~150 cfs).",
+            "exponent": 0.4,
+            "q_ref_cfs": 1000
+          },
+          "refit": false
+        },
+        "celerity": {
+          "_doc": "Flow-dependent travel time to Taos Junction Bridge: lag_hours at q_ref_cfs, scaled by (flow / q_ref_cfs) ** -exponent (routing.variable_shift): ~12 h at 300 cfs, 9 h at 1,000, ~6.5 h at 3,500. Fitted on 64 Cerro crests 2015-2026 (least squares + crest timing, odd/even events held out): 83% of crests within 3 h vs 72% with a fixed lag.",
+          "exponent": 0.3,
+          "q_ref_cfs": 1000
+        }
+      },
+      "tributaries": [
+        {
+          "name": "Rio Pueblo de Taos below Los Cordovas, NM",
+          "site_id": "USGS:08276300",
+          "usgs_id": "08276300",
+          "nws_lid": "TBCN5",
+          "lag_hours": 2,
+          "k_hours": 3,
+          "weight": 1.0
+        },
+        {
+          "name": "Red River below Fish Hatchery near Questa, NM",
+          "site_id": "USGS:08266820",
+          "usgs_id": "08266820",
+          "lag_hours": 5,
+          "k_hours": 3,
+          "weight": 1.0
+        }
+      ]
     },
     "context_gauges": [
       {
@@ -91,7 +150,7 @@
     }
   },
   "DWR:ARKCANCO": {
-    "name": "Arkansas River at Cañon City, CO",
+    "name": "Arkansas River at Cañon City, CO (state gauge ARKCANCO, year-round)",
     "short_name": "Royal Gorge",
     "reach": "Royal Gorge of the Arkansas (Parkdale to Cañon City)",
     "aliases": [
@@ -117,7 +176,7 @@
     ],
     "context_gauges": [
       {
-        "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in)",
+        "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in; seasonal)",
         "nws_lid": "PDLC2"
       },
       {
@@ -130,7 +189,8 @@
       "lag_hours": 6,
       "k_hours": 24,
       "runoff_ratio": 0.03
-    }
+    },
+    "_doc_gauge": "Forecast point: the Colorado DWR gauge ARKCANCO in downtown Cañon City (USGS 07096000, NWS CNCC2), below the Royal Gorge take-out; it reports year-round. The Parkdale gauge at the put-in (PDLC2) is seasonal and only shown as context when it reports."
   },
   "DWR:CONMOGCO": {
     "name": "Conejos River near Mogote, CO",

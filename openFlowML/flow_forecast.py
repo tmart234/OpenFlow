@@ -55,7 +55,9 @@ DEFAULT_DAYS = 7
 DEFAULT_CALIB_DAYS = 28
 # Error correction to the latest observation decays with this e-folding time;
 # ~ the reach travel time (1-2 days) is the hydrologic rule of thumb.
-DEFAULT_BIAS_TAU_HOURS = 48.0
+# How fast the forecast lets go of the current observation (e-folding, h).
+# 24 h, not 48 h: crest_backtest.py on 2015-2026 floods (D vs A in the PR).
+DEFAULT_BIAS_TAU_HOURS = 24.0
 CHART_HISTORY_DAYS = 4
 MIN_CALIB_HOURS = 7 * 24
 # Basin-mean rain (mm) on the ungauged area within the calibration window
@@ -76,8 +78,17 @@ LAG_PRIOR_HOURS = 24
 # never instantaneous: overland flow and tributaries smooth a day of rain over
 # at least half a day. K = 1 h turned each rainy day into a 24-h rectangular
 # step in the forecast.
+# Refit of the anchor -> routing-anchor travel time (cfg['routing']['anchor']
+# ['from_anchor']); a coefficient outside the bounds means the window's
+# changes at the routing anchor came from somewhere else (rain, tributaries).
+FROM_ANCHOR_LAG_GRID = tuple(range(0, 41, 2))
+FROM_ANCHOR_K_GRID = (1, 3, 6, 12, 24)
+FROM_ANCHOR_COEF_BOUNDS = (0.5, 1.5)
 RAIN_LAG_GRID = tuple(range(0, 49, 6))
 RAIN_K_GRID = (12, 24, 48, 72, 96, 120)
+# Weight of crest timing in the calibration ranking (routing.fit): 0 ranks
+# travel-time candidates by RMSE alone. Chosen with crest_backtest.py.
+TIMING_WEIGHT = 0.0
 
 
 class ForecastError(RuntimeError):
@@ -93,6 +104,22 @@ def _gauge_series(lid: str) -> dict:
     fc = nwps.hourly(nwps.parse_series(payload, 'forecast'))
     return {'obs': obs, 'fc': fc, 'issued': nwps.forecast_issued_time(payload),
             'stage': nwps.hourly(observed, 'stage_ft')}
+
+
+def _gauge_series_for(g: dict, grid: pd.DatetimeIndex) -> dict:
+    """_gauge_series for a registry gauge; USGS IV when NWS does not carry it (no nws_lid)."""
+    if g.get('nws_lid'):
+        return _gauge_series(g['nws_lid'])
+    from backtest_routing import usgs_hourly
+    obs = usgs_hourly(g['usgs_id'], grid[0].tz_convert(None) - pd.Timedelta(days=1),
+                      pd.Timestamp.now(tz='UTC').tz_convert(None) + pd.Timedelta(days=1))
+    if obs.dropna().empty:
+        raise ForecastError(f"No recent observations at USGS {g['usgs_id']}")
+    return {'obs': obs, 'fc': pd.Series(dtype=float), 'issued': None, 'stage': pd.Series(dtype=float)}
+
+
+def _gauge_label(g: dict) -> str:
+    return g.get('nws_lid') or f"USGS {g.get('usgs_id')}"
 
 
 def _status(lid: str, series: dict, name: str) -> dict:
@@ -111,15 +138,22 @@ def _status(lid: str, series: dict, name: str) -> dict:
     return out
 
 
+def _celerity(g: Optional[dict]) -> Optional[tuple]:
+    """(exponent, q_ref) of a registry gauge's flow-dependent travel time, or None."""
+    c = (g or {}).get('celerity')
+    return (float(c['exponent']), float(c['q_ref_cfs'])) if c else None
+
+
 def _default_ensemble(gauges, target, inputs):
     lags = np.array([g.get('lag_hours', 24 * g.get('lag_days', 1)) for g in gauges])
     ks = [g.get('k_hours', 12) for g in gauges]
     weights = np.array([g.get('weight', 1.0) for g in gauges])
+    cel = [_celerity(g) for g in gauges]
     fits = []
     for dl in (0, -12, 12):
         for ws in (1.0, 0.8, 1.2):
             fits.append(routing.default_fit(target, inputs, np.maximum(lags + dl, 0),
-                                            ks, weights * ws))
+                                            ks, weights * ws, celerity=cel))
     return fits
 
 
@@ -147,8 +181,17 @@ def _rain_input(site_id: str, grid: pd.DatetimeIndex, inow: int, tz: str, zones=
     info['calib_mm'] = round(float(rate.iloc[:inow + 1].sum()), 1)
     info['next_mm'] = round(float(rate.iloc[inow + 1:].sum()), 1)
     info['past7_mm'] = round(float(rate.iloc[max(0, inow - 167):inow + 1].sum()), 1)
-    out.update(flux=flux, info=info)
+    out.update(flux=flux, info=info, rate=rate)
     return out
+
+
+def storm_mm(rate: pd.Series, k: int) -> float:
+    """
+    Rain (mm) on the ungauged area in the STORM_WINDOW_H hours up to grid
+    index k -- the forecast crest, or now when none is ahead. Same test the
+    crest backtest uses to call a crest rain-driven.
+    """
+    return float(rate.iloc[max(0, k - STORM_WINDOW_H):k + 1].sum())
 
 
 def _rain_panel(rain: dict, tz: str, start, end) -> dict:
@@ -181,14 +224,25 @@ def _target_only_forecast(target: dict, grid: pd.DatetimeIndex, use_official: bo
                                floor=floor)
 
 
+# Calibration search around the registry priors. 2-h lag steps (6-h steps
+# quantised crest timing) and smoothing K capped at max(12 h, the prior):
+# larger K fits the many ordinary hours a little better but flattens and
+# delays crests. On 60 Dolores floods (2015-2026) this cut the median crest
+# timing error at 12 h lead from 11 h to 6 h (crest_backtest.py).
+SKILL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'routing_skill.json')
+LAG_STEP_HOURS = 2
+K_GRID = (1, 3, 6, 12, 24, 48, 72, 96, 120)
+MAX_K_HOURS = 12.0
+
+
 def _prior_grids(gauges):
     """Per-gauge (lag_grid, k_grid) windows around the registry priors."""
     grids = []
     for g in gauges:
         lag = int(g.get('lag_hours', 24 * g.get('lag_days', 1)))
         k = float(g.get('k_hours', 12))
-        lags = [l for l in routing.DEFAULT_LAG_GRID if abs(l - lag) <= LAG_PRIOR_HOURS] or [lag]
-        ks = [x for x in routing.DEFAULT_K_GRID if x <= max(48.0, 3 * k)] or [k]
+        lags = list(range(max(0, lag - LAG_PRIOR_HOURS), lag + LAG_PRIOR_HOURS + 1, LAG_STEP_HOURS)) or [lag]
+        ks = [x for x in K_GRID if x <= max(MAX_K_HOURS, k)] or [k]
         grids.append((lags, ks))
     return grids
 
@@ -199,6 +253,43 @@ def _plausible(fit: routing.RoutingFit, n_upstream: int) -> bool:
     return all(lo * 1.05 <= c <= hi * 0.95 for c in fit.coefs[:n_upstream])
 
 
+def routing_skill(site_id: str, path: str = SKILL_PATH) -> Optional[dict]:
+    """The station's crest-timing backtest scores (crest_backtest.py --skill-json), or None."""
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f).get(site_id)
+
+
+STORM_MM = 10.0        # same test crest_backtest.py uses for rain-driven crests:
+STORM_WINDOW_H = 72    # >= STORM_MM in the 72 h before the crest
+
+
+def skill_note(skill: Optional[dict], storm: Optional[bool] = None) -> Optional[str]:
+    """
+    One footnote line: how well the routing timed past crests at this station.
+    With storm True / False it quotes the rain-driven / other crests, when the
+    backtest split them; a storm adds a pointer to the NWS forecast.
+    """
+    if not skill or not skill.get('leads'):
+        return None
+    part, label = skill, 'floods'
+    if storm is not None and skill.get('rain_driven' if storm else 'other', {}).get('leads'):
+        part = skill['rain_driven' if storm else 'other']
+        label = 'rain-driven floods' if storm else 'floods without heavy local rain'
+    leads = sorted(part['leads'].items(), key=lambda kv: int(kv[0]))
+    timing = ', '.join(f"{v['median_abs_timing_h']:.0f} h at {int(k)} h ahead" for k, v in leads if int(k) in (12, 24, 48))
+    bias = [v.get('median_timing_h', 0.0) for _, v in leads]
+    ratios = [v['median_crest_ratio'] for _, v in leads]
+    note = (f"Routing crest timing, backtested on {part.get('crests', skill['crests'])} {label} "
+            f"({skill['period'][0][:4]}-{skill['period'][1][:4]}): typical error {timing}"
+            f"{', usually late' if np.median(bias) >= 4 else (', usually early' if np.median(bias) <= -4 else '')}; "
+            f"crests {min(ratios):.2f}-{max(ratios):.2f}x observed.")
+    if storm:
+        note += "\nRain storm in progress: where shown, the NWS forecast models the storm runoff hour by hour."
+    return note
+
+
 def _lag_hours(g: dict) -> int:
     return int(g.get('lag_hours', 24 * g.get('lag_days', 1)))
 
@@ -206,21 +297,32 @@ def _lag_hours(g: dict) -> int:
 def anchor_supply(cfg: dict, upstream_inputs: Sequence[np.ndarray]) -> np.ndarray:
     """
     The upstream gauges' flow on the anchor gauge's clock: each gauge routed
-    with its registry weight, K and (lag to the target - anchor lag to the
-    target). Only its changes matter (routing.anchored_input scales them).
+    to the anchor with its `to_anchor` travel time (lag_hours, k_hours,
+    weight) from the registry. Without one, it falls back to the gauge's lag
+    to the target minus the anchor's lag, its K and its weight -- a rough
+    guess. For Alamosa that guess was 6 h, against about 24 h fitted on the
+    October 2026 flood, which put the routed Taos peak about 18 h early.
+    Only the supply's changes matter (routing.anchored_input scales them).
     """
     a_lag = _lag_hours(cfg['anchor'])
     out = np.zeros(len(upstream_inputs[0]))
     for g, x in zip(cfg['upstream'], upstream_inputs):
-        out = out + float(g.get('weight', 1.0)) * routing.route(
-            np.asarray(x, dtype=float), max(_lag_hours(g) - a_lag, 0), float(g.get('k_hours', 12)))
+        to = g.get('to_anchor') or {}
+        lag = int(to.get('lag_hours', max(_lag_hours(g) - a_lag, 0)))
+        k = float(to.get('k_hours', g.get('k_hours', 12)))
+        w = float(to.get('weight', g.get('weight', 1.0)))
+        out = out + w * routing.route(np.asarray(x, dtype=float), lag, k)
     return out
 
 
 def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequence[np.ndarray],
                     anchor_obs: Optional[np.ndarray] = None, rain_flux: Optional[np.ndarray] = None,
                     rain_calib_mm: float = 0.0,
-                    bias_tau_hours: float = DEFAULT_BIAS_TAU_HOURS) -> dict:
+                    bias_tau_hours: float = DEFAULT_BIAS_TAU_HOURS,
+                    timing_weight: Optional[float] = None,
+                    calibrate: Optional[bool] = None,
+                    near_obs: Optional[np.ndarray] = None,
+                    tributary_inputs: Optional[Sequence[np.ndarray]] = None) -> dict:
     """
     The routing forecast on an hourly grid, without any I/O (run() feeds it
     live NWPS data; backtests feed it archives).
@@ -233,25 +335,89 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
     between them and the target are already accounted for. Without anchor
     observations the upstream gauges are routed directly.
 
-    Returns {'ef', 'fits', 'calibrated', 'rain_mode', 'gauges', 'anchor'}.
+    near_obs: the routing anchor's flow (cfg['routing']['anchor'], a gauge
+    closer to the target than the anchor, e.g. Cerro for the Taos Box), NaN
+    where not observed. The forecast then routes it instead, continued after
+    its last reading by the anchor (or upstream supply) routed to its clock
+    with its `from_anchor` travel time.
+
+    tributary_inputs: one series per cfg['routing']['tributaries'] gauge
+    (observed, then recession). Each is routed with its registry lag/K and
+    added at its registry weight -- gauged inflow between the routed gauge
+    and the target, so mass balance, not a fit: the fit sees the target
+    minus the tributaries.
+
+    Returns {'ef', 'fits', 'calibrated', 'rain_mode', 'gauges', 'anchor',
+    'near_anchor', 'tributaries'}.
     """
     gauges, inputs, anchor_info = list(cfg['upstream']), [np.asarray(x, float) for x in upstream_inputs], None
+    supply = None
+    if cfg.get('anchor'):
+        supply = anchor_supply(cfg, inputs)
     if cfg.get('anchor') and anchor_obs is not None and np.isfinite(anchor_obs[:inow + 1]).any():
         obs = np.asarray(anchor_obs, dtype=float).copy()
         obs[inow + 1:] = np.nan
-        values, anchor_info = routing.anchored_input(obs, anchor_supply(cfg, inputs),
-                                                     anchor_cfg=cfg['anchor'])
+        values, anchor_info = routing.anchored_input(obs, supply, anchor_cfg=cfg['anchor'])
         gauges, inputs = [cfg['anchor']], [values]
+    rcfg = cfg.get('routing') or {}
+    # A station whose registry parameters were fitted on its historical floods
+    # (crest_backtest.py --calibrate) sets routing.calibrate = false: those
+    # beat refitting on the last 28 days, which rarely hold a flood.
+    if calibrate is None:
+        calibrate = bool(rcfg.get('calibrate', True))
+    near, near_info = rcfg.get('anchor'), None
+    if near and near_obs is not None and np.isfinite(np.asarray(near_obs, float)[:inow + 1]).any():
+        obs = np.asarray(near_obs, dtype=float).copy()
+        obs[inow + 1:] = np.nan
+        if cfg.get('anchor'):
+            fa = near.get('from_anchor') or {}
+            src = inputs[0] if anchor_info is not None else supply
+            lag, k, fitted = int(fa.get('lag_hours', 0)), float(fa.get('k_hours', 1)), False
+            fa_cel = _celerity(fa)
+            # Optionally refitted on the calibration window whenever that
+            # window moved the anchor (from_anchor.refit). With a
+            # flow-dependent travel time (celerity) the registry value holds
+            # across flood sizes; a refit on one big flood does not.
+            if (fa.get('refit', fa_cel is None) and calibrate and np.isfinite(obs).sum() >= MIN_CALIB_HOURS
+                    and routing.is_informative(src[:inow + 1])):
+                try:
+                    f = routing.fit(obs[:inow + 1], [src[:inow + 1]], lag_grid=FROM_ANCHOR_LAG_GRID,
+                                    k_grid=FROM_ANCHOR_K_GRID, top_n=1, celerity=[fa_cel])
+                    if f and FROM_ANCHOR_COEF_BOUNDS[0] <= f[0].coefs[0] <= FROM_ANCHOR_COEF_BOUNDS[1]:
+                        lag, k, fitted = int(f[0].lags[0]), float(f[0].ks[0]), True
+                except ValueError as e:
+                    logger.warning("Routing-anchor travel time not refitted (%s)", e)
+            feed = routing.route(src, lag, k, fa_cel)
+        else:
+            n_lag = _lag_hours(near)
+            feed = sum(float(g.get('weight', 1.0)) * routing.route(x, max(_lag_hours(g) - n_lag, 0),
+                                                                   float(g.get('k_hours', 12)))
+                       for g, x in zip(gauges, inputs))
+            lag, k, fitted = None, None, False
+        values, near_info = routing.anchored_input(obs, feed, anchor_cfg=near)
+        near_info.update(from_anchor_lag_hours=lag, from_anchor_k_hours=k, from_anchor_fitted=fitted)
+        gauges, inputs = [near], [values]
+    trib = None
+    tribs = rcfg.get('tributaries') or []
+    if tribs and tributary_inputs is not None:
+        if len(tributary_inputs) != len(tribs):
+            raise ValueError("one tributary input per routing.tributaries gauge")
+        trib = sum(float(g.get('weight', 1.0)) * routing.route(np.asarray(x, float), _lag_hours(g),
+                                                               float(g.get('k_hours', 3)))
+                   for g, x in zip(tribs, tributary_inputs))
+        tgt = np.asarray(tgt, dtype=float) - trib
     rain_cfg = {**DEFAULT_RAIN, **{k: v for k, v in cfg.get('rain', {}).items() if not k.startswith('_')}}
     rain_fit = rain_flux is not None and rain_calib_mm >= MIN_CALIB_RAIN_MM
     cal_inputs = [x[:inow + 1] for x in inputs]
-    calibrated = (np.isfinite(tgt[:inow + 1]).sum() >= MIN_CALIB_HOURS
+    calibrated = (calibrate and np.isfinite(tgt[:inow + 1]).sum() >= MIN_CALIB_HOURS
                   and all(routing.is_informative(x) for x in cal_inputs))
     fits = []
     if calibrated:
         try:
             fits = routing.fit(tgt[:inow + 1], cal_inputs, coef_bounds=UPSTREAM_COEF_BOUNDS,
-                               grids=_prior_grids(gauges))
+                               grids=_prior_grids(gauges),
+                               timing_weight=TIMING_WEIGHT if timing_weight is None else timing_weight,
+                               celerity=[_celerity(g) for g in gauges])
             if fits and not _plausible(fits[0], len(inputs)):
                 logger.warning("Calibration pinned to a weight bound (%s); using registry defaults",
                                [round(c, 2) for c in fits[0].coefs])
@@ -275,8 +441,12 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
             f.coefs.append(float(rain_cfg['runoff_ratio']))
     all_inputs = inputs + ([rain_flux] if rain_flux is not None else [])
     ef = routing.forecast(fits, all_inputs, tgt, inow, bias_tau_hours=bias_tau_hours)
+    if trib is not None:
+        ef = routing.EnsembleForecast(central=ef.central + trib, low=ef.low + trib, high=ef.high + trib,
+                                      members=ef.members + trib[None, :], fits=ef.fits)
     return {'ef': ef, 'fits': fits, 'calibrated': calibrated, 'rain_mode': rain_mode,
-            'gauges': gauges, 'anchor': anchor_info}
+            'gauges': gauges, 'anchor': anchor_info, 'near_anchor': near_info,
+            'tributaries': trib is not None}
 
 
 def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAYS,
@@ -343,6 +513,32 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             logger.warning("Anchor gauge %s unavailable (%s); routing upstream gauges directly",
                            a.get('nws_lid'), e)
 
+    # Routing anchor (a gauge nearer the target, e.g. Cerro for Taos) and
+    # gauged tributaries below it: hourly routing only.
+    rc = cfg.get('routing') or {}
+    near_obs, near_status, trib_inputs, trib_status = None, None, None, []
+    if mode == 'routing' and rc.get('anchor'):
+        g = rc['anchor']
+        try:
+            s = _gauge_series_for(g, grid)
+            near_status = _status(_gauge_label(g), s, g.get('name', _gauge_label(g)))
+            near_obs = s['obs'].reindex(grid).to_numpy(dtype=float, copy=True)
+        except Exception as e:  # fall back to the anchor / upstream gauges
+            logger.warning("Routing anchor %s unavailable (%s); routing from farther upstream",
+                           _gauge_label(g), e)
+    if mode == 'routing' and rc.get('tributaries'):
+        try:
+            vals = []
+            for g in rc['tributaries']:
+                s = _gauge_series_for(g, grid)
+                values, _ = routing.build_input(grid, s['obs'], s['fc'])
+                vals.append(values)
+                trib_status.append(_status(_gauge_label(g), s, g.get('name', _gauge_label(g))))
+            trib_inputs = vals
+        except Exception as e:  # the calibration absorbs them instead
+            logger.warning("Tributary gauge unavailable (%s); routing without the tributaries", e)
+            trib_inputs, trib_status = None, []
+
     context_status = []
     for g in cfg.get('context_gauges', []):
         try:
@@ -359,14 +555,22 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
 
     tgt = target["obs"].reindex(grid).to_numpy(dtype=float, copy=True)
     tgt[inow + 1:] = np.nan
-    fits, calibrated, rain_mode, fc_end, anchor_info = [], False, 'off', None, None
+    fits, calibrated, rain_mode, fc_end, anchor_info, near_info = [], False, 'off', None, None, None
     if mode == 'routing':
         rain_flux = rain['flux'] if rain and rain.get('flux') is not None else None
         res = routed_forecast(cfg, tgt, inow, inputs, anchor_obs=anchor_obs, rain_flux=rain_flux,
                               rain_calib_mm=(rain['info']['calib_mm'] if rain_flux is not None else 0.0),
-                              bias_tau_hours=bias_tau_hours)
+                              bias_tau_hours=bias_tau_hours, near_obs=near_obs,
+                              tributary_inputs=trib_inputs)
         ef, fits, calibrated, rain_mode, anchor_info = (res['ef'], res['fits'], res['calibrated'],
                                                         res['rain_mode'], res['anchor'])
+        near_info = res['near_anchor']
+        if near_status is not None:
+            near_status['used'] = near_info is not None
+            if near_info is not None and near_info.get('from_anchor_lag_hours') is not None:
+                near_status['from_anchor'] = {'lag_hours': near_info['from_anchor_lag_hours'],
+                                              'k_hours': near_info['from_anchor_k_hours'],
+                                              'refitted': near_info['from_anchor_fitted']}
         if anchor_status is not None and anchor_info is not None:
             anchor_status['pass_through_ratio'] = round(anchor_info['ratio'], 3)
     else:
@@ -417,9 +621,12 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                   for d, row in daily.iterrows()],
         'routing': ({'mode': 'calibrated' if calibrated else 'registry-default',
                      'calibration_days': calib_days, 'fits': [f.to_dict() for f in fits],
-                     'routed_from': 'anchor' if anchor_info is not None else 'upstream'}
+                     'routed_from': ('routing anchor' if near_info is not None
+                                     else 'anchor' if anchor_info is not None else 'upstream')}
                     if mode == 'routing' else None),
         'anchor': anchor_status,
+        'routing_anchor': near_status,
+        'tributaries': trib_status if trib_inputs is not None else [],
         'nws_forecast_end_utc': fc_end.isoformat() if fc_end is not None else None,
         'upstream': upstream_status, 'context_gauges': context_status,
         'nws_official_forecast_issued_utc': (target['issued'].isoformat()
@@ -463,20 +670,43 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         fmt_t = lambda t: pd.Timestamp(t).tz_convert(tz).strftime('%a %b %-d %-I %p %Z')
         if mode == 'routing':
             up_names = ' + '.join(g.get('name', g['nws_lid']).split(',')[0] for g in cfg['upstream'])
-            if anchor_info is not None:
-                a_name = cfg['anchor'].get('name', cfg['anchor']['nws_lid']).split(',')[0]
-                up_names = (f"{a_name} (below the diversions); after its latest reading it follows {up_names} "
-                            f"at the current pass-through, {anchor_info['ratio']:.0%} of their change")
             issued_txt = (f"issued {fmt_t(min(issued))}" if issued
                           else 'no current upstream RFC forecast: observed upstream flow + recession')
             best = fits[0]
             how = (f"calibrated on the last {calib_days} days (RMSE ≈ {best.rmse:,.0f} cfs; "
                    f"lags {'/'.join(str(int(l)) for l in best.lags)} h)") if calibrated else \
                 "registry-default travel times (recent window too quiet or ambiguous to calibrate)"
+            short_name = lambda g: g.get('name', _gauge_label(g)).split(',')[0]
+            place = lambda g: short_name(g).split(' near ')[-1].split(' at ')[-1]
+            if near_info is not None:
+                near = rc['anchor']
+                tribs = (' + ' + ' + '.join(short_name(g).split(' below ')[0] for g in rc['tributaries']) + ' gauges'
+                         if trib_inputs is not None else '')
+                after = (f"{place(cfg['anchor'])}, with {anchor_info['ratio']:.0%} of the change at {up_names} "
+                         f"getting past the ditches ({issued_txt})" if anchor_info is not None
+                         else f"{up_names} ({issued_txt})")
+                routed = (f"Routed from {short_name(near)} (~{_lag_hours(near)} h upstream){tribs}, {how}.\n"
+                          f"After {place(near)}'s latest reading it follows {after}.\n")
+            elif anchor_info is not None:
+                # Two lines: the anchor sentence is too long for one chart line.
+                a_name = cfg['anchor'].get('name', cfg['anchor']['nws_lid']).split(',')[0]
+                routed = (f"Routed from {a_name} (below the diversions), {how}.\n"
+                          f"After its latest reading it follows {up_names} ({issued_txt}), "
+                          f"{anchor_info['ratio']:.0%} of their change getting past the ditches.\n")
+            else:
+                routed = f"Routed from {up_names} ({issued_txt}), {how}.\n"
             footnote = (f"OpenFlow upstream-routing forecast — not an official NWS product"
                         f"{'; NWS official forecast shown for comparison' if not official.empty else ' (no NWS forecast is current for this gauge)'}.\n"
-                        f"Routed from {up_names} ({issued_txt}), {how}.\n"
+                        f"{routed}"
                         f"Band = parameter ensemble ± calibration error. Rain beyond the NWS forecast window is not included.")
+            storm = None
+            if rain is not None and rain.get('rate') is not None:
+                k = peak_i if summary['peak']['ahead'] else inow
+                rain['info']['storm_mm'] = round(storm_mm(rain['rate'], k), 1)
+                storm = rain['info']['storm_mm'] >= STORM_MM
+            note = skill_note(routing_skill(site_id), storm)
+            if note:
+                footnote += '\n' + note
             fc_label, band_kw, off_kw = 'Forecast (best estimate)', \
                 {'fc_low': ef.low[inow:], 'fc_high': ef.high[inow:]}, \
                 {'official_times': official.index if not official.empty else None,
@@ -503,7 +733,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         ml_kw = {}
         if ml_daily is not None and len(ml_daily):
             m = summary['ml']
-            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily min–max, "
+            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily low–high drawn as a smooth band, "
                          f"from data through {m['anchor']}"
                          f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}.")
             v = m.get('verified')
@@ -514,7 +744,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                              + " (no-change forecast: " + ', '.join(f"{e:.0f}%" for e in v['persistence_error_pct']) + ").")
             ml_kw = {'ml': {'dates': ml_daily['Date'], 'min': ml_daily['min_cfs'].to_numpy(),
                             'max': ml_daily['max_cfs'].to_numpy(),
-                            'label': 'OpenFlow ML model (daily min–max)'}}
+                            'label': 'OpenFlow ML model', 'band_label': 'ML range (daily low–high)'}}
         title = f"{short}: flow forecast {pd.Timestamp(first):%b %-d}–{pd.Timestamp(last):%b %-d, %Y}"
         where = f"{cfg['reach']} · {name}" if cfg.get('reach') else name
         subtitle = f"{where} · USGS {usgs_id} / NWS {cfg['nws_lid']} · times {tz_abbr}"
@@ -557,7 +787,8 @@ def format_summary(s: dict) -> str:
         lines.append(f"  {day:%a %b %d}  {d['min_cfs']:>6,} {d['mean_cfs']:>6,} {d['max_cfs']:>6,}   {band}")
     lines.append("")
     lines.append("  gauges now:")
-    for u in s['upstream'] + s['context_gauges']:
+    near = [s['routing_anchor']] if s.get('routing_anchor') else []
+    for u in s['upstream'] + near + list(s.get('tributaries') or []) + s['context_gauges']:
         fc = (f", RFC peak {u['forecast_peak_cfs']:,.0f} cfs "
               f"{pd.Timestamp(u['forecast_peak_time_utc']).tz_convert(tz):%a %-I %p}"
               if u.get('forecast_peak_cfs') else '')

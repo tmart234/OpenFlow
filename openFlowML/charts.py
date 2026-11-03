@@ -65,6 +65,38 @@ def _round_cfs(v: float) -> float:
     return round(v)
 
 
+def ml_band(dates, lows, highs, start_time=None, start_value=None, step_hours: int = 1):
+    """
+    A smooth band through a daily ML forecast, for drawing like the routing
+    range. Each day's low and high are placed at local noon and joined with
+    monotone cubic curves (PCHIP: no overshoot between days), ending at the
+    last day's noon (no made-up flat tail). With start_time /
+    start_value (the latest observation), the band starts there at zero
+    width, so it grows out of the observed line.
+
+    Returns (times, low, high): local naive DatetimeIndex and two arrays.
+    """
+    from scipy.interpolate import PchipInterpolator
+    days = pd.DatetimeIndex(pd.to_datetime(dates)).normalize()
+    lo = np.minimum(np.asarray(lows, dtype=float), np.asarray(highs, dtype=float))
+    hi = np.maximum(np.asarray(lows, dtype=float), np.asarray(highs, dtype=float))
+    knots = list(days + pd.Timedelta(hours=12))
+    k_lo, k_hi = list(lo), list(hi)
+    if start_time is not None and start_value is not None and pd.Timestamp(start_time) < knots[0]:
+        knots.insert(0, pd.Timestamp(start_time))
+        k_lo.insert(0, float(start_value))
+        k_hi.insert(0, float(start_value))
+    if len(knots) == 1:
+        times = pd.date_range(days[0], days[0] + pd.Timedelta(days=1), freq=f'{step_hours}h')
+        return times, np.full(len(times), k_lo[0]), np.full(len(times), k_hi[0])
+    times = pd.date_range(knots[0], knots[-1], freq=f'{step_hours}h')
+    x = np.asarray((pd.DatetimeIndex(knots) - knots[0]) / pd.Timedelta(hours=1), dtype=float)
+    xt = np.asarray((times - knots[0]) / pd.Timedelta(hours=1), dtype=float)
+    band_lo = PchipInterpolator(x, k_lo)(xt)
+    band_hi = PchipInterpolator(x, k_hi)(xt)
+    return times, np.minimum(band_lo, band_hi), np.maximum(band_lo, band_hi)
+
+
 def plot_forecast(out_path: str, *,
                   title: str,
                   obs_times=None, obs_values=None,
@@ -91,8 +123,9 @@ def plot_forecast(out_path: str, *,
     past `now` (hindcasts: the truth over the forecast window).
 
     `ml` (optional) overlays a daily ML forecast: {'dates': local naive
-    dates, 'min': cfs, 'max': cfs, 'label': str} drawn as one min-max bar per
-    day plus a line through the daily midpoints.
+    dates, 'min': cfs, 'max': cfs, 'label': str, 'band_label': str} drawn
+    as a smooth band through the daily lows and highs (ml_band), starting at
+    the latest observation, with a line along its middle.
 
     `rain` (optional) adds a lower panel of daily basin rain by travel-time
     zone: {'dates': local naive dates, 'zones': {zone: mm/day array},
@@ -148,16 +181,18 @@ def plot_forecast(out_path: str, *,
         tmax.append(ot.max())
 
     if ml is not None and len(ml.get('dates', [])):
-        md = pd.DatetimeIndex(pd.to_datetime(ml['dates']))
-        lo = np.asarray(ml['min'], dtype=float)
-        hi = np.asarray(ml['max'], dtype=float)
-        for d, a, b in zip(md, lo, hi):
-            ax.fill_between([d, d + pd.Timedelta(hours=23)], [a, a], [b, b], color=ML, alpha=0.22,
-                            lw=0, zorder=2)
-        ax.plot(md + pd.Timedelta(hours=12), (lo + hi) / 2, color=ML, lw=1.8, marker='o',
-                markersize=4, label=ml.get('label', 'OpenFlow ML model (daily min–max)'), zorder=4)
-        ymax = max(ymax, np.nanmax(hi))
-        tmax.append(md.max() + pd.Timedelta(days=1))
+        start_t = start_v = None
+        if now is not None and obs_values is not None and np.isfinite(np.asarray(obs_values, float)).any():
+            start_t = _local_naive(pd.DatetimeIndex([pd.Timestamp(now)]), tz)[0]
+            ov = np.asarray(obs_values, dtype=float)
+            start_v = float(ov[np.isfinite(ov)][-1])
+        bt, blo, bhi = ml_band(ml['dates'], ml['min'], ml['max'], start_t, start_v)
+        ax.fill_between(bt, blo, bhi, color=ML, alpha=0.20, lw=0, zorder=2,
+                        label=ml.get('band_label', 'ML range (daily low–high)'))
+        ax.plot(bt, (blo + bhi) / 2, color=ML, lw=2.0, zorder=4,
+                label=ml.get('label', 'OpenFlow ML model'))
+        ymax = max(ymax, np.nanmax(bhi))
+        tmax.append(bt.max())
 
     if official_times is not None and official_values is not None and len(official_times):
         st = _local_naive(official_times, tz)

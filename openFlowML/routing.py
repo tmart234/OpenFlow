@@ -93,9 +93,44 @@ def shift(x: np.ndarray, lag_hours: int) -> np.ndarray:
     return np.concatenate([np.full(lag, x[0]), x[:-lag]])
 
 
-def route(x: np.ndarray, lag_hours: int, k_hours: float) -> np.ndarray:
-    """Attenuate (linear reservoir K) then translate (lag) an hourly series."""
-    return shift(linear_reservoir(x, k_hours), lag_hours)
+# Flow-dependent travel time (kinematic wave): the lag at flow q is
+# lag_ref * (q / q_ref) ** -exponent, with q / q_ref clipped to this range.
+CELERITY_FLOW_RATIO = (0.1, 10.0)
+
+
+def variable_shift(y: np.ndarray, lag_hours: float, exponent: float, q_ref: float) -> np.ndarray:
+    """
+    Delay a series by a flow-dependent travel time: water passing at hour s
+    (flow y[s]) arrives lag_hours * (y[s] / q_ref) ** -exponent hours later.
+    A flood wave moves faster than low water (kinematic wave; exponent 0.4
+    for a wide channel under Manning's equation): the Rio Grande takes ~12 h
+    from Cerro to Taos Junction Bridge at 300 cfs and ~4-6 h at 3,500 cfs.
+    Water may not overtake: arrival times are made non-decreasing, so a
+    fast rise behind slow water steepens into a front. Hours before the
+    first arrival take y[0]; hours after the last arrival hold y[-1].
+    """
+    y = np.asarray(y, dtype=float)
+    n = y.size
+    if n == 0:
+        return y.copy()
+    s = np.arange(n, dtype=float)
+    ratio = np.clip(y / float(q_ref), *CELERITY_FLOW_RATIO)
+    arrival = np.maximum.accumulate(s + max(float(lag_hours), 0.0) * ratio ** (-float(exponent)))
+    arrival = arrival + s * 1e-9                       # strictly increasing for interp
+    return np.interp(s, arrival, y, left=y[0], right=y[-1])
+
+
+def route(x: np.ndarray, lag_hours: int, k_hours: float,
+          celerity: Optional[Tuple[float, float]] = None) -> np.ndarray:
+    """
+    Attenuate (linear reservoir K) then translate (lag) an hourly series.
+    celerity = (exponent, q_ref): the lag is lag_hours at q_ref and varies
+    with flow (variable_shift); None or exponent 0 is a fixed lag.
+    """
+    y = linear_reservoir(x, k_hours)
+    if celerity and float(celerity[0]):
+        return variable_shift(y, lag_hours, float(celerity[0]), float(celerity[1]))
+    return shift(y, lag_hours)
 
 
 # --------------------------------------------------------------------------
@@ -110,19 +145,83 @@ class RoutingFit:
     intercept: float
     rmse: float
     source: str = 'calibrated'   # 'calibrated' | 'default'
+    # Mean absolute crest timing error (h) on the calibration window's crests,
+    # when fit() was asked to score timing (None otherwise).
+    timing_mae_hours: Optional[float] = None
+    # Per input: (exponent, q_ref) for a flow-dependent lag (route), or None.
+    celerity: Optional[List[Optional[Tuple[float, float]]]] = None
+
+    def _celerity(self, i: int):
+        return self.celerity[i] if self.celerity and i < len(self.celerity) else None
 
     def predict(self, inputs: Sequence[np.ndarray]) -> np.ndarray:
         out = np.full(len(inputs[0]), float(self.intercept))
-        for x, lag, k, c in zip(inputs, self.lags, self.ks, self.coefs):
-            out = out + c * route(x, lag, k)
+        for i, (x, lag, k, c) in enumerate(zip(inputs, self.lags, self.ks, self.coefs)):
+            out = out + c * route(x, lag, k, self._celerity(i))
         return out
 
     def to_dict(self) -> dict:
-        return {'lags_hours': list(map(int, self.lags)),
-                'k_hours': list(map(float, self.ks)),
-                'coefs': list(map(float, self.coefs)),
-                'intercept': float(self.intercept),
-                'rmse': float(self.rmse), 'source': self.source}
+        d = {'lags_hours': list(map(int, self.lags)),
+             'k_hours': list(map(float, self.ks)),
+             'coefs': list(map(float, self.coefs)),
+             'intercept': float(self.intercept),
+             'rmse': float(self.rmse), 'source': self.source,
+             'timing_mae_hours': self.timing_mae_hours}
+        if self.celerity and any(self.celerity):
+            d['celerity'] = [list(c) if c else None for c in self.celerity]
+        return d
+
+
+# --------------------------------------------------------------------------
+# Crests
+# --------------------------------------------------------------------------
+
+CREST_MIN_RATIO = 1.5        # crest >= 1.5x the lowest flow of the 3 days before
+CREST_MIN_RISE_CFS = 150.0   # ...and at least this much above it
+CREST_FALL_RATIO = 0.75      # ...and the flow falls below 75% of it within 3 days
+CREST_SEPARATION_HOURS = 96  # one crest per 4 days
+CREST_WINDOW_HOURS = 48      # a routed crest within +-48 h of the observed one
+
+
+def find_crests(values: np.ndarray, min_ratio: float = CREST_MIN_RATIO,
+                min_rise: float = CREST_MIN_RISE_CFS,
+                separation: int = CREST_SEPARATION_HOURS,
+                base_window: int = 72, fall_ratio: float = CREST_FALL_RATIO,
+                fall_window: int = 72) -> np.ndarray:
+    """
+    Indices of flood crests in an hourly flow series: local maxima of the
+    3-hour mean, at least `separation` hours apart, that rose at least
+    `min_ratio` x and `min_rise` cfs above the lowest flow of the preceding
+    `base_window` hours and fall below `fall_ratio` x within `fall_window`
+    hours after. Sharp rain / flood-wave crests only: a snowmelt plateau that
+    builds over weeks does not qualify, and its "crest time" would be noise.
+    NaN hours never count as crests.
+    """
+    from scipy.signal import find_peaks
+    x = pd.Series(np.asarray(values, dtype=float)).rolling(3, center=True, min_periods=1).mean()
+    base = x.rolling(base_window, min_periods=12).min().shift(1)
+    after = x[::-1].rolling(fall_window, min_periods=12).min()[::-1].shift(-1)
+    filled = x.fillna(-np.inf).to_numpy()
+    peaks, _ = find_peaks(filled, distance=max(1, int(separation)))
+    keep = [int(i) for i in peaks
+            if np.isfinite(x.iloc[i]) and np.isfinite(base.iloc[i]) and base.iloc[i] > 0
+            and x.iloc[i] >= min_ratio * base.iloc[i] and x.iloc[i] - base.iloc[i] >= min_rise
+            and np.isfinite(after.iloc[i]) and after.iloc[i] <= fall_ratio * x.iloc[i]]
+    return np.asarray(keep, dtype=int)
+
+
+def crest_timing_errors(pred: np.ndarray, crest_idx: Sequence[int],
+                        window: int = CREST_WINDOW_HOURS) -> np.ndarray:
+    """Hours from each observed crest to the predicted maximum within +-window (positive = late)."""
+    pred = np.asarray(pred, dtype=float)
+    out = []
+    for k in crest_idx:
+        lo, hi = max(0, k - window), min(len(pred), k + window + 1)
+        seg = pred[lo:hi]
+        if seg.size == 0 or not np.isfinite(seg).any():
+            continue
+        out.append(lo + int(np.nanargmax(seg)) - k)
+    return np.asarray(out, dtype=float)
 
 
 def _solve(target, routed, rows):
@@ -154,7 +253,9 @@ def fit(target: np.ndarray,
         warmup_hours: int = WARMUP_HOURS,
         sweeps: int = 3,
         coef_bounds: Optional[Tuple[float, float]] = None,
-        grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None) -> List[RoutingFit]:
+        grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None,
+        timing_weight: float = 0.0,
+        celerity: Optional[Sequence[Optional[Tuple[float, float]]]] = None) -> List[RoutingFit]:
     """
     Calibrate (lag_i, K_i) by grid search and (c_i, b) by least squares.
 
@@ -167,8 +268,17 @@ def fit(target: np.ndarray,
     coefficient outside `coef_bounds` when given -- e.g. (0.25, 2.5): a gauge
     "tripling" on its way downstream means the fit is absorbing something
     else (local tributary inflow) and should not be trusted. Returns up to top_n
-    fits, best (lowest RMSE) first. Inputs and target must be hourly arrays
-    of equal length with no NaN in the inputs; NaN target hours are ignored.
+    fits, best first. Inputs and target must be hourly arrays of equal
+    length with no NaN in the inputs; NaN target hours are ignored.
+
+    Ranking: by RMSE, or, with timing_weight > 0 and flood crests in the
+    target (find_crests), by RMSE / std(target) + timing_weight * mean
+    |crest timing error| / 12 h. A pure RMSE fit is dominated by the many
+    ordinary hours; in a rain flood every gauge rises at once, so it can pick
+    a travel time of ~0 h and put the crest hours early.
+
+    celerity: per input, (exponent, q_ref) for a flow-dependent lag, or
+    None; the lag grid is then the lag at q_ref (route).
     """
     target = np.asarray(target, dtype=float)
     inputs = [np.asarray(x, dtype=float) for x in inputs]
@@ -184,6 +294,9 @@ def fit(target: np.ndarray,
     if rows.sum() < 24:
         raise ValueError("not enough target observations to calibrate")
 
+    crest_idx = find_crests(np.where(rows, target, np.nan)) if timing_weight > 0 else np.array([], int)
+    scale = float(np.nanstd(target[rows])) or 1.0
+
     if grids is None:
         grids = [(lag_grid, k_grid)] * len(inputs)
     if len(grids) != len(inputs):
@@ -191,10 +304,14 @@ def fit(target: np.ndarray,
     combos_per_input = [list(itertools.product(lg, kg)) for lg, kg in grids]
     cache: Dict[tuple, np.ndarray] = {}
 
+    cel = list(celerity) if celerity is not None else [None] * len(inputs)
+    if len(cel) != len(inputs):
+        raise ValueError("need one celerity entry per input")
+
     def routed(i, lag, k):
         key = (i, lag, k)
         if key not in cache:
-            cache[key] = route(inputs[i], lag, k)
+            cache[key] = route(inputs[i], lag, k, cel[i])
         return cache[key]
 
     results: Dict[tuple, RoutingFit] = {}
@@ -208,9 +325,18 @@ def fit(target: np.ndarray,
         lo, hi = coef_bounds if coef_bounds else (0.0, np.inf)
         if (coefs >= lo).all() and (coefs <= hi).all():
             res = RoutingFit([p[0] for p in params], [p[1] for p in params],
-                             coefs.tolist(), b, rmse)
+                             coefs.tolist(), b, rmse, celerity=cel if any(cel) else None)
+            if len(crest_idx):
+                pred = b + sum(c * ri for c, ri in zip(coefs, r))
+                err = crest_timing_errors(pred, crest_idx)
+                res.timing_mae_hours = float(np.mean(np.abs(err))) if err.size else None
         results[params] = res
         return res
+
+    def score(f: RoutingFit) -> float:
+        if f.timing_mae_hours is None:
+            return f.rmse / scale
+        return f.rmse / scale + timing_weight * f.timing_mae_hours / 12.0
 
     if len(inputs) <= 2:
         for params in itertools.product(*combos_per_input):
@@ -224,12 +350,12 @@ def fit(target: np.ndarray,
                     trial = list(current)
                     trial[i] = c
                     res = evaluate(tuple(trial))
-                    if res is not None and (best is None or res.rmse < best[0]):
-                        best = (res.rmse, c)
+                    if res is not None and (best is None or score(res) < best[0]):
+                        best = (score(res), c)
                 if best is not None:
                     current[i] = best[1]
 
-    fits = sorted((f for f in results.values() if f is not None), key=lambda f: f.rmse)
+    fits = sorted((f for f in results.values() if f is not None), key=score)
     return fits[:top_n]
 
 
@@ -263,17 +389,27 @@ def add_input(target: np.ndarray, inputs: Sequence[np.ndarray], base_fits: Seque
                 continue
             if best is None or rmse < best.rmse:
                 best = RoutingFit(list(base.lags) + [int(lag)], list(base.ks) + [float(k)],
-                                  list(base.coefs) + [c], base.intercept + b, rmse, source=base.source)
+                                  list(base.coefs) + [c], base.intercept + b, rmse, source=base.source,
+                                  celerity=_extend(base.celerity, len(base.lags)))
         if best is None:
             best = RoutingFit(list(base.lags) + [int(lag_grid[0])], list(base.ks) + [float(k_grid[0])],
-                              list(base.coefs) + [0.0], base.intercept, base.rmse, source=base.source)
+                              list(base.coefs) + [0.0], base.intercept, base.rmse, source=base.source,
+                              celerity=_extend(base.celerity, len(base.lags)))
         out.append(best)
     return sorted(out, key=lambda f: f.rmse)
 
 
+def _extend(celerity, n_base: int):
+    """A fit's celerity list with a fixed-lag (None) entry for one more input."""
+    if not celerity:
+        return None
+    return list(celerity) + [None] * (n_base + 1 - len(celerity))
+
+
 def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
                 lags: Sequence[int], ks: Sequence[float],
-                weights: Sequence[float], warmup_hours: int = WARMUP_HOURS) -> RoutingFit:
+                weights: Sequence[float], warmup_hours: int = WARMUP_HOURS,
+                celerity: Optional[Sequence[Optional[Tuple[float, float]]]] = None) -> RoutingFit:
     """
     Registry-default routing: fixed lag/K/weight per upstream gauge; only the
     intercept is fitted (mean residual), so the result is anchored to the
@@ -281,7 +417,8 @@ def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
     to identify travel times.
     """
     f = RoutingFit(list(map(int, lags)), list(map(float, ks)),
-                   list(map(float, weights)), 0.0, float('nan'), source='default')
+                   list(map(float, weights)), 0.0, float('nan'), source='default',
+                   celerity=list(celerity) if celerity is not None and any(celerity) else None)
     target = np.asarray(target, dtype=float)
     pred = f.predict([np.asarray(x, dtype=float) for x in inputs])
     rows = np.isfinite(target)
@@ -389,6 +526,8 @@ def anchored_input(anchor_obs: np.ndarray, supply: np.ndarray,
     season, about 0.9 in winter); the ditches' capacity is limited, so the
     part of a big rise beyond it passes at a higher rate
     (get_upstream.passed_change; anchor_cfg overrides its defaults).
+    anchor_cfg['fixed_ratio'] replaces r where nothing is diverted between
+    the supply and the anchor.
 
     Returns (values, info) with info = {'ratio', 'last_index'}.
     """
@@ -407,6 +546,11 @@ def anchored_input(anchor_obs: np.ndarray, supply: np.ndarray,
     mean_supply = float(np.mean(supply[lo:last + 1][window])) if window.any() else 0.0
     ratio = (float(np.clip(np.mean(values[lo:last + 1][window]) / mean_supply, 0.0, max_ratio))
              if mean_supply > 0 else 0.0)
+    if anchor_cfg and anchor_cfg.get('fixed_ratio') is not None:
+        # No diversions between the supply and this anchor (e.g. Lobatos ->
+        # Cerro): changes pass at a fixed rate; the gains between them are
+        # base flow, so the mean ratio would understate a rise.
+        ratio = float(anchor_cfg['fixed_ratio'])
     from data.get_upstream import passed_change
     values[last + 1:] = np.maximum(
         values[last] + passed_change(supply[last + 1:] - supply[last], ratio, anchor_cfg), 0.0)
