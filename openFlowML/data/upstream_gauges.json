@@ -51,13 +51,15 @@
       }
     ],
     "anchor": {
-      "_doc": "Gauge below the San Luis Valley diversions. In irrigation season (Apr-Oct) most of a rise at Alamosa/Mogote is diverted before the state line; in summer 2026 Lobatos ran ~7 cfs while the supply above was ~50 cfs. The ML upstream_flow is Lobatos lagged 1 day; days after its last observation continue it with the Alamosa/Mogote change times the recent Lobatos/supply ratio (get_upstream.anchored_daily). The routing CLI still routes the upstream gauges directly.",
+      "_doc": "Gauge below the San Luis Valley diversions. In irrigation season (Apr-Oct) most of a rise at Alamosa/Mogote is diverted before the state line; in summer 2026 Lobatos ran ~7 cfs while the supply above was ~50 cfs. Both the ML upstream_flow (daily, lag_days) and the routing CLI (hourly, lag_hours/k_hours priors) route Lobatos; after its last observation it continues with the Alamosa/Mogote change passed through the ditches (get_upstream.passed_change: the first divert_capacity_cfs of a rise at the recent Lobatos/supply ratio, the rest at >= flood_pass_through).",
       "name": "Rio Grande near Lobatos, CO (state line)",
       "site_id": "DWR:RIOLOBCO",
       "usgs_id": "08251500",
       "nws_lid": "LOBC2",
       "lag_days": 1,
-      "weight": 1.0
+      "weight": 1.0,
+      "lag_hours": 24,
+      "k_hours": 12
     },
     "context_gauges": [
       {

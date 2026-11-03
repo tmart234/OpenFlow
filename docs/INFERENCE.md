@@ -104,12 +104,20 @@ where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the 
 
 ```
 supply(d)         = sum over upstream gauges i of weight_i * Q_i(d - lag_days_i)       (as above)
-upstream_flow(d)  = weight_a * Q_anchor(d - lag_days_a)                  while the anchor has a value
-                  = max(0, A_last + r * (supply(d) - supply(d_last)))     after its last value
+upstream_flow(d)  = weight_a * Q_anchor(d - lag_days_a)                       while the anchor has a value
+                  = max(0, A_last + passed(supply(d) - supply(d_last)))        after its last value
 r                 = clip(mean(A) / mean(supply), 0, 1.5) over the last 7 days both exist up to d_last
+passed(dS)        = r * min(dS, C) + max(r, p) * max(dS - C, 0)
 ```
 
-`A_last` is the anchor value on `d_last`, its last routed date. Training only ever sees the first line, because the anchor is observed every day. The continuation carries the upstream RFC forecasts through the diversions at the current pass-through ratio. `get_upstream.anchored_daily` is the reference implementation. The anchor counts toward "every gauge has a value" for `upstream_observed`.
+`A_last` is the anchor value on `d_last`, its last routed date. Training only ever sees the first line, because the anchor is observed every day. The continuation carries the upstream RFC forecasts through the diversions:
+- Falls, and the first `C` cfs of a rise, pass at the current ratio `r`.
+- Ditch capacity is limited, so the rest of a big rise passes at `max(r, p)`.
+- Defaults are `C = 500` cfs (`divert_capacity_cfs`) and `p = 0.5` (`flood_pass_through`); an anchor entry can override them. In the late-October 2026 rain flood about half of a ~6,000 cfs rise reached Lobatos while `r` was about 0.15.
+
+`get_upstream.anchored_daily` and `get_upstream.passed_change` are the reference implementations. The anchor counts toward "every gauge has a value" for `upstream_observed`.
+
+The routing CLI (`flow_forecast.py`) uses the same anchor, hourly (`routing.anchored_input`). It routes Lobatos to the Taos Box, after its latest reading continues it with the Alamosa/Mogote observations and RFC forecasts by the same rule, and falls back to routing the upstream gauges directly when Lobatos has no recent data.
 
 **`upstream_observed` (encoder only, 0/1).** Set it to 1 when every upstream gauge has a value for that day. Otherwise, and for every station without upstream gauges, set `upstream_flow` to `0.0` *in scaled space* and `upstream_observed` to 0.
 

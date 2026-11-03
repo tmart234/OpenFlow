@@ -168,6 +168,28 @@ def routed_daily(series_by_site: Dict[str, pd.Series], cfg: dict) -> pd.Series:
 # Anchor gauges: the recent anchor/supply ratio that scales supply changes.
 ANCHOR_RATIO_DAYS = 7
 ANCHOR_RATIO_MAX = 1.5
+# Diversions are capacity-limited: the ditches can take roughly the first
+# DIVERT_CAPACITY_CFS of a rise (that part passes at the recent ratio); beyond
+# it at least FLOOD_PASS_THROUGH of the extra water passes. In the late-October
+# 2026 rain flood (irrigation season, recent ratio ~0.15) about half of a
+# ~6,000 cfs rise reached Lobatos. Coarse values: big rises during irrigation
+# season are rare in the record. Per-anchor overrides: `divert_capacity_cfs`,
+# `flood_pass_through` in the registry entry.
+DIVERT_CAPACITY_CFS = 500.0
+FLOOD_PASS_THROUGH = 0.5
+
+
+def passed_change(supply_change, ratio: float, anchor_cfg: Optional[dict] = None):
+    """
+    How much of an upstream supply change (cfs, scalar or array) reaches the
+    anchor: falls and the first `divert_capacity_cfs` of a rise pass at
+    `ratio`; the rest of a rise passes at max(ratio, flood_pass_through).
+    """
+    cfg = anchor_cfg or {}
+    cap = float(cfg.get('divert_capacity_cfs', DIVERT_CAPACITY_CFS))
+    flood = max(float(ratio), float(cfg.get('flood_pass_through', FLOOD_PASS_THROUGH)))
+    d = np.asarray(supply_change, dtype=float)
+    return ratio * np.minimum(d, cap) + flood * np.maximum(d - cap, 0.0)
 
 
 def anchored_daily(anchor: pd.Series, supply: pd.Series, anchor_cfg: dict) -> pd.Series:
@@ -183,10 +205,11 @@ def anchored_daily(anchor: pd.Series, supply: pd.Series, anchor_cfg: dict) -> pd
 
     Result: the lagged anchor wherever it has a value. Target dates after the
     last anchor value continue it with the supply's change since that date,
-    scaled by the pass-through ratio anchor/supply over the last
-    ANCHOR_RATIO_DAYS days both have (clipped to [0, ANCHOR_RATIO_MAX]),
-    floored at 0. Training data (anchor observed every day) is just the lagged
-    anchor; the continuation is how inference reaches the RFC forecast days.
+    passed through the diversions by passed_change at the pass-through ratio
+    anchor/supply over the last ANCHOR_RATIO_DAYS days both have (clipped to
+    [0, ANCHOR_RATIO_MAX]), floored at 0. Training data (anchor observed
+    every day) is just the lagged anchor; the continuation is how inference
+    reaches the RFC forecast days.
     """
     a = _daily(anchor) * float(anchor_cfg.get('weight', 1.0))
     a.index = a.index + pd.Timedelta(days=int(anchor_cfg.get('lag_days', 0)))
@@ -201,7 +224,8 @@ def anchored_daily(anchor: pd.Series, supply: pd.Series, anchor_cfg: dict) -> pd
     ratio = (float(np.clip(both['a'].mean() / both['s'].mean(), 0.0, ANCHOR_RATIO_MAX))
              if len(both) and both['s'].mean() > 0 else 0.0)
     future = supply[(supply.index > last) & supply.notna()]
-    out.loc[future.index] = np.maximum(a[last] + ratio * (future - supply[last]), 0.0)
+    out.loc[future.index] = np.maximum(
+        a[last] + passed_change((future - supply[last]).to_numpy(), ratio, anchor_cfg), 0.0)
     return out
 
 
