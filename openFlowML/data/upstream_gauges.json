@@ -74,19 +74,30 @@
       "k_hours": 12
     },
     "routing": {
-      "_doc": "Hourly routing CLI only (flow_forecast.py, crest_backtest.py); the ML model keeps `anchor` (Lobatos, daily). The Rio Grande near Cerro crests a median 11 h before Taos Junction Bridge (25-75%: 9-12.5 h, 71 crests 2015-2026; 4-7 h above 1,000 cfs) and its rise is most of the Taos rise in nearly every flood, so the routing forecast routes Cerro (lag/K refitted each run). After Cerro's latest reading it continues with Lobatos (itself continued by Alamosa/Mogote) routed to Cerro's clock: from_anchor is the default (per-event least-squares median below 1,000 cfs), refitted on the calibration window whenever Lobatos moved (Oct 2026 flood: 2 h + K 12 h). Nothing is diverted between them, so changes pass 1:1 (fixed_ratio). Tributaries entering below Cerro are added at full weight with their measured travel times (cross-correlation of hourly changes 2015-2026), not fitted.",
+      "_doc": "Hourly routing CLI only (flow_forecast.py, crest_backtest.py); the ML model keeps `anchor` (Lobatos, daily). The Rio Grande near Cerro crests a median 11 h before Taos Junction Bridge at ordinary flows (4-7 h above 1,000 cfs), and its rise is most of the Taos rise in nearly every flood, so the routing forecast routes Cerro, with a flow-dependent travel time (celerity) whose lag at q_ref is refitted each run. After Cerro's latest reading it continues with Lobatos (itself continued by Alamosa/Mogote) routed to Cerro's clock (from_anchor, flow-dependent, not refitted: a refit on the Oct 2026 flood put the Nov 3 rise ~6 h early). Nothing is diverted between them, so changes pass 1:1 (fixed_ratio). Tributaries entering below Cerro are added at full weight with their measured travel times (cross-correlation of hourly changes 2015-2026), not fitted.",
       "anchor": {
         "name": "Rio Grande near Cerro, NM",
         "site_id": "USGS:08263500",
         "usgs_id": "08263500",
         "nws_lid": "CERN5",
-        "lag_hours": 12,
-        "k_hours": 3,
+        "lag_hours": 9,
+        "k_hours": 1,
         "weight": 1.0,
         "fixed_ratio": 1.0,
         "from_anchor": {
-          "lag_hours": 18,
-          "k_hours": 3
+          "lag_hours": 12,
+          "k_hours": 3,
+          "celerity": {
+            "_doc": "Lobatos -> Cerro: 12 h at 1,000 cfs, ~21 h at 250, ~7 h at 4,000 (kinematic exponent 0.4). Fitted on 113 Lobatos crests 2015-2026; matches the Nov 3 2026 rise (11-12 h at ~950 cfs) and the Oct 24-25 2026 front (21 h from ~150 cfs).",
+            "exponent": 0.4,
+            "q_ref_cfs": 1000
+          },
+          "refit": false
+        },
+        "celerity": {
+          "_doc": "Flow-dependent travel time to Taos Junction Bridge: lag_hours at q_ref_cfs, scaled by (flow / q_ref_cfs) ** -exponent (routing.variable_shift): ~12 h at 300 cfs, 9 h at 1,000, ~6.5 h at 3,500. Fitted on 64 Cerro crests 2015-2026 (least squares + crest timing, odd/even events held out): 83% of crests within 3 h vs 72% with a fixed lag.",
+          "exponent": 0.3,
+          "q_ref_cfs": 1000
         }
       },
       "tributaries": [

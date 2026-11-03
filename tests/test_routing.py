@@ -262,3 +262,36 @@ def test_anchored_input_fixed_ratio_passes_changes_one_to_one():
     anchor = np.r_[np.full(200, 700.0), np.full(50, np.nan)]          # Cerro: mean ratio 0.7
     values, info = routing.anchored_input(anchor, supply, anchor_cfg={'fixed_ratio': 1.0})
     assert info['ratio'] == 1.0 and values[-1] == pytest.approx(1700.0)
+
+
+def test_variable_shift_moves_high_water_faster_than_low_water():
+    # A rise from 300 to 3,000 cfs over hours 50-80, then steady.
+    y = np.r_[np.full(50, 300.0), np.linspace(300, 3000, 31), np.full(40, 3000.0)]
+    out = routing.variable_shift(y, 9, 0.3, 1000.0)
+    lag_low, lag_high = 9 * 0.3 ** -0.3, 9 * 3.0 ** -0.3        # ~12.9 h and ~6.5 h
+    assert out[int(lag_low) + 49] == pytest.approx(300.0)        # low water: slow
+    assert out[80 + int(np.ceil(lag_high))] == pytest.approx(3000.0)   # high water: fast
+    assert routing.shift(y, 9)[80 + int(np.ceil(lag_high))] < 3000.0   # a fixed 9 h lag is later
+    # A jump into low water cannot overtake it: the front arrives at the slow
+    # water's time (a steep front), not 6.5 h after it left.
+    step = routing.variable_shift(np.r_[np.full(50, 300.0), np.full(50, 3000.0)], 9, 0.3, 1000.0)
+    front = int(np.argmax(step > 1000))
+    assert 49 + lag_low - 1 <= front <= 49 + lag_low + 1
+    assert np.all(np.diff(out) >= -1e-9) and np.all(np.diff(step) >= -1e-9)
+
+
+def test_route_with_zero_exponent_is_the_fixed_lag():
+    x = np.r_[np.full(30, 100.0), np.linspace(100, 900, 20), np.full(30, 900.0)]
+    np.testing.assert_allclose(routing.route(x, 7, 3, (0.0, 1000.0)), routing.route(x, 7, 3))
+
+
+def test_fit_recovers_a_flow_dependent_travel_time():
+    t = np.arange(600)
+    x = 300 + 2500 * np.exp(-0.5 * ((t - 200) / 15.0) ** 2) + 600 * np.exp(-0.5 * ((t - 420) / 12.0) ** 2)
+    cel = (0.3, 1000.0)
+    target = 80 + routing.route(x, 9, 1, cel)
+    fits = routing.fit(target, [x], lag_grid=range(0, 21), k_grid=(1, 3), celerity=[cel])
+    assert fits[0].lags == [9] and fits[0].celerity == [cel]
+    np.testing.assert_allclose(fits[0].predict([x]), target, atol=1.0)
+    fixed = routing.fit(target, [x], lag_grid=range(0, 21), k_grid=(1, 3))
+    assert fixed[0].rmse > 5 * max(fits[0].rmse, 1e-6)

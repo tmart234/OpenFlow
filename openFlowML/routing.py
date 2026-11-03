@@ -93,9 +93,44 @@ def shift(x: np.ndarray, lag_hours: int) -> np.ndarray:
     return np.concatenate([np.full(lag, x[0]), x[:-lag]])
 
 
-def route(x: np.ndarray, lag_hours: int, k_hours: float) -> np.ndarray:
-    """Attenuate (linear reservoir K) then translate (lag) an hourly series."""
-    return shift(linear_reservoir(x, k_hours), lag_hours)
+# Flow-dependent travel time (kinematic wave): the lag at flow q is
+# lag_ref * (q / q_ref) ** -exponent, with q / q_ref clipped to this range.
+CELERITY_FLOW_RATIO = (0.1, 10.0)
+
+
+def variable_shift(y: np.ndarray, lag_hours: float, exponent: float, q_ref: float) -> np.ndarray:
+    """
+    Delay a series by a flow-dependent travel time: water passing at hour s
+    (flow y[s]) arrives lag_hours * (y[s] / q_ref) ** -exponent hours later.
+    A flood wave moves faster than low water (kinematic wave; exponent 0.4
+    for a wide channel under Manning's equation): the Rio Grande takes ~12 h
+    from Cerro to Taos Junction Bridge at 300 cfs and ~4-6 h at 3,500 cfs.
+    Water may not overtake: arrival times are made non-decreasing, so a
+    fast rise behind slow water steepens into a front. Hours before the
+    first arrival take y[0]; hours after the last arrival hold y[-1].
+    """
+    y = np.asarray(y, dtype=float)
+    n = y.size
+    if n == 0:
+        return y.copy()
+    s = np.arange(n, dtype=float)
+    ratio = np.clip(y / float(q_ref), *CELERITY_FLOW_RATIO)
+    arrival = np.maximum.accumulate(s + max(float(lag_hours), 0.0) * ratio ** (-float(exponent)))
+    arrival = arrival + s * 1e-9                       # strictly increasing for interp
+    return np.interp(s, arrival, y, left=y[0], right=y[-1])
+
+
+def route(x: np.ndarray, lag_hours: int, k_hours: float,
+          celerity: Optional[Tuple[float, float]] = None) -> np.ndarray:
+    """
+    Attenuate (linear reservoir K) then translate (lag) an hourly series.
+    celerity = (exponent, q_ref): the lag is lag_hours at q_ref and varies
+    with flow (variable_shift); None or exponent 0 is a fixed lag.
+    """
+    y = linear_reservoir(x, k_hours)
+    if celerity and float(celerity[0]):
+        return variable_shift(y, lag_hours, float(celerity[0]), float(celerity[1]))
+    return shift(y, lag_hours)
 
 
 # --------------------------------------------------------------------------
@@ -113,20 +148,28 @@ class RoutingFit:
     # Mean absolute crest timing error (h) on the calibration window's crests,
     # when fit() was asked to score timing (None otherwise).
     timing_mae_hours: Optional[float] = None
+    # Per input: (exponent, q_ref) for a flow-dependent lag (route), or None.
+    celerity: Optional[List[Optional[Tuple[float, float]]]] = None
+
+    def _celerity(self, i: int):
+        return self.celerity[i] if self.celerity and i < len(self.celerity) else None
 
     def predict(self, inputs: Sequence[np.ndarray]) -> np.ndarray:
         out = np.full(len(inputs[0]), float(self.intercept))
-        for x, lag, k, c in zip(inputs, self.lags, self.ks, self.coefs):
-            out = out + c * route(x, lag, k)
+        for i, (x, lag, k, c) in enumerate(zip(inputs, self.lags, self.ks, self.coefs)):
+            out = out + c * route(x, lag, k, self._celerity(i))
         return out
 
     def to_dict(self) -> dict:
-        return {'lags_hours': list(map(int, self.lags)),
-                'k_hours': list(map(float, self.ks)),
-                'coefs': list(map(float, self.coefs)),
-                'intercept': float(self.intercept),
-                'rmse': float(self.rmse), 'source': self.source,
-                'timing_mae_hours': self.timing_mae_hours}
+        d = {'lags_hours': list(map(int, self.lags)),
+             'k_hours': list(map(float, self.ks)),
+             'coefs': list(map(float, self.coefs)),
+             'intercept': float(self.intercept),
+             'rmse': float(self.rmse), 'source': self.source,
+             'timing_mae_hours': self.timing_mae_hours}
+        if self.celerity and any(self.celerity):
+            d['celerity'] = [list(c) if c else None for c in self.celerity]
+        return d
 
 
 # --------------------------------------------------------------------------
@@ -211,7 +254,8 @@ def fit(target: np.ndarray,
         sweeps: int = 3,
         coef_bounds: Optional[Tuple[float, float]] = None,
         grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None,
-        timing_weight: float = 0.0) -> List[RoutingFit]:
+        timing_weight: float = 0.0,
+        celerity: Optional[Sequence[Optional[Tuple[float, float]]]] = None) -> List[RoutingFit]:
     """
     Calibrate (lag_i, K_i) by grid search and (c_i, b) by least squares.
 
@@ -232,6 +276,9 @@ def fit(target: np.ndarray,
     |crest timing error| / 12 h. A pure RMSE fit is dominated by the many
     ordinary hours; in a rain flood every gauge rises at once, so it can pick
     a travel time of ~0 h and put the crest hours early.
+
+    celerity: per input, (exponent, q_ref) for a flow-dependent lag, or
+    None; the lag grid is then the lag at q_ref (route).
     """
     target = np.asarray(target, dtype=float)
     inputs = [np.asarray(x, dtype=float) for x in inputs]
@@ -257,10 +304,14 @@ def fit(target: np.ndarray,
     combos_per_input = [list(itertools.product(lg, kg)) for lg, kg in grids]
     cache: Dict[tuple, np.ndarray] = {}
 
+    cel = list(celerity) if celerity is not None else [None] * len(inputs)
+    if len(cel) != len(inputs):
+        raise ValueError("need one celerity entry per input")
+
     def routed(i, lag, k):
         key = (i, lag, k)
         if key not in cache:
-            cache[key] = route(inputs[i], lag, k)
+            cache[key] = route(inputs[i], lag, k, cel[i])
         return cache[key]
 
     results: Dict[tuple, RoutingFit] = {}
@@ -274,7 +325,7 @@ def fit(target: np.ndarray,
         lo, hi = coef_bounds if coef_bounds else (0.0, np.inf)
         if (coefs >= lo).all() and (coefs <= hi).all():
             res = RoutingFit([p[0] for p in params], [p[1] for p in params],
-                             coefs.tolist(), b, rmse)
+                             coefs.tolist(), b, rmse, celerity=cel if any(cel) else None)
             if len(crest_idx):
                 pred = b + sum(c * ri for c, ri in zip(coefs, r))
                 err = crest_timing_errors(pred, crest_idx)
@@ -338,17 +389,27 @@ def add_input(target: np.ndarray, inputs: Sequence[np.ndarray], base_fits: Seque
                 continue
             if best is None or rmse < best.rmse:
                 best = RoutingFit(list(base.lags) + [int(lag)], list(base.ks) + [float(k)],
-                                  list(base.coefs) + [c], base.intercept + b, rmse, source=base.source)
+                                  list(base.coefs) + [c], base.intercept + b, rmse, source=base.source,
+                                  celerity=_extend(base.celerity, len(base.lags)))
         if best is None:
             best = RoutingFit(list(base.lags) + [int(lag_grid[0])], list(base.ks) + [float(k_grid[0])],
-                              list(base.coefs) + [0.0], base.intercept, base.rmse, source=base.source)
+                              list(base.coefs) + [0.0], base.intercept, base.rmse, source=base.source,
+                              celerity=_extend(base.celerity, len(base.lags)))
         out.append(best)
     return sorted(out, key=lambda f: f.rmse)
 
 
+def _extend(celerity, n_base: int):
+    """A fit's celerity list with a fixed-lag (None) entry for one more input."""
+    if not celerity:
+        return None
+    return list(celerity) + [None] * (n_base + 1 - len(celerity))
+
+
 def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
                 lags: Sequence[int], ks: Sequence[float],
-                weights: Sequence[float], warmup_hours: int = WARMUP_HOURS) -> RoutingFit:
+                weights: Sequence[float], warmup_hours: int = WARMUP_HOURS,
+                celerity: Optional[Sequence[Optional[Tuple[float, float]]]] = None) -> RoutingFit:
     """
     Registry-default routing: fixed lag/K/weight per upstream gauge; only the
     intercept is fitted (mean residual), so the result is anchored to the
@@ -356,7 +417,8 @@ def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
     to identify travel times.
     """
     f = RoutingFit(list(map(int, lags)), list(map(float, ks)),
-                   list(map(float, weights)), 0.0, float('nan'), source='default')
+                   list(map(float, weights)), 0.0, float('nan'), source='default',
+                   celerity=list(celerity) if celerity is not None and any(celerity) else None)
     target = np.asarray(target, dtype=float)
     pred = f.predict([np.asarray(x, dtype=float) for x in inputs])
     rows = np.isfinite(target)

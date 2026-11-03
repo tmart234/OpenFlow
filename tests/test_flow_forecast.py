@@ -359,8 +359,18 @@ def test_routed_forecast_tributaries_are_mass_balance_not_fitted():
     res = flow_forecast.routed_forecast(cfg, tgt, INOW, ins, anchor_obs=pad(ser('LOBC2')),
                                         near_obs=pad(ser('CERN5')), tributary_inputs=tribs)
     assert res['gauges'] == [cfg['routing']['anchor']] and res['tributaries']
-    assert res['near_anchor']['from_anchor_fitted']
-    assert abs(res['near_anchor']['from_anchor_lag_hours'] - 18) <= 4
+    # Registry: flow-dependent Lobatos -> Cerro travel time, not refitted.
+    fa = cfg['routing']['anchor']['from_anchor']
+    assert not res['near_anchor']['from_anchor_fitted']
+    assert res['near_anchor']['from_anchor_lag_hours'] == fa['lag_hours']
+    # from_anchor.refit: refitted on the window (this scenario uses a fixed 18 h lag).
+    import copy
+    cfg_refit = copy.deepcopy(cfg)
+    cfg_refit['routing']['anchor']['from_anchor'] = {'lag_hours': 12, 'k_hours': 3, 'refit': True}
+    refit = flow_forecast.routed_forecast(cfg_refit, tgt, INOW, ins, anchor_obs=pad(ser('LOBC2')),
+                                          near_obs=pad(ser('CERN5')), tributary_inputs=tribs)
+    assert refit['near_anchor']['from_anchor_fitted']
+    assert abs(refit['near_anchor']['from_anchor_lag_hours'] - 18) <= 4
     # Observed hours are kept exactly; the routed fit only explains Cerro's part.
     np.testing.assert_allclose(res['ef'].central[:INOW + 1], truth[:INOW + 1], rtol=1e-6)
     assert res['fits'][0].coefs[0] == pytest.approx(1.0, abs=0.1)

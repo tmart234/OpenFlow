@@ -138,15 +138,22 @@ def _status(lid: str, series: dict, name: str) -> dict:
     return out
 
 
+def _celerity(g: Optional[dict]) -> Optional[tuple]:
+    """(exponent, q_ref) of a registry gauge's flow-dependent travel time, or None."""
+    c = (g or {}).get('celerity')
+    return (float(c['exponent']), float(c['q_ref_cfs'])) if c else None
+
+
 def _default_ensemble(gauges, target, inputs):
     lags = np.array([g.get('lag_hours', 24 * g.get('lag_days', 1)) for g in gauges])
     ks = [g.get('k_hours', 12) for g in gauges]
     weights = np.array([g.get('weight', 1.0) for g in gauges])
+    cel = [_celerity(g) for g in gauges]
     fits = []
     for dl in (0, -12, 12):
         for ws in (1.0, 0.8, 1.2):
             fits.append(routing.default_fit(target, inputs, np.maximum(lags + dl, 0),
-                                            ks, weights * ws))
+                                            ks, weights * ws, celerity=cel))
     return fits
 
 
@@ -366,20 +373,21 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
             fa = near.get('from_anchor') or {}
             src = inputs[0] if anchor_info is not None else supply
             lag, k, fitted = int(fa.get('lag_hours', 0)), float(fa.get('k_hours', 1)), False
-            # The anchor -> routing-anchor travel time shortens in big floods
-            # (Lobatos -> Cerro: ~18 h lag at a few hundred cfs, ~2 h + K 12 h
-            # in the Oct 2026 flood), so it is refitted on the calibration
-            # window whenever that window moved the anchor.
-            if (calibrate and np.isfinite(obs).sum() >= MIN_CALIB_HOURS
+            fa_cel = _celerity(fa)
+            # Optionally refitted on the calibration window whenever that
+            # window moved the anchor (from_anchor.refit). With a
+            # flow-dependent travel time (celerity) the registry value holds
+            # across flood sizes; a refit on one big flood does not.
+            if (fa.get('refit', fa_cel is None) and calibrate and np.isfinite(obs).sum() >= MIN_CALIB_HOURS
                     and routing.is_informative(src[:inow + 1])):
                 try:
                     f = routing.fit(obs[:inow + 1], [src[:inow + 1]], lag_grid=FROM_ANCHOR_LAG_GRID,
-                                    k_grid=FROM_ANCHOR_K_GRID, top_n=1)
+                                    k_grid=FROM_ANCHOR_K_GRID, top_n=1, celerity=[fa_cel])
                     if f and FROM_ANCHOR_COEF_BOUNDS[0] <= f[0].coefs[0] <= FROM_ANCHOR_COEF_BOUNDS[1]:
                         lag, k, fitted = int(f[0].lags[0]), float(f[0].ks[0]), True
                 except ValueError as e:
                     logger.warning("Routing-anchor travel time not refitted (%s)", e)
-            feed = routing.route(src, lag, k)
+            feed = routing.route(src, lag, k, fa_cel)
         else:
             n_lag = _lag_hours(near)
             feed = sum(float(g.get('weight', 1.0)) * routing.route(x, max(_lag_hours(g) - n_lag, 0),
@@ -408,7 +416,8 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
         try:
             fits = routing.fit(tgt[:inow + 1], cal_inputs, coef_bounds=UPSTREAM_COEF_BOUNDS,
                                grids=_prior_grids(gauges),
-                               timing_weight=TIMING_WEIGHT if timing_weight is None else timing_weight)
+                               timing_weight=TIMING_WEIGHT if timing_weight is None else timing_weight,
+                               celerity=[_celerity(g) for g in gauges])
             if fits and not _plausible(fits[0], len(inputs)):
                 logger.warning("Calibration pinned to a weight bound (%s); using registry defaults",
                                [round(c, 2) for c in fits[0].coefs])
