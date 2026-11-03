@@ -463,19 +463,23 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         fmt_t = lambda t: pd.Timestamp(t).tz_convert(tz).strftime('%a %b %-d %-I %p %Z')
         if mode == 'routing':
             up_names = ' + '.join(g.get('name', g['nws_lid']).split(',')[0] for g in cfg['upstream'])
-            if anchor_info is not None:
-                a_name = cfg['anchor'].get('name', cfg['anchor']['nws_lid']).split(',')[0]
-                up_names = (f"{a_name} (below the diversions); after its latest reading it follows {up_names} "
-                            f"at the current pass-through, {anchor_info['ratio']:.0%} of their change")
             issued_txt = (f"issued {fmt_t(min(issued))}" if issued
                           else 'no current upstream RFC forecast: observed upstream flow + recession')
             best = fits[0]
             how = (f"calibrated on the last {calib_days} days (RMSE ≈ {best.rmse:,.0f} cfs; "
                    f"lags {'/'.join(str(int(l)) for l in best.lags)} h)") if calibrated else \
                 "registry-default travel times (recent window too quiet or ambiguous to calibrate)"
+            if anchor_info is not None:
+                # Two lines: the anchor sentence is too long for one chart line.
+                a_name = cfg['anchor'].get('name', cfg['anchor']['nws_lid']).split(',')[0]
+                routed = (f"Routed from {a_name} (below the diversions), {how}.\n"
+                          f"After its latest reading it follows {up_names} ({issued_txt}), "
+                          f"{anchor_info['ratio']:.0%} of their change getting past the ditches.\n")
+            else:
+                routed = f"Routed from {up_names} ({issued_txt}), {how}.\n"
             footnote = (f"OpenFlow upstream-routing forecast — not an official NWS product"
                         f"{'; NWS official forecast shown for comparison' if not official.empty else ' (no NWS forecast is current for this gauge)'}.\n"
-                        f"Routed from {up_names} ({issued_txt}), {how}.\n"
+                        f"{routed}"
                         f"Band = parameter ensemble ± calibration error. Rain beyond the NWS forecast window is not included.")
             fc_label, band_kw, off_kw = 'Forecast (best estimate)', \
                 {'fc_low': ef.low[inow:], 'fc_high': ef.high[inow:]}, \
