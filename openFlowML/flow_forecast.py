@@ -72,8 +72,12 @@ UPSTREAM_COEF_BOUNDS = (0.25, 2.5)
 # trade places (one fitted with ~0 lag, the other with a 4-day lag that
 # replays today's peak at the end of the week).
 LAG_PRIOR_HOURS = 24
-# The rain term's response to rain on the ungauged (nearby) area is fast.
+# The rain term's response to rain on the ungauged (nearby) area is fast but
+# never instantaneous: overland flow and tributaries smooth a day of rain over
+# at least half a day. K = 1 h turned each rainy day into a 24-h rectangular
+# step in the forecast.
 RAIN_LAG_GRID = tuple(range(0, 49, 6))
+RAIN_K_GRID = (12, 24, 48, 72, 96, 120)
 
 
 class ForecastError(RuntimeError):
@@ -286,7 +290,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                     # term on top (runoff ratio bounded to [0, 1]).
                     fits = routing.add_input(tgt[:inow + 1], cal_inputs, fits,
                                              rain_flux[:inow + 1], lag_grid=RAIN_LAG_GRID,
-                                             max_coef=1.0)
+                                             k_grid=RAIN_K_GRID, max_coef=1.0)
             except ValueError as e:
                 logger.warning("Calibration failed (%s); using registry defaults", e)
         rain_mode = 'off' if rain_flux is None else ('calibrated' if (fits and rain_fit) else 'default')

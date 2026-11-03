@@ -103,6 +103,8 @@ where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the 
 - `d < K` and the routed value exists: use it, `upstream_known = 1`.
 - otherwise: **hold** the last known value (starting from the last encoder day's `upstream_flow`) and set `upstream_known = 0`.
 
+**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`).
+
 `windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
 
 `openFlowML/flow_forecast.py` builds these same upstream inputs from live NWPS data. It routes them hourly, without the ML model, to produce the CLI and CI forecast charts.

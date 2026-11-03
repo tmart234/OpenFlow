@@ -78,12 +78,19 @@ ENCODER_FEATURES = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
 # value (training: the observed gridMET value, the same "perfect forecast"
 # assumption as the weather columns), later days are 0.0 (the scaled mean)
 # with basin_precip_known = 0, matching what inference can actually supply.
+#
+# upstream_change -- the routed upstream flow's change since the forecast is
+# issued (decoder value minus the last encoder value, scaled; 0 where not
+# known). The level alone made the model learn only a weak link from an
+# incoming flood wave to the target; the explicit change, together with the
+# model's linear skip head, maps "upstream rises by X" onto "flow here rises"
+# with one coefficient.
 DECODER_FEATURES = ['TMIN', 'TMAX', 'precipitation',
-                    'upstream_flow', 'upstream_known',
+                    'upstream_flow', 'upstream_known', 'upstream_change',
                     *BASIN_PRECIP_FEATURES, 'basin_precip_known',
                     'doy_sin', 'doy_cos']
 # Decoder features built per window rather than read from a dataset column.
-WINDOW_BUILT_DECODER_FEATURES = ['upstream_known', 'basin_precip_known']
+WINDOW_BUILT_DECODER_FEATURES = ['upstream_known', 'upstream_change', 'basin_precip_known']
 BASIN_PRECIP_KNOWN_DAYS = 7
 # Per-station column (unscaled int) giving how many leading decoder days have
 # a known upstream value. Missing column == 0 (no upstream gauges).
@@ -143,6 +150,20 @@ def upstream_decoder_window(future_values: np.ndarray,
     return values, known
 
 
+def upstream_change(values: np.ndarray, known: np.ndarray, last_value: float,
+                    last_observed: float = 1.0) -> np.ndarray:
+    """
+    Decoder `upstream_change`: routed upstream flow minus its value on the
+    last encoder day (scaled space) on known days, 0 elsewhere or when the
+    last encoder day had no real upstream value.
+    """
+    values = np.asarray(values, dtype=float)
+    known = np.asarray(known, dtype=float) >= 0.5
+    if not last_observed or not np.isfinite(last_value):
+        return np.zeros_like(values)
+    return np.where(known, values - float(last_value), 0.0)
+
+
 def basin_precip_decoder_window(values: np.ndarray, observed: np.ndarray,
                                 known_days: int = BASIN_PRECIP_KNOWN_DAYS) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -197,6 +218,7 @@ def _build_windows_for_station(station_df: pd.DataFrame,
                   if UPSTREAM_KNOWN_DAYS_COLUMN in df.columns else 0)
     dec_up_col = DECODER_FEATURES.index('upstream_flow')
     dec_known_col = DECODER_FEATURES.index('upstream_known')
+    dec_change_col = DECODER_FEATURES.index('upstream_change')
     bp_cols = [DECODER_FEATURES.index(c) for c in BASIN_PRECIP_FEATURES]
     bp_known_col = DECODER_FEATURES.index('basin_precip_known')
     bp_observed = df['basin_precip_observed'].to_numpy(dtype=float)
@@ -222,6 +244,8 @@ def _build_windows_for_station(station_df: pd.DataFrame,
             up_values[start + encoder_days:start + total],
             up_observed[start + encoder_days:start + total],
             known_days, up_values[last], up_observed[last])
+        dec[:, dec_change_col] = upstream_change(
+            dec[:, dec_up_col], dec[:, dec_known_col], up_values[last], up_observed[last])
         dec[:, bp_cols], dec[:, bp_known_col] = basin_precip_decoder_window(
             dec[:, bp_cols], bp_observed[start + encoder_days:start + total])
         if not (np.isfinite(enc).all() and np.isfinite(dec).all() and np.isfinite(tgt).all()):

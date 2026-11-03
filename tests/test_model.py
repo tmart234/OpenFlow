@@ -99,3 +99,16 @@ def test_station_dropout_layer_is_wired_into_the_model():
     sd = net.get_layer('station_dropout')
     assert isinstance(sd, model_mod.StationDropout)
     assert 0.0 <= sd.rate < 1.0
+
+
+def test_linear_skip_head_starts_at_zero_and_can_be_disabled():
+    net = _build_smoke_model()
+    skip = net.get_layer('linear_skip')
+    assert all((w == 0).all() for w in skip.get_weights())
+    import model as model_mod
+    plain = model_mod.build_encoder_decoder(
+        num_stations=3, num_basins=2, encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES),
+        target_features=len(windowing.TARGET_FEATURES), encoder_days=windowing.ENCODER_DAYS,
+        decoder_days=windowing.DECODER_DAYS, linear_skip=False)
+    assert 'linear_skip' not in [l.name for l in plain.layers]

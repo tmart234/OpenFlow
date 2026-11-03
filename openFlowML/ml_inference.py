@@ -239,9 +239,9 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
         raise InferenceError(f"no recent flow for {site_id}")
     fetched = combine_data.fetch_and_process_data(prefix, sid, start.to_pydatetime(),
                                                   today.to_pydatetime(), flow,
-                                                  noaa_fallback=gridmet_point_weather)
+                                                  noaa_fallback=gridmet_point_weather, coords=coords)
     if not fetched or fetched.get('noaa_data') is None or fetched['noaa_data'].empty:
-        raise InferenceError(f"no NOAA weather near {site_id}")
+        raise InferenceError(f"no weather data for {site_id} (NOAA GHCND and the gridMET fallback both empty)")
 
     # Bridge the NOAA reporting lag up to the last flow day.
     flow_last = pd.to_datetime(flow['Date']).max().normalize()
@@ -328,6 +328,10 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     dec_X[:, up_col], dec_X[:, up_known_col] = windowing.upstream_decoder_window(
         decf['upstream_flow'].to_numpy(dtype=float), decf['upstream_observed'].to_numpy(dtype=float),
         known_days, enc['upstream_flow'].iloc[-1], enc['upstream_observed'].iloc[-1])
+    if 'upstream_change' in windowing.DECODER_FEATURES:
+        dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
+            dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+            enc['upstream_observed'].iloc[-1])
     bp_cols = [windowing.DECODER_FEATURES.index(c) for c in windowing.BASIN_PRECIP_FEATURES]
     bp_known = windowing.DECODER_FEATURES.index('basin_precip_known')
     dec_X[:, bp_cols], dec_X[:, bp_known] = windowing.basin_precip_decoder_window(

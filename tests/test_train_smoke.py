@@ -68,7 +68,9 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
         config = json.load(f)
     assert 'upstream_flow' in config['encoder_features']
     assert 'upstream_known' in config['decoder_features']
-    assert config['window_built_decoder_features'] == ['upstream_known', 'basin_precip_known']
+    assert config['window_built_decoder_features'] == ['upstream_known', 'upstream_change',
+                                                        'basin_precip_known']
+    assert config['event_weight'] == train.EVENT_WEIGHT and config['linear_skip'] is True
     assert config['upstream_known_days'] == {'USGS:08276500': 7, 'USGS:09114500': 0}
     assert config['upstream_registry'] == 'upstream_gauges.json'
     assert config['basin_precip_known_days'] == 7
@@ -81,3 +83,12 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
         assert json.load(f)['upstream_flow']['transform'] == 'log1p'
     charts = sorted(os.listdir(os.path.join(base, 'charts')))
     assert charts == ['USGS_08276500_hindcast.png', 'USGS_09114500_hindcast.png']
+
+
+def test_event_weights_emphasise_changing_windows():
+    inputs = {'persistence_input': np.zeros((3, 2), dtype='float32')}
+    targets = np.zeros((3, 14, 2), dtype='float32')
+    targets[2] += 1.0                      # one window that changes a lot
+    w = train.event_weights(inputs, targets, event_weight=2.0)
+    assert w.mean() == pytest.approx(1.0)
+    assert w[2] == pytest.approx(3 * w[0])

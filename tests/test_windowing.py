@@ -293,3 +293,19 @@ def test_basin_precip_known_days_matches_qpf_horizon():
     from data import get_basin_precip
     assert windowing.BASIN_PRECIP_KNOWN_DAYS == get_basin_precip.QPF_DAYS
     assert windowing.BASIN_PRECIP_FEATURES == get_basin_precip.FEATURE_COLUMNS
+
+
+def test_upstream_change_is_relative_to_last_encoder_day_on_known_days():
+    out = windowing.upstream_change(np.array([2.0, 3.0, 3.0]), np.array([1, 1, 0]), last_value=1.5)
+    np.testing.assert_allclose(out, [0.5, 1.5, 0.0])
+    assert (windowing.upstream_change(np.ones(3), np.ones(3), 1.0, last_observed=0) == 0).all()
+
+
+def test_windows_carry_upstream_change():
+    df = _make_station_frame('USGS:A', 1, 1, n_days=120)
+    df['upstream_known_days'] = 3
+    s = windowing.build_windows(df, encoder_days=60, decoder_days=14)[0]
+    up = df['upstream_flow'].to_numpy()
+    chg = s.decoder_X[:, windowing.DECODER_FEATURES.index('upstream_change')]
+    np.testing.assert_allclose(chg[:3], up[60:63] - up[59])
+    assert (chg[3:] == 0).all()

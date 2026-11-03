@@ -34,6 +34,11 @@ ENCODER_DAYS = windowing.ENCODER_DAYS
 DECODER_DAYS = windowing.DECODER_DAYS
 
 EPOCHS = 50               # early stopping decides the actual count
+# Sample weight = 1 + EVENT_WEIGHT * mean |target - persistence| (scaled log
+# flow), renormalised to mean 1. Most windows are steady, so an unweighted
+# loss rewards near-flat forecasts; this puts the rises and recessions --
+# the windows a forecast exists for -- back in charge.
+EVENT_WEIGHT = 2.0
 BATCH_SIZE = 64
 PATIENCE = 6              # epochs without val improvement before stopping
 LR_PATIENCE = 3           # epochs before ReduceLROnPlateau halves LR
@@ -70,6 +75,13 @@ def _persistence_pred_for_samples(test_samples):
     return np.stack(preds).astype('float32')
 
 
+def event_weights(inputs, targets, event_weight: float = EVENT_WEIGHT) -> np.ndarray:
+    """Per-window weights emphasising change from persistence (mean 1)."""
+    change = np.abs(targets - inputs['persistence_input'][:, None, :]).mean(axis=(1, 2))
+    w = 1.0 + event_weight * change
+    return (w / w.mean()).astype('float32')
+
+
 def main():
     base_path = combine_data.get_base_path()
 
@@ -77,7 +89,15 @@ def main():
     #    fetch + daily indexing + gap handling + SWE wiring + HUC8 tagging;
     #    save_combined_data inside combine_data writes the normalized CSV plus
     #    scalers/station_index/basin_index JSON.)
-    data = combine_data.main()
+    # OPENFLOW_REUSE_COMBINED=1 re-normalizes the combined CSV a previous run
+    # wrote instead of re-fetching every source (model iteration; not for CI).
+    cached = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
+    if os.getenv('OPENFLOW_REUSE_COMBINED', '').strip() in ('1', 'true', 'True') and os.path.exists(cached):
+        import pandas as pd
+        logger.info("Reusing %s (OPENFLOW_REUSE_COMBINED)", cached)
+        data = normalize_data.normalize_data(pd.read_csv(cached), artifacts_dir=base_path)
+    else:
+        data = combine_data.main()
     if data is None or data.empty:
         raise ValueError("combine_data returned no usable data")
 
@@ -142,9 +162,12 @@ def main():
             monitor='val_loss', factor=0.5, patience=LR_PATIENCE,
             min_lr=1e-5, verbose=1),
     ]
+    train_w = event_weights(train_inputs, train_targets)
+    val_w = event_weights(val_inputs, val_targets)
     net.fit(
         train_inputs, train_targets,
-        validation_data=(val_inputs, val_targets),
+        sample_weight=train_w,
+        validation_data=(val_inputs, val_targets, val_w),
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
         callbacks=callbacks,
@@ -236,6 +259,8 @@ def main():
         'upstream_registry': 'upstream_gauges.json',
         'basin_precip_known_days': windowing.BASIN_PRECIP_KNOWN_DAYS,
         'basin_zones': 'basin_zones.json',
+        'event_weight': EVENT_WEIGHT,
+        'linear_skip': True,
         # Sources switched off for this run (ablation levers / missing
         # credentials). Inference must switch off the same ones so it sees
         # the placeholders the model was trained on.

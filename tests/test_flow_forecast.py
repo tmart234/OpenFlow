@@ -231,3 +231,7 @@ def test_rain_panel_is_opt_in(tmp_path, fake_nwps, monkeypatch):
                         lambda *a, **k: seen.append(k.get('rain')) or real(*a, **k))
     flow_forecast.run('taos-box', days=3, out_dir=str(tmp_path), zones=_rain_zones())
     assert seen == [None]                                   # default: no rain panel
+
+
+def test_rain_term_is_never_an_instant_step():
+    assert min(flow_forecast.RAIN_K_GRID) >= 12

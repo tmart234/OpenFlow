@@ -306,7 +306,8 @@ def _disabled(env_var):
     return os.getenv(env_var, '').strip() in ('1', 'true', 'True')
 
 
-def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None):
+def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None,
+                           coords=None):
     """
     Resolve a site's coordinates and fetch all its auxiliary timeseries:
     NOAA temperature, NRCS SWE, SMAP soil moisture, USDM drought, USBR
@@ -322,7 +323,9 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
     ablation runs:
       OPENFLOW_DISABLE_SMAP, OPENFLOW_DISABLE_DROUGHT, OPENFLOW_DISABLE_RESERVOIR
     """
-    if prefix == "USGS":
+    if coords is not None:   # caller already resolved them (saves a flaky second lookup)
+        coords_dict = {'latitude': coords['lat'], 'longitude': coords['lon']}
+    elif prefix == "USGS":
         coords_dict = get_usgs_coordinates(site_id)
     elif prefix == "DWR":
         coords_dict = get_dwr_coordinates(site_id)

@@ -382,3 +382,19 @@ def test_merge_defaults_basin_precip_to_placeholder():
         noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
     assert (merged['basin_precip_observed'] == 0).all()
     assert (merged['rain_mid'] == 0.0).all()
+
+
+def test_fetch_uses_given_coords_without_a_second_lookup(monkeypatch):
+    import pytest
+    monkeypatch.setattr(combine_data, 'get_usgs_coordinates',
+                        lambda *a: pytest.fail('coordinates should not be looked up again'))
+    seen = {}
+
+    def fake_noaa(lat, lon, start, end):
+        seen['latlon'] = (lat, lon)
+        return None, pd.DataFrame()
+    monkeypatch.setattr(combine_data.get_noaa, 'main', fake_noaa)
+    out = combine_data.fetch_and_process_data(
+        'USGS', 'X', datetime(2026, 1, 1), datetime(2026, 1, 2), pd.DataFrame(),
+        coords={'lat': 36.3, 'lon': -105.7})
+    assert out is None and seen['latlon'] == (36.3, -105.7)

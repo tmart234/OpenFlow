@@ -94,6 +94,10 @@ def test_prepare_inputs_builds_model_ready_windows(fake_sources):
     # Upstream: lag 1 day -> only tomorrow's routed value is known (no RFC forecast).
     up_known = dec[:, windowing.DECODER_FEATURES.index('upstream_known')]
     np.testing.assert_array_equal(up_known, [1] + [0] * 13)
+    up = dec[:, windowing.DECODER_FEATURES.index('upstream_flow')]
+    last_up = x['encoder_input'][0, -1, windowing.ENCODER_FEATURES.index('upstream_flow')]
+    chg = dec[:, windowing.DECODER_FEATURES.index('upstream_change')]
+    assert chg[0] == pytest.approx(up[0] - last_up, rel=1e-4) and (chg[1:] == 0).all()
     # Basin precip: NWS QPF covers through today + 7 -> 7 known decoder days.
     bp_known = dec[:, windowing.DECODER_FEATURES.index('basin_precip_known')]
     np.testing.assert_array_equal(bp_known, [1] * 7 + [0] * 7)
