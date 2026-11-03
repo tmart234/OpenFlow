@@ -219,3 +219,39 @@ def test_anchored_input_passes_more_of_a_rise_beyond_ditch_capacity():
     assert loose[-1] == pytest.approx(60 + r * 4000)                 # pure ratio without capacity
     with pytest.raises(ValueError):
         routing.anchored_input(np.full(10, np.nan), np.zeros(10))
+
+
+def test_find_crests_picks_floods_not_noise():
+    rng = np.random.default_rng(0)
+    x = 300 + rng.normal(0, 5, 1200)
+    x[200:260] += 3000 * np.exp(-0.5 * ((np.arange(60) - 30) / 8.0) ** 2)    # flood crest at ~230
+    x[700:760] += 1200 * np.exp(-0.5 * ((np.arange(60) - 30) / 8.0) ** 2)    # smaller flood at ~730
+    x[1000:1010] += 60                                                     # a bump, not a flood
+    crests = routing.find_crests(x)
+    assert len(crests) == 2 and abs(crests[0] - 230) <= 2 and abs(crests[1] - 730) <= 2
+
+
+def test_crest_timing_errors_sign_and_window():
+    pred = np.zeros(200)
+    pred[110] = 5.0                       # predicted 10 h after the crest at 100
+    assert routing.crest_timing_errors(pred, [100]).tolist() == [10.0]
+    pred2 = np.zeros(200)
+    pred2[90] = 5.0
+    assert routing.crest_timing_errors(pred2, [100]).tolist() == [-10.0]
+
+
+def test_fit_with_timing_weight_prefers_the_crest_timed_lag():
+    # The target follows the upstream input 12 h later at the crests, but a
+    # simultaneous local rise (same storm) makes a 0 h lag fit ordinary hours
+    # about as well.
+    n = 900
+    t = np.arange(n)
+    up = 200 + 2500 * np.exp(-0.5 * ((t - 300) / 10.0) ** 2) + 2500 * np.exp(-0.5 * ((t - 650) / 10.0) ** 2)
+    local = 1500 * (np.exp(-0.5 * ((t - 296) / 14.0) ** 2) + np.exp(-0.5 * ((t - 646) / 14.0) ** 2))
+    target = 100 + routing.route(up, 12, 1) + local
+    grids = [(list(range(0, 25, 2)), [1, 6])]
+    plain = routing.fit(target, [up], grids=grids)[0]
+    timed = routing.fit(target, [up], grids=grids, timing_weight=2.0)[0]
+    err = lambda f: np.abs(routing.crest_timing_errors(f.predict([up]), routing.find_crests(target))).mean()
+    assert timed.timing_mae_hours is not None and err(timed) <= err(plain)
+    assert timed.to_dict()['timing_mae_hours'] == timed.timing_mae_hours

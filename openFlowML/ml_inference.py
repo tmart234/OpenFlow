@@ -173,6 +173,32 @@ def forecast_weather(lat: float, lon: float, tz: str, days: int = 16) -> pd.Data
     return nws_point_daily(lat, lon, tz)
 
 
+SPLICE_OVERLAP_DAYS = 14
+
+
+def splice_on_training_scale(archive: pd.Series, nwps_daily: pd.Series) -> pd.Series:
+    """
+    One daily series on the training data's scale: the archive (the source
+    the model trained on) wherever it has a value, then the NWPS days after
+    it ends (observations, then the RFC forecast), multiplied by the median
+    archive / NWPS ratio over their last SPLICE_OVERLAP_DAYS common days.
+    The two can disagree: in Oct 2026 the CO DWR Lobatos record read ~0.5x
+    the USGS-based NWPS series, so letting NWPS overwrite the archive fed the
+    model an upstream level it never saw in training.
+    """
+    archive = archive.dropna() if archive is not None else pd.Series(dtype=float)
+    nwps_daily = nwps_daily.dropna() if nwps_daily is not None else pd.Series(dtype=float)
+    if archive.empty:
+        return nwps_daily
+    if nwps_daily.empty:
+        return archive
+    both = pd.concat([archive, nwps_daily], axis=1, keys=['a', 'n']).dropna()
+    both = both[both['n'] > 0].tail(SPLICE_OVERLAP_DAYS)
+    ratio = float(np.median(both['a'] / both['n'])) if len(both) else 1.0
+    tail = nwps_daily[nwps_daily.index > archive.index.max()] * ratio
+    return pd.concat([archive, tail]).sort_index()
+
+
 def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
                      history_start) -> pd.DataFrame:
     """Routed upstream_flow + observed flag for `days` from observed daily means + RFC forecasts."""
@@ -185,17 +211,17 @@ def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
     for g in cfg['upstream'] + ([cfg['anchor']] if cfg.get('anchor') else []):
         hist = get_upstream.fetch_daily_mean(g['site_id'], history_start, days[-1])
         payload = nwps.get_stageflow(g['nws_lid']) if g.get('nws_lid') else None
-        parts = [hist]
+        nwps_daily = []
         for kind in ('observed', 'forecast'):
             h = nwps.hourly(nwps.parse_series(payload, kind)) if payload else pd.Series(dtype=float)
             if len(h):
                 d = h.tz_convert(cfg.get('timezone', 'UTC'))
                 d = d.groupby(d.index.date).mean()
                 d.index = pd.DatetimeIndex(d.index)
-                parts.append(d)
-        combined = pd.concat([p for p in parts if len(p)])
-        combined = combined[~combined.index.duplicated(keep='last')].sort_index()
-        series[g['site_id']] = combined
+                nwps_daily.append(d)
+        nw = pd.concat(nwps_daily) if nwps_daily else pd.Series(dtype=float)
+        nw = nw[~nw.index.duplicated(keep='last')].sort_index()
+        series[g['site_id']] = splice_on_training_scale(hist, nw)
     routed = get_upstream.routed_daily(series, cfg)
     out['upstream_flow'] = routed.reindex(days)
     return out

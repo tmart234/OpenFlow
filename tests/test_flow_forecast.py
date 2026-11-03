@@ -295,3 +295,30 @@ def test_routed_forecast_is_pure_and_matches_the_cli_core():
     assert res['gauges'] == [cfg['anchor']] and len(res['ef'].central) == len(GRID)
     direct = flow_forecast.routed_forecast({k: v for k, v in cfg.items() if k != 'anchor'}, tgt, INOW, ins)
     assert direct['anchor'] is None and direct['gauges'] == cfg['upstream']
+
+
+def test_skill_note_quotes_backtested_crest_timing(tmp_path):
+    path = str(tmp_path / 'skill.json')
+    with open(path, 'w') as f:
+        json.dump({'USGS:09180000': {'period': ['2015-01-01', '2026-11-01'], 'crests': 60, 'rain': True,
+                                     'leads': {'12': {'median_abs_timing_h': 6.0, 'median_crest_ratio': 0.88},
+                                               '24': {'median_abs_timing_h': 8.5, 'median_crest_ratio': 0.91},
+                                               '6': {'median_abs_timing_h': 5.0, 'median_crest_ratio': 0.9}}}}, f)
+    note = flow_forecast.skill_note(flow_forecast.routing_skill('USGS:09180000', path))
+    assert note.startswith('Routing crest timing, backtested on 60 floods (2015-2026)')
+    assert '6 h at 12 h ahead, 8 h at 24 h ahead' in note and '0.88-0.91x' in note
+    assert flow_forecast.routing_skill('USGS:OTHER', path) is None and flow_forecast.skill_note(None) is None
+
+
+def test_skill_note_switches_to_rain_driven_crests_in_a_storm():
+    skill = {'period': ['2015-01-01', '2026-11-01'], 'crests': 60,
+             'leads': {'12': {'median_abs_timing_h': 9, 'median_timing_h': 8, 'median_crest_ratio': 0.85}},
+             'rain_driven': {'crests': 30, 'leads': {'12': {'median_abs_timing_h': 16, 'median_timing_h': 15,
+                                                             'median_crest_ratio': 0.8}}},
+             'other': {'crests': 30, 'leads': {'12': {'median_abs_timing_h': 4, 'median_timing_h': 2,
+                                                       'median_crest_ratio': 0.95}}}}
+    storm = flow_forecast.skill_note(skill, storm=True)
+    assert '30 rain-driven floods' in storm and '16 h at 12 h ahead, usually late' in storm
+    assert 'NWS forecast models the storm' in storm
+    calm = flow_forecast.skill_note(skill, storm=False)
+    assert 'without heavy local rain' in calm and '4 h at 12 h ahead;' in calm and 'NWS' not in calm

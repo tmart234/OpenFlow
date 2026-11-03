@@ -55,7 +55,9 @@ DEFAULT_DAYS = 7
 DEFAULT_CALIB_DAYS = 28
 # Error correction to the latest observation decays with this e-folding time;
 # ~ the reach travel time (1-2 days) is the hydrologic rule of thumb.
-DEFAULT_BIAS_TAU_HOURS = 48.0
+# How fast the forecast lets go of the current observation (e-folding, h).
+# 24 h, not 48 h: crest_backtest.py on 2015-2026 floods (D vs A in the PR).
+DEFAULT_BIAS_TAU_HOURS = 24.0
 CHART_HISTORY_DAYS = 4
 MIN_CALIB_HOURS = 7 * 24
 # Basin-mean rain (mm) on the ungauged area within the calibration window
@@ -78,6 +80,9 @@ LAG_PRIOR_HOURS = 24
 # step in the forecast.
 RAIN_LAG_GRID = tuple(range(0, 49, 6))
 RAIN_K_GRID = (12, 24, 48, 72, 96, 120)
+# Weight of crest timing in the calibration ranking (routing.fit): 0 ranks
+# travel-time candidates by RMSE alone. Chosen with crest_backtest.py.
+TIMING_WEIGHT = 0.0
 
 
 class ForecastError(RuntimeError):
@@ -147,6 +152,8 @@ def _rain_input(site_id: str, grid: pd.DatetimeIndex, inow: int, tz: str, zones=
     info['calib_mm'] = round(float(rate.iloc[:inow + 1].sum()), 1)
     info['next_mm'] = round(float(rate.iloc[inow + 1:].sum()), 1)
     info['past7_mm'] = round(float(rate.iloc[max(0, inow - 167):inow + 1].sum()), 1)
+    # Storm test for the routing skill note: rain in the last 3 days + next 2.
+    info['storm_mm'] = round(float(rate.iloc[max(0, inow - 71):inow + 49].sum()), 1)
     out.update(flux=flux, info=info)
     return out
 
@@ -181,14 +188,25 @@ def _target_only_forecast(target: dict, grid: pd.DatetimeIndex, use_official: bo
                                floor=floor)
 
 
+# Calibration search around the registry priors. 2-h lag steps (6-h steps
+# quantised crest timing) and smoothing K capped at max(12 h, the prior):
+# larger K fits the many ordinary hours a little better but flattens and
+# delays crests. On 60 Dolores floods (2015-2026) this cut the median crest
+# timing error at 12 h lead from 11 h to 6 h (crest_backtest.py).
+SKILL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'routing_skill.json')
+LAG_STEP_HOURS = 2
+K_GRID = (1, 3, 6, 12, 24, 48, 72, 96, 120)
+MAX_K_HOURS = 12.0
+
+
 def _prior_grids(gauges):
     """Per-gauge (lag_grid, k_grid) windows around the registry priors."""
     grids = []
     for g in gauges:
         lag = int(g.get('lag_hours', 24 * g.get('lag_days', 1)))
         k = float(g.get('k_hours', 12))
-        lags = [l for l in routing.DEFAULT_LAG_GRID if abs(l - lag) <= LAG_PRIOR_HOURS] or [lag]
-        ks = [x for x in routing.DEFAULT_K_GRID if x <= max(48.0, 3 * k)] or [k]
+        lags = list(range(max(0, lag - LAG_PRIOR_HOURS), lag + LAG_PRIOR_HOURS + 1, LAG_STEP_HOURS)) or [lag]
+        ks = [x for x in K_GRID if x <= max(MAX_K_HOURS, k)] or [k]
         grids.append((lags, ks))
     return grids
 
@@ -197,6 +215,42 @@ def _plausible(fit: routing.RoutingFit, n_upstream: int) -> bool:
     """Upstream weights comfortably inside UPSTREAM_COEF_BOUNDS (not pinned to a bound)."""
     lo, hi = UPSTREAM_COEF_BOUNDS
     return all(lo * 1.05 <= c <= hi * 0.95 for c in fit.coefs[:n_upstream])
+
+
+def routing_skill(site_id: str, path: str = SKILL_PATH) -> Optional[dict]:
+    """The station's crest-timing backtest scores (crest_backtest.py --skill-json), or None."""
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f).get(site_id)
+
+
+STORM_MM = 10.0   # same threshold crest_backtest.py uses for rain-driven crests
+
+
+def skill_note(skill: Optional[dict], storm: Optional[bool] = None) -> Optional[str]:
+    """
+    One footnote line: how well the routing timed past crests at this station.
+    With storm True / False it quotes the rain-driven / other crests, when the
+    backtest split them; a storm adds a pointer to the NWS forecast.
+    """
+    if not skill or not skill.get('leads'):
+        return None
+    part, label = skill, 'floods'
+    if storm is not None and skill.get('rain_driven' if storm else 'other', {}).get('leads'):
+        part = skill['rain_driven' if storm else 'other']
+        label = 'rain-driven floods' if storm else 'floods without heavy local rain'
+    leads = sorted(part['leads'].items(), key=lambda kv: int(kv[0]))
+    timing = ', '.join(f"{v['median_abs_timing_h']:.0f} h at {int(k)} h ahead" for k, v in leads if int(k) in (12, 24, 48))
+    bias = [v.get('median_timing_h', 0.0) for _, v in leads]
+    ratios = [v['median_crest_ratio'] for _, v in leads]
+    note = (f"Routing crest timing, backtested on {part.get('crests', skill['crests'])} {label} "
+            f"({skill['period'][0][:4]}-{skill['period'][1][:4]}): typical error {timing}"
+            f"{', usually late' if np.median(bias) >= 4 else (', usually early' if np.median(bias) <= -4 else '')}; "
+            f"crests {min(ratios):.2f}-{max(ratios):.2f}x observed.")
+    if storm:
+        note += "\nRain storm in progress: where shown, the NWS forecast models the storm runoff hour by hour."
+    return note
 
 
 def _lag_hours(g: dict) -> int:
@@ -227,7 +281,9 @@ def anchor_supply(cfg: dict, upstream_inputs: Sequence[np.ndarray]) -> np.ndarra
 def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequence[np.ndarray],
                     anchor_obs: Optional[np.ndarray] = None, rain_flux: Optional[np.ndarray] = None,
                     rain_calib_mm: float = 0.0,
-                    bias_tau_hours: float = DEFAULT_BIAS_TAU_HOURS) -> dict:
+                    bias_tau_hours: float = DEFAULT_BIAS_TAU_HOURS,
+                    timing_weight: Optional[float] = None,
+                    calibrate: Optional[bool] = None) -> dict:
     """
     The routing forecast on an hourly grid, without any I/O (run() feeds it
     live NWPS data; backtests feed it archives).
@@ -252,13 +308,19 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
     rain_cfg = {**DEFAULT_RAIN, **{k: v for k, v in cfg.get('rain', {}).items() if not k.startswith('_')}}
     rain_fit = rain_flux is not None and rain_calib_mm >= MIN_CALIB_RAIN_MM
     cal_inputs = [x[:inow + 1] for x in inputs]
-    calibrated = (np.isfinite(tgt[:inow + 1]).sum() >= MIN_CALIB_HOURS
+    # A station whose registry parameters were fitted on its historical floods
+    # (crest_backtest.py --calibrate) sets routing.calibrate = false: those
+    # beat refitting on the last 28 days, which rarely hold a flood.
+    if calibrate is None:
+        calibrate = bool((cfg.get('routing') or {}).get('calibrate', True))
+    calibrated = (calibrate and np.isfinite(tgt[:inow + 1]).sum() >= MIN_CALIB_HOURS
                   and all(routing.is_informative(x) for x in cal_inputs))
     fits = []
     if calibrated:
         try:
             fits = routing.fit(tgt[:inow + 1], cal_inputs, coef_bounds=UPSTREAM_COEF_BOUNDS,
-                               grids=_prior_grids(gauges))
+                               grids=_prior_grids(gauges),
+                               timing_weight=TIMING_WEIGHT if timing_weight is None else timing_weight)
             if fits and not _plausible(fits[0], len(inputs)):
                 logger.warning("Calibration pinned to a weight bound (%s); using registry defaults",
                                [round(c, 2) for c in fits[0].coefs])
@@ -488,6 +550,12 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                         f"{'; NWS official forecast shown for comparison' if not official.empty else ' (no NWS forecast is current for this gauge)'}.\n"
                         f"{routed}"
                         f"Band = parameter ensemble ± calibration error. Rain beyond the NWS forecast window is not included.")
+            storm = None
+            if rain is not None and (rain.get('info') or {}).get('storm_mm') is not None:
+                storm = rain['info']['storm_mm'] >= STORM_MM
+            note = skill_note(routing_skill(site_id), storm)
+            if note:
+                footnote += '\n' + note
             fc_label, band_kw, off_kw = 'Forecast (best estimate)', \
                 {'fc_low': ef.low[inow:], 'fc_high': ef.high[inow:]}, \
                 {'official_times': official.index if not official.empty else None,

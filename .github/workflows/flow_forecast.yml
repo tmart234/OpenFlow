@@ -1,15 +1,26 @@
 name: Flow Forecast
 
-# On-demand weekly forecast + chart for registered stations
+# Daily (and on-demand) weekly forecast + chart for registered stations
 # (data/upstream_gauges.json): Lower Taos Box, Royal Gorge, Conejos, Dolores
 # (Gateway-Dewey) by default. No trained model needed; when a model-* release
-# exists its ML forecast is overlaid on each chart. The CSV / JSON / PNG are uploaded as a workflow artifact.
-# To run it on a schedule, add e.g.:
-#   schedule:
-#     - cron: '17 13 * * *'   # daily, ~6 AM Mountain
+# exists its ML forecast is overlaid on each chart. The CSV / JSON / PNG are
+# uploaded as a workflow artifact.
+#
+# Forecast archive: each scheduled run commits the forecasts (OpenFlow
+# routing, the NWS official forecast where one exists, and the ML model) to
+# the `forecast-archive` branch under archive/YYYY-MM-DD/, then scores the
+# last 60 days of archived forecasts against what the rivers did
+# (openFlowML/score_archive.py) in the job summary. NWS keeps no archive of
+# its past forecasts, so this is how the sources get compared over time.
 on:
+  schedule:
+    - cron: '17 13 * * *'   # daily, ~6:17 AM MST
   workflow_dispatch:
     inputs:
+      archive:
+        description: 'Also archive these forecasts and score the archive'
+        type: boolean
+        default: false
       sites:
         description: 'Comma-separated stations: alias, site id, or NWS LID'
         type: string
@@ -19,11 +30,15 @@ on:
         type: string
         default: '7'
 
+concurrency:
+  group: flow-forecast
+  cancel-in-progress: false
+
 jobs:
   forecast:
     runs-on: ubuntu-latest
     permissions:
-      contents: read      # download the model release
+      contents: write     # download the model release; push the forecast-archive branch
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -89,3 +104,31 @@ jobs:
         name: flow_forecast
         path: forecast_out/
         if-no-files-found: warn
+
+    - name: Archive forecasts (forecast-archive branch)
+      id: archive
+      if: github.event_name == 'schedule' || inputs.archive
+      shell: bash
+      run: |
+        set -euo pipefail
+        DAY=$(date -u +%Y-%m-%d)
+        if git ls-remote --exit-code --heads origin forecast-archive >/dev/null; then
+          git fetch --depth 1 origin forecast-archive
+          git worktree add archive-wt FETCH_HEAD
+          cd archive-wt && git checkout -q -B forecast-archive
+        else
+          git worktree add --detach archive-wt
+          cd archive-wt && git checkout -q --orphan forecast-archive && git rm -rfq .
+        fi
+        mkdir -p "archive/$DAY"
+        cp ../forecast_out/*_forecast.json ../forecast_out/*_forecast.csv "archive/$DAY/"
+        git add archive
+        git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+          commit -qm "Forecasts $DAY" || echo "Nothing new to archive"
+        git push -q origin forecast-archive
+
+    - name: Score archived forecasts
+      if: steps.archive.outcome == 'success'
+      run: |
+        python openFlowML/score_archive.py --archive archive-wt --days 60 --out forecast_out/archive_scores.md
+        cat forecast_out/archive_scores.md >> "$GITHUB_STEP_SUMMARY"

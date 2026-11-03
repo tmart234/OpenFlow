@@ -183,3 +183,15 @@ def test_verified_skill_reads_the_station_from_the_quality_report():
     assert v['rise_peak_ratio'] == 0.85 and v['windows'] == 784
     assert ml_inference.verified_skill(art, 'USGS:OTHER') is None
     assert ml_inference.verified_skill({'quality': None}, SITE) is None
+
+
+def test_splice_keeps_the_training_scale_and_rescales_nwps_days():
+    days = pd.date_range('2026-10-01', periods=20)
+    archive = pd.Series(50.0, index=days[:15])                   # DWR: half of NWPS
+    nwps_days = pd.Series(100.0, index=days)                     # NWPS obs + forecast
+    nwps_days.iloc[-3:] = 300.0                                  # RFC forecast rise
+    out = ml_inference.splice_on_training_scale(archive, nwps_days)
+    assert (out[days[:15]] == 50.0).all()                        # archive wins where present
+    assert out[days[15]] == pytest.approx(50.0)                  # NWPS rescaled by 0.5
+    assert out[days[-1]] == pytest.approx(150.0)                 # the forecast rise keeps its shape
+    assert ml_inference.splice_on_training_scale(pd.Series(dtype=float), nwps_days).equals(nwps_days)

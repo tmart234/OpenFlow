@@ -103,7 +103,7 @@
     }
   },
   "DWR:ARKCANCO": {
-    "name": "Arkansas River at Cañon City, CO",
+    "name": "Arkansas River at Cañon City, CO (state gauge ARKCANCO, year-round)",
     "short_name": "Royal Gorge",
     "reach": "Royal Gorge of the Arkansas (Parkdale to Cañon City)",
     "aliases": [
@@ -129,7 +129,7 @@
     ],
     "context_gauges": [
       {
-        "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in)",
+        "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in; seasonal)",
         "nws_lid": "PDLC2"
       },
       {
@@ -142,7 +142,8 @@
       "lag_hours": 6,
       "k_hours": 24,
       "runoff_ratio": 0.03
-    }
+    },
+    "_doc_gauge": "Forecast point: the Colorado DWR gauge ARKCANCO in downtown Cañon City (USGS 07096000, NWS CNCC2), below the Royal Gorge take-out; it reports year-round. The Parkdale gauge at the put-in (PDLC2) is seasonal and only shown as context when it reports."
   },
   "DWR:CONMOGCO": {
     "name": "Conejos River near Mogote, CO",

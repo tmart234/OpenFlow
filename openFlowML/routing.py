@@ -110,6 +110,9 @@ class RoutingFit:
     intercept: float
     rmse: float
     source: str = 'calibrated'   # 'calibrated' | 'default'
+    # Mean absolute crest timing error (h) on the calibration window's crests,
+    # when fit() was asked to score timing (None otherwise).
+    timing_mae_hours: Optional[float] = None
 
     def predict(self, inputs: Sequence[np.ndarray]) -> np.ndarray:
         out = np.full(len(inputs[0]), float(self.intercept))
@@ -122,7 +125,60 @@ class RoutingFit:
                 'k_hours': list(map(float, self.ks)),
                 'coefs': list(map(float, self.coefs)),
                 'intercept': float(self.intercept),
-                'rmse': float(self.rmse), 'source': self.source}
+                'rmse': float(self.rmse), 'source': self.source,
+                'timing_mae_hours': self.timing_mae_hours}
+
+
+# --------------------------------------------------------------------------
+# Crests
+# --------------------------------------------------------------------------
+
+CREST_MIN_RATIO = 1.5        # crest >= 1.5x the lowest flow of the 3 days before
+CREST_MIN_RISE_CFS = 150.0   # ...and at least this much above it
+CREST_FALL_RATIO = 0.75      # ...and the flow falls below 75% of it within 3 days
+CREST_SEPARATION_HOURS = 96  # one crest per 4 days
+CREST_WINDOW_HOURS = 48      # a routed crest within +-48 h of the observed one
+
+
+def find_crests(values: np.ndarray, min_ratio: float = CREST_MIN_RATIO,
+                min_rise: float = CREST_MIN_RISE_CFS,
+                separation: int = CREST_SEPARATION_HOURS,
+                base_window: int = 72, fall_ratio: float = CREST_FALL_RATIO,
+                fall_window: int = 72) -> np.ndarray:
+    """
+    Indices of flood crests in an hourly flow series: local maxima of the
+    3-hour mean, at least `separation` hours apart, that rose at least
+    `min_ratio` x and `min_rise` cfs above the lowest flow of the preceding
+    `base_window` hours and fall below `fall_ratio` x within `fall_window`
+    hours after. Sharp rain / flood-wave crests only: a snowmelt plateau that
+    builds over weeks does not qualify, and its "crest time" would be noise.
+    NaN hours never count as crests.
+    """
+    from scipy.signal import find_peaks
+    x = pd.Series(np.asarray(values, dtype=float)).rolling(3, center=True, min_periods=1).mean()
+    base = x.rolling(base_window, min_periods=12).min().shift(1)
+    after = x[::-1].rolling(fall_window, min_periods=12).min()[::-1].shift(-1)
+    filled = x.fillna(-np.inf).to_numpy()
+    peaks, _ = find_peaks(filled, distance=max(1, int(separation)))
+    keep = [int(i) for i in peaks
+            if np.isfinite(x.iloc[i]) and np.isfinite(base.iloc[i]) and base.iloc[i] > 0
+            and x.iloc[i] >= min_ratio * base.iloc[i] and x.iloc[i] - base.iloc[i] >= min_rise
+            and np.isfinite(after.iloc[i]) and after.iloc[i] <= fall_ratio * x.iloc[i]]
+    return np.asarray(keep, dtype=int)
+
+
+def crest_timing_errors(pred: np.ndarray, crest_idx: Sequence[int],
+                        window: int = CREST_WINDOW_HOURS) -> np.ndarray:
+    """Hours from each observed crest to the predicted maximum within +-window (positive = late)."""
+    pred = np.asarray(pred, dtype=float)
+    out = []
+    for k in crest_idx:
+        lo, hi = max(0, k - window), min(len(pred), k + window + 1)
+        seg = pred[lo:hi]
+        if seg.size == 0 or not np.isfinite(seg).any():
+            continue
+        out.append(lo + int(np.nanargmax(seg)) - k)
+    return np.asarray(out, dtype=float)
 
 
 def _solve(target, routed, rows):
@@ -154,7 +210,8 @@ def fit(target: np.ndarray,
         warmup_hours: int = WARMUP_HOURS,
         sweeps: int = 3,
         coef_bounds: Optional[Tuple[float, float]] = None,
-        grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None) -> List[RoutingFit]:
+        grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None,
+        timing_weight: float = 0.0) -> List[RoutingFit]:
     """
     Calibrate (lag_i, K_i) by grid search and (c_i, b) by least squares.
 
@@ -167,8 +224,14 @@ def fit(target: np.ndarray,
     coefficient outside `coef_bounds` when given -- e.g. (0.25, 2.5): a gauge
     "tripling" on its way downstream means the fit is absorbing something
     else (local tributary inflow) and should not be trusted. Returns up to top_n
-    fits, best (lowest RMSE) first. Inputs and target must be hourly arrays
-    of equal length with no NaN in the inputs; NaN target hours are ignored.
+    fits, best first. Inputs and target must be hourly arrays of equal
+    length with no NaN in the inputs; NaN target hours are ignored.
+
+    Ranking: by RMSE, or, with timing_weight > 0 and flood crests in the
+    target (find_crests), by RMSE / std(target) + timing_weight * mean
+    |crest timing error| / 12 h. A pure RMSE fit is dominated by the many
+    ordinary hours; in a rain flood every gauge rises at once, so it can pick
+    a travel time of ~0 h and put the crest hours early.
     """
     target = np.asarray(target, dtype=float)
     inputs = [np.asarray(x, dtype=float) for x in inputs]
@@ -183,6 +246,9 @@ def fit(target: np.ndarray,
     rows[:min(warmup_hours, n)] = False
     if rows.sum() < 24:
         raise ValueError("not enough target observations to calibrate")
+
+    crest_idx = find_crests(np.where(rows, target, np.nan)) if timing_weight > 0 else np.array([], int)
+    scale = float(np.nanstd(target[rows])) or 1.0
 
     if grids is None:
         grids = [(lag_grid, k_grid)] * len(inputs)
@@ -209,8 +275,17 @@ def fit(target: np.ndarray,
         if (coefs >= lo).all() and (coefs <= hi).all():
             res = RoutingFit([p[0] for p in params], [p[1] for p in params],
                              coefs.tolist(), b, rmse)
+            if len(crest_idx):
+                pred = b + sum(c * ri for c, ri in zip(coefs, r))
+                err = crest_timing_errors(pred, crest_idx)
+                res.timing_mae_hours = float(np.mean(np.abs(err))) if err.size else None
         results[params] = res
         return res
+
+    def score(f: RoutingFit) -> float:
+        if f.timing_mae_hours is None:
+            return f.rmse / scale
+        return f.rmse / scale + timing_weight * f.timing_mae_hours / 12.0
 
     if len(inputs) <= 2:
         for params in itertools.product(*combos_per_input):
@@ -224,12 +299,12 @@ def fit(target: np.ndarray,
                     trial = list(current)
                     trial[i] = c
                     res = evaluate(tuple(trial))
-                    if res is not None and (best is None or res.rmse < best[0]):
-                        best = (res.rmse, c)
+                    if res is not None and (best is None or score(res) < best[0]):
+                        best = (score(res), c)
                 if best is not None:
                     current[i] = best[1]
 
-    fits = sorted((f for f in results.values() if f is not None), key=lambda f: f.rmse)
+    fits = sorted((f for f in results.values() if f is not None), key=score)
     return fits[:top_n]
 
 
