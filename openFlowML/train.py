@@ -46,6 +46,11 @@ LR_PATIENCE = 3           # epochs before ReduceLROnPlateau halves LR
 # mean 1. Day-1 errors are small next to day-14 errors, so an unweighted loss
 # barely cares about tomorrow; 0 switches this off.
 LEAD_WEIGHT_POWER = 1.0
+# Huber loss threshold (scaled log flow). Day-to-day changes are mostly well
+# under 0.05, so 0.05 makes the loss absolute-error-like (median-seeking):
+# far fewer spurious wiggles on ordinary days than a squared-error loss, which
+# chases the rare big changes. Verified with evaluate.py on held-out years.
+HUBER_DELTA = 0.05
 # Members of the averaged ensemble (model.average_ensemble), each from its own
 # random seed. Averaging removes much of one network's day-to-day noise.
 ENSEMBLE_SIZE = int(os.getenv('OPENFLOW_ENSEMBLE_SIZE', '') or 3)
@@ -122,6 +127,7 @@ def _build_member(num_stations, num_basins):
         target_features=len(windowing.TARGET_FEATURES),
         encoder_days=ENCODER_DAYS,
         decoder_days=DECODER_DAYS,
+        huber_delta=HUBER_DELTA,
     )
 
 
@@ -365,6 +371,7 @@ def main():
         'basin_zones': 'basin_zones.json',
         'event_weight': EVENT_WEIGHT,
         'lead_weight_power': LEAD_WEIGHT_POWER,
+        'huber_delta': HUBER_DELTA,
         'linear_skip': True,
         'ensemble_size': len(members),
         'final_refit': refit_done,
