@@ -38,8 +38,9 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName \
-              --jq '[.[] | select(.tagName | startswith("model-"))][0].tagName // empty')
+        # Newest published model-* release; pre-releases (test promotions) are skipped.
+        TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isPrerelease,isDraft \
+              --jq '[.[] | select((.tagName | startswith("model-")) and (.isPrerelease | not) and (.isDraft | not))][0].tagName // empty')
         if [ -n "$TAG" ]; then
           mkdir -p model_release
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir model_release \

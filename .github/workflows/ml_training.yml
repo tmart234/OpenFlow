@@ -4,9 +4,10 @@ on:
   schedule:
     - cron: '0 0 * * 1' # Run weekly at midnight on Monday
   # A push to a train/** branch trains on that commit (artifacts + quality
-  # report; publishing a release still happens only from main). Lets a
-  # collaborator or an automation without workflow-dispatch permission start
-  # a run: git push origin HEAD:train/<name>.
+  # report). Lets a collaborator or an automation without workflow-dispatch
+  # permission start a run: git push origin HEAD:train/<name>. Runs on dev
+  # and main are published by the Release Model workflow; a train/** run is
+  # published only when someone releases it by run ID.
   push:
     branches: ['train/**']
   workflow_dispatch:
@@ -39,18 +40,15 @@ concurrency:
 jobs:
   train:
     runs-on: ubuntu-latest
-    # contents:write is needed for softprops/action-gh-release to tag and
-    # publish the trained model artifacts as a GitHub Release.
+    # Publishing is the Release Model workflow's job; training only reads.
     permissions:
-      contents: write
+      contents: read
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        # Fetch tags so the release-tag collision check ("does model-YYYY.MM.DD
-        # already exist?") can see existing release tags.
-        fetch-depth: 0
+        fetch-depth: 1
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -102,62 +100,18 @@ jobs:
 
     - name: Export mobile artifacts (CoreML + TFLite + manifest)
       id: export
-      # Best-effort: a Phase 6 regression must NOT lose the trained .h5. The
-      # release step is gated on this step's success, so a failure here
-      # cleanly skips the release while still uploading the .h5 via the
-      # artifact step below.
+      # Best-effort: a Phase 6 regression must NOT lose the trained .h5. A
+      # failure here still uploads the .h5 below, then turns the run red so
+      # the Release Model workflow does not publish it.
       continue-on-error: true
       env:
         OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
       working-directory: openFlowML
       run: python -m export_mobile --base-path "$GITHUB_WORKSPACE"
 
-    - name: Compute release tag
-      id: tag
-      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success' && steps.quality.outcome == 'success'
-      # Use the UTC date as the base tag and suffix -rN on collision so a
-      # same-day re-run still produces a fresh release.
-      run: |
-        BASE_TAG="model-$(date -u +%Y.%m.%d)"
-        TAG="$BASE_TAG"
-        N=2
-        while git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; do
-          TAG="${BASE_TAG}-r${N}"
-          N=$((N + 1))
-        done
-        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-    - name: Publish GitHub Release
-      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success' && steps.quality.outcome == 'success'
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ steps.tag.outputs.tag }}
-        name: Model ${{ steps.tag.outputs.tag }}
-        generate_release_notes: true
-        # The model is not usable for inference without scalers.json, the
-        # station + basin index maps, and training_config.json. All artifacts
-        # travel together; manifest.json carries sha256s + schema so the
-        # mobile app can verify what it downloaded. See docs/INFERENCE.md.
-        # lstm_model_int8.tflite is shipped only if the int8 parity check in
-        # export_mobile.py passes; if it didn't ship, softprops/action-gh-release
-        # quietly skips the missing file.
-        files: |
-          lstm_model.h5
-          lstm_model.mlpackage.zip
-          lstm_model.tflite
-          lstm_model_int8.tflite
-          scalers.json
-          station_index.json
-          basin_index.json
-          training_config.json
-          upstream_gauges.json
-          basin_zones.json
-          manifest.json
-          quality_report.json
-          quality_report.md
-
-    # Belt-and-braces: even on release-step failure, the artifact upload
-    # keeps the trained model retrievable for debugging the release path.
+    # Everything inference needs, plus the quality report. The Release Model
+    # workflow (release_model.yml) publishes this artifact as a GitHub Release
+    # after a successful run on dev/main, or on demand for any run.
     - name: Upload model and inference artifacts
       if: always()
       uses: actions/upload-artifact@v4
@@ -188,3 +142,12 @@ jobs:
         name: hindcast_charts
         path: ./charts/*.png
         if-no-files-found: warn
+
+    # Uploads ran first (always()), so a failed gate or export still leaves
+    # the model downloadable for inspection; the run then goes red and the
+    # Release Model workflow does not publish it.
+    - name: Fail the run when the quality gate or the mobile export failed
+      if: steps.quality.outcome == 'failure' || steps.export.outcome == 'failure'
+      run: |
+        echo "quality gate: ${{ steps.quality.outcome }}, mobile export: ${{ steps.export.outcome }}"
+        exit 1
