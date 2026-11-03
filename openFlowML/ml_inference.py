@@ -120,8 +120,12 @@ def _flow(site_id: str, start, end, nws_lid: Optional[str] = None,
     if obs.empty:
         return df
     local = obs.set_index('time')['flow_cfs'].tz_convert(tz)
-    daily = local.groupby(local.index.date).agg(['min', 'max'])
+    daily = local.groupby(local.index.date).agg(['min', 'max', 'mean'])
     daily.index = pd.DatetimeIndex(daily.index)
+    if prefix == 'DWR':
+        # The DWR archive the model trained on is one daily mean per day
+        # (Min Flow == Max Flow); top-up days must look the same.
+        daily['min'] = daily['max'] = daily['mean']
     daily = daily[(daily.index > last) & (daily.index <= pd.Timestamp(end).normalize())]
     if daily.empty:
         return df

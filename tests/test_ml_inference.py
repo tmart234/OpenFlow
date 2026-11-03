@@ -152,7 +152,10 @@ def test_flow_is_topped_up_with_nwps_days_after_the_archive(monkeypatch):
     df = ml_inference._flow('DWR:CONMOGCO', pd.Timestamp('2026-10-01'), TODAY, nws_lid='MOGC2',
                             tz='America/Denver')
     assert list(df['Date']) == ['2026-10-31', '2026-11-01', '2026-11-02']
-    assert df.iloc[-1]['Max Flow'] == pytest.approx(3300, rel=0.01)   # today's surge
+    # DWR training data is one daily mean per day (Min == Max); the top-up matches.
+    today = obs_t[obs_t.tz_convert('America/Denver').date == pd.Timestamp('2026-11-02').date()]
+    want = flows[-len(today):].mean()
+    assert df.iloc[-1]['Max Flow'] == pytest.approx(want, rel=0.01) == df.iloc[-1]['Min Flow']
     assert df.iloc[1]['Max Flow'] == 950.0                             # archive wins where present
 
 
