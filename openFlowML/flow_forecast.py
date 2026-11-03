@@ -514,7 +514,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         ml_kw = {}
         if ml_daily is not None and len(ml_daily):
             m = summary['ml']
-            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily min–max, "
+            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily low–high drawn as a smooth band, "
                          f"from data through {m['anchor']}"
                          f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}.")
             v = m.get('verified')
@@ -525,7 +525,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                              + " (no-change forecast: " + ', '.join(f"{e:.0f}%" for e in v['persistence_error_pct']) + ").")
             ml_kw = {'ml': {'dates': ml_daily['Date'], 'min': ml_daily['min_cfs'].to_numpy(),
                             'max': ml_daily['max_cfs'].to_numpy(),
-                            'label': 'OpenFlow ML model (daily min–max)'}}
+                            'label': 'OpenFlow ML model', 'band_label': 'ML range (daily low–high)'}}
         title = f"{short}: flow forecast {pd.Timestamp(first):%b %-d}–{pd.Timestamp(last):%b %-d, %Y}"
         where = f"{cfg['reach']} · {name}" if cfg.get('reach') else name
         subtitle = f"{where} · USGS {usgs_id} / NWS {cfg['nws_lid']} · times {tz_abbr}"
