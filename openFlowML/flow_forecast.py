@@ -174,10 +174,17 @@ def _rain_input(site_id: str, grid: pd.DatetimeIndex, inow: int, tz: str, zones=
     info['calib_mm'] = round(float(rate.iloc[:inow + 1].sum()), 1)
     info['next_mm'] = round(float(rate.iloc[inow + 1:].sum()), 1)
     info['past7_mm'] = round(float(rate.iloc[max(0, inow - 167):inow + 1].sum()), 1)
-    # Storm test for the routing skill note: rain in the last 3 days + next 2.
-    info['storm_mm'] = round(float(rate.iloc[max(0, inow - 71):inow + 49].sum()), 1)
-    out.update(flux=flux, info=info)
+    out.update(flux=flux, info=info, rate=rate)
     return out
+
+
+def storm_mm(rate: pd.Series, k: int) -> float:
+    """
+    Rain (mm) on the ungauged area in the STORM_WINDOW_H hours up to grid
+    index k -- the forecast crest, or now when none is ahead. Same test the
+    crest backtest uses to call a crest rain-driven.
+    """
+    return float(rate.iloc[max(0, k - STORM_WINDOW_H):k + 1].sum())
 
 
 def _rain_panel(rain: dict, tz: str, start, end) -> dict:
@@ -247,7 +254,8 @@ def routing_skill(site_id: str, path: str = SKILL_PATH) -> Optional[dict]:
         return json.load(f).get(site_id)
 
 
-STORM_MM = 10.0   # same threshold crest_backtest.py uses for rain-driven crests
+STORM_MM = 10.0        # same test crest_backtest.py uses for rain-driven crests:
+STORM_WINDOW_H = 72    # >= STORM_MM in the 72 h before the crest
 
 
 def skill_note(skill: Optional[dict], storm: Optional[bool] = None) -> Optional[str]:
@@ -660,14 +668,16 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                    f"lags {'/'.join(str(int(l)) for l in best.lags)} h)") if calibrated else \
                 "registry-default travel times (recent window too quiet or ambiguous to calibrate)"
             short_name = lambda g: g.get('name', _gauge_label(g)).split(',')[0]
+            place = lambda g: short_name(g).split(' near ')[-1].split(' at ')[-1]
             if near_info is not None:
                 near = rc['anchor']
-                tribs = (' + ' + ' + '.join(short_name(g) for g in rc['tributaries'])) if trib_inputs is not None else ''
-                after = (f"{short_name(cfg['anchor'])} (below the diversions; {anchor_info['ratio']:.0%} of the change at "
-                         f"{up_names} getting past the ditches, {issued_txt})" if anchor_info is not None
+                tribs = (' + ' + ' + '.join(short_name(g).split(' below ')[0] for g in rc['tributaries']) + ' gauges'
+                         if trib_inputs is not None else '')
+                after = (f"{place(cfg['anchor'])}, with {anchor_info['ratio']:.0%} of the change at {up_names} "
+                         f"getting past the ditches ({issued_txt})" if anchor_info is not None
                          else f"{up_names} ({issued_txt})")
                 routed = (f"Routed from {short_name(near)} (~{_lag_hours(near)} h upstream){tribs}, {how}.\n"
-                          f"After {short_name(near).split(' near ')[-1]}'s latest reading it follows {after}.\n")
+                          f"After {place(near)}'s latest reading it follows {after}.\n")
             elif anchor_info is not None:
                 # Two lines: the anchor sentence is too long for one chart line.
                 a_name = cfg['anchor'].get('name', cfg['anchor']['nws_lid']).split(',')[0]
@@ -681,7 +691,9 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                         f"{routed}"
                         f"Band = parameter ensemble ± calibration error. Rain beyond the NWS forecast window is not included.")
             storm = None
-            if rain is not None and (rain.get('info') or {}).get('storm_mm') is not None:
+            if rain is not None and rain.get('rate') is not None:
+                k = peak_i if summary['peak']['ahead'] else inow
+                rain['info']['storm_mm'] = round(storm_mm(rain['rate'], k), 1)
                 storm = rain['info']['storm_mm'] >= STORM_MM
             note = skill_note(routing_skill(site_id), storm)
             if note:

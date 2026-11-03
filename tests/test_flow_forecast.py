@@ -393,3 +393,11 @@ def test_skill_note_switches_to_rain_driven_crests_in_a_storm():
     assert 'NWS forecast models the storm' in storm
     calm = flow_forecast.skill_note(skill, storm=False)
     assert 'without heavy local rain' in calm and '4 h at 12 h ahead;' in calm and 'NWS' not in calm
+
+
+def test_storm_test_looks_at_the_72_hours_before_the_crest():
+    rate = pd.Series(np.zeros(400))
+    rate.iloc[100:104] = 4.0                                  # 16 mm, hours 100-103
+    assert flow_forecast.storm_mm(rate, 150) == pytest.approx(16.0)
+    assert flow_forecast.storm_mm(rate, 200) == 0.0           # > 72 h before this crest
+    assert flow_forecast.storm_mm(rate, 101) == pytest.approx(8.0)
