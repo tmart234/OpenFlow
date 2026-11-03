@@ -394,7 +394,61 @@ def test_fetch_uses_given_coords_without_a_second_lookup(monkeypatch):
         seen['latlon'] = (lat, lon)
         return None, pd.DataFrame()
     monkeypatch.setattr(combine_data.get_noaa, 'main', fake_noaa)
+    monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather',
+                        lambda lat, lon, s, e: seen.setdefault('grid', (lat, lon)) and pd.DataFrame())
     out = combine_data.fetch_and_process_data(
         'USGS', 'X', datetime(2026, 1, 1), datetime(2026, 1, 2), pd.DataFrame(),
         coords={'lat': 36.3, 'lon': -105.7})
-    assert out is None and seen['latlon'] == (36.3, -105.7)
+    assert out is None and seen['latlon'] == (36.3, -105.7) == seen['grid']
+
+
+def test_fetch_fills_a_missing_station_from_gridmet(monkeypatch):
+    days = pd.date_range('2026-01-01', '2026-01-02')
+    monkeypatch.setattr(combine_data.get_noaa, 'main', lambda *a: (None, pd.DataFrame()))
+    monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather', lambda *a: pd.DataFrame(
+        {'Date': days, 'TMIN': -10.0, 'TMAX': 50.0, 'precipitation': 0.0}))
+    monkeypatch.setenv('OPENFLOW_DISABLE_SMAP', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_DROUGHT', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_RESERVOIR', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_UPSTREAM', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_BASIN_PRECIP', '1')
+    monkeypatch.setattr(combine_data.get_swe, 'get_huc_id', lambda *a, **k: None)
+    monkeypatch.setattr(combine_data.get_swe, 'get_swe', lambda *a: pd.DataFrame(columns=['Date', 'SWE']))
+    out = combine_data.fetch_and_process_data(
+        'USGS', 'X', days[0], days[-1], pd.DataFrame(), coords={'lat': 36.3, 'lon': -105.7})
+    assert list(out['noaa_data']['TMIN']) == [-10.0, -10.0]
+    monkeypatch.setenv('OPENFLOW_DISABLE_WEATHER_FILL', '1')
+    assert combine_data.fetch_and_process_data(
+        'USGS', 'X', days[0], days[-1], pd.DataFrame(), coords={'lat': 36.3, 'lon': -105.7}) is None
+
+
+def test_fill_weather_gaps_uses_gridmet_with_monthly_station_offset():
+    import pytest
+    days = pd.date_range('2025-01-01', '2025-03-31')
+    grid = pd.DataFrame({'Date': days, 'TMIN': -50.0, 'TMAX': 50.0, 'precipitation': 1.0})
+    # Station reports Jan + Feb (2 deg C warmer than gridMET in Jan, 1 deg in Feb), then stops.
+    rep = days[days < '2025-03-01']
+    noaa = pd.DataFrame({'Date': rep.strftime('%Y-%m-%d'),
+                         'TMIN': np.where(rep.month == 1, -30.0, -40.0),
+                         'TMAX': np.where(rep.month == 1, 70.0, 60.0),
+                         'precipitation': 0.0})
+    noaa.loc[10, ['TMIN', 'TMAX']] = np.nan            # one January outage day
+    out, n = combine_data.fill_weather_gaps(noaa, grid)
+    out = out.set_index('Date')
+    assert n == 1 + 31                                   # Jan 11 + all of March
+    assert out.loc['2025-01-11', 'TMIN'] == pytest.approx(-30.0)   # Jan offset +20
+    assert out.loc['2025-01-11', 'precipitation'] == 0.0           # station precip kept
+    # March has no overlap -> pooled offset (Jan +20 / Feb +10, day-weighted).
+    pooled = (30 * 20 + 28 * 10) / 58
+    assert out.loc['2025-03-15', 'TMIN'] == pytest.approx(-50.0 + pooled)
+    assert out.loc['2025-03-15', 'precipitation'] == 1.0
+    assert out.loc['2025-02-10', 'TMAX'] == 60.0         # reported days untouched
+
+
+def test_fill_weather_gaps_without_station_returns_gridmet():
+    grid = pd.DataFrame({'Date': pd.date_range('2025-01-01', periods=3), 'TMIN': 1.0,
+                         'TMAX': 2.0, 'precipitation': 0.5})
+    out, n = combine_data.fill_weather_gaps(pd.DataFrame(), grid)
+    assert n == 3 and list(out.columns) == ['Date', 'TMIN', 'TMAX', 'precipitation']
+    same, n0 = combine_data.fill_weather_gaps(grid, None)
+    assert n0 == 0 and same is grid

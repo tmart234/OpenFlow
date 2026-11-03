@@ -168,3 +168,15 @@ def test_gridmet_point_weather_is_in_training_units(monkeypatch):
     assert list(w.columns) == ['Date', 'TMIN', 'TMAX', 'precipitation']
     assert w['TMIN'].iloc[0] == pytest.approx(15.0) and w['TMAX'].iloc[0] == pytest.approx(120.0)
     assert w['precipitation'].iloc[0] == 4.0
+
+
+def test_verified_skill_reads_the_station_from_the_quality_report():
+    art = {'quality': {'stations': {SITE: {
+        'windows': 784, 'issued': ['2024-08-01', '2026-10-17'],
+        'error_pct': {'model': [4.0 + d for d in range(14)], 'persistence': [3.0 + 2 * d for d in range(14)]},
+        'rises': {'model': {'peak_ratio': 0.85}}}}}}
+    v = ml_inference.verified_skill(art, SITE)
+    assert v['model_error_pct'] == [4.0, 6.0, 10.0] and v['persistence_error_pct'] == [3.0, 7.0, 15.0]
+    assert v['rise_peak_ratio'] == 0.85 and v['windows'] == 784
+    assert ml_inference.verified_skill(art, 'USGS:OTHER') is None
+    assert ml_inference.verified_skill({'quality': None}, SITE) is None

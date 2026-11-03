@@ -181,3 +181,27 @@ def build_encoder_decoder(
         metrics=['mae'],
     )
     return model
+
+
+def average_ensemble(members, name: str = 'flow_seq2seq_ensemble') -> Model:
+    """
+    One Keras model that runs every member on the same inputs and averages
+    their outputs (scaled log space, i.e. a geometric mean in cfs). Members
+    trained from different random seeds make different small errors;
+    averaging removes much of that noise (most visibly on day 1) without
+    flattening a peak they agree on. The wrapper keeps the members' input
+    names and shapes, so the mobile contract is unchanged.
+    """
+    members = list(members)
+    if len(members) == 1:
+        return members[0]
+    first = members[0]
+    inputs = {k: layers.Input(shape=t.shape[1:], dtype=t.dtype, name=k)
+              for k, t in first.input.items()}
+    outputs = []
+    for i, m in enumerate(members):
+        m._name = f'member_{i}'
+        outputs.append(m(inputs))
+    model = Model(inputs=inputs, outputs=layers.Average(name='ensemble_mean')(outputs), name=name)
+    model.compile(optimizer=first.optimizer.__class__(), loss=first.loss, metrics=['mae'])
+    return model

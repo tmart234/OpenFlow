@@ -73,6 +73,12 @@ def load_artifacts(model_dir: str, with_model: bool = True) -> dict:
     if os.path.exists(manifest):
         with open(manifest) as f:
             art['version'] = json.load(f).get('model_version')
+    # Held-out verification of this model's training recipe (evaluate.py).
+    quality = os.path.join(model_dir, 'quality_report.json')
+    art['quality'] = None
+    if os.path.exists(quality):
+        with open(quality) as f:
+            art['quality'] = json.load(f)
     if with_model:
         import tensorflow as tf
         import model as model_mod
@@ -125,18 +131,8 @@ def _flow(site_id: str, start, end, nws_lid: Optional[str] = None,
     return pd.concat([df, extra], ignore_index=True)
 
 
-def gridmet_point_weather(lat: float, lon: float, start, end) -> pd.DataFrame:
-    """NOAA-shaped daily weather from the gridMET cell at a point (tenths deg C, mm)."""
-    pad = 0.05
-    out = {}
-    for key, name in (('tmmn', 'TMIN'), ('tmmx', 'TMAX'), ('pr', 'precipitation')):
-        dates, la, lo, v = get_basin_precip._gridmet_subset(
-            key, lat - pad, lat + pad, lon - pad, lon + pad, start, end)
-        iy, ix = int(np.argmin(np.abs(la - lat))), int(np.argmin(np.abs(lo - lon)))
-        series = v[:, iy, ix]
-        out[name] = (series - 273.15) * 10.0 if key != 'pr' else series
-        out['Date'] = dates
-    return pd.DataFrame(out)[['Date', 'TMIN', 'TMAX', 'precipitation']]
+# Kept under its old name; lives in the data layer so training can use it too.
+gridmet_point_weather = get_basin_precip.gridmet_point_weather
 
 
 def nws_point_daily(lat: float, lon: float, tz: str) -> pd.DataFrame:
@@ -180,7 +176,9 @@ def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
     if not cfg or not cfg.get('upstream'):
         return out
     series = {}
-    for g in cfg['upstream']:
+    # Upstream gauges plus the anchor gauge, if the station has one
+    # (get_upstream.anchored_daily): observed history + NWPS obs/forecast.
+    for g in cfg['upstream'] + ([cfg['anchor']] if cfg.get('anchor') else []):
         hist = get_upstream.fetch_daily_mean(g['site_id'], history_start, days[-1])
         payload = nwps.get_stageflow(g['nws_lid']) if g.get('nws_lid') else None
         parts = [hist]
@@ -375,9 +373,27 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
                          'max_cfs': np.maximum(lo, hi)})
 
 
+def verified_skill(art: dict, site_id: str, leads=(1, 3, 7)) -> Optional[dict]:
+    """
+    The station's held-out scores from quality_report.json: test windows and
+    period, and median absolute % error of the daily max flow on `leads` for
+    the model and for persistence ("no change"). None without a report.
+    """
+    rep = (art.get('quality') or {}).get('stations', {}).get(site_id)
+    if not rep or 'error_pct' not in rep:
+        return None
+    err = rep['error_pct']
+    return {'windows': rep['windows'], 'issued': rep.get('issued'),
+            'leads': list(leads),
+            'model_error_pct': [err['model'][d - 1] for d in leads],
+            'persistence_error_pct': [err['persistence'][d - 1] for d in leads],
+            'rise_peak_ratio': (rep.get('rises') or {}).get('model', {}).get('peak_ratio')}
+
+
 def forecast(site_id: str, model_dir: str, today=None, art: Optional[dict] = None) -> dict:
-    """End to end: {'daily': DataFrame, 'info': {...}, 'version': str|None}."""
+    """End to end: {'daily': DataFrame, 'info': {...}, 'version': str|None, 'verified': dict|None}."""
     art = art or load_artifacts(model_dir)
     prepared = prepare_inputs(site_id, art, today=today)
     daily = predict(art, prepared)
-    return {'daily': daily, 'info': prepared['info'], 'version': art.get('version')}
+    return {'daily': daily, 'info': prepared['info'], 'version': art.get('version'),
+            'verified': verified_skill(art, site_id)}

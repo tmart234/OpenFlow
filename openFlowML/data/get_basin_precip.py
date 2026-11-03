@@ -134,6 +134,23 @@ def _gridmet_subset(var_key, south, north, west, east, start, end):
     return dates, parts[0][1], parts[0][2], values
 
 
+def gridmet_point_weather(lat: float, lon: float, start, end) -> pd.DataFrame:
+    """
+    NOAA-shaped daily weather from the gridMET cell nearest a point:
+    DataFrame[Date, TMIN, TMAX, precipitation] in training units (tenths of
+    deg C, mm). gridMET runs about 2 days behind real time.
+    """
+    pad = 0.05
+    out = {}
+    for key, name in (('tmmn', 'TMIN'), ('tmmx', 'TMAX'), ('pr', 'precipitation')):
+        dates, la, lo, v = _gridmet_subset(key, lat - pad, lat + pad, lon - pad, lon + pad, start, end)
+        iy, ix = int(np.argmin(np.abs(la - lat))), int(np.argmin(np.abs(lo - lon)))
+        series = v[:, iy, ix]
+        out[name] = (series - 273.15) * 10.0 if key != 'pr' else series
+        out['Date'] = dates
+    return pd.DataFrame(out)[['Date', 'TMIN', 'TMAX', 'precipitation']]
+
+
 def zone_means(cfg: dict, lon2d: np.ndarray, lat2d: np.ndarray, field: np.ndarray) -> Dict[str, np.ndarray]:
     """
     Area means of field[T, Y, X] (or [Y, X]) over each zone and the ungauged

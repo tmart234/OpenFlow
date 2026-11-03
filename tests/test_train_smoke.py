@@ -54,6 +54,8 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
     monkeypatch.setattr(combine_data, 'main',
                         lambda: normalize_data.normalize_data(frame, artifacts_dir=base))
     monkeypatch.setattr(train, 'EPOCHS', 1)
+    monkeypatch.setattr(train, 'ENSEMBLE_SIZE', 2)
+    monkeypatch.setattr(train, 'FINAL_REFIT', True)
     for mod in ('get_cbrfc', 'get_s2f'):   # keep the external baselines offline
         try:
             m = __import__(f'data.{mod}', fromlist=[mod])
@@ -71,6 +73,14 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
     assert config['window_built_decoder_features'] == ['upstream_known', 'upstream_change',
                                                         'basin_precip_known']
     assert config['event_weight'] == train.EVENT_WEIGHT and config['linear_skip'] is True
+    assert config['ensemble_size'] == 2 and isinstance(config['final_refit'], bool)
+    with open(os.path.join(base, 'quality_report.json')) as f:
+        report = json.load(f)
+    assert set(report['stations']) == {'USGS:08276500', 'USGS:09114500'}
+    assert 'passed' in report['gate']
+    import ml_inference
+    art = ml_inference.load_artifacts(base, with_model=True)
+    assert art['model'].get_layer('ensemble_mean') is not None
     assert config['upstream_known_days'] == {'USGS:08276500': 7, 'USGS:09114500': 0}
     assert config['upstream_registry'] == 'upstream_gauges.json'
     assert config['basin_precip_known_days'] == 7
@@ -92,3 +102,13 @@ def test_event_weights_emphasise_changing_windows():
     w = train.event_weights(inputs, targets, event_weight=2.0)
     assert w.mean() == pytest.approx(1.0)
     assert w[2] == pytest.approx(3 * w[0])
+
+
+def test_lead_weights_and_sample_weight_shapes():
+    inputs = {'persistence_input': np.zeros((4, 2), dtype='float32')}
+    targets = np.zeros((4, 14, 2), dtype='float32')
+    targets += np.linspace(0.05, 0.5, 14)[None, :, None]      # error grows with lead
+    lw = train.lead_weights(inputs, targets, power=1.0)
+    assert lw.shape == (14,) and lw.mean() == pytest.approx(1.0) and lw[0] > lw[-1]
+    assert train.sample_weights(inputs, targets, lead_power=0).shape == (4,)
+    assert train.sample_weights(inputs, targets, lead_power=1.0).shape == (4, 14)

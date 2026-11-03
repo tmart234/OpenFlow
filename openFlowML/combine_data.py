@@ -306,6 +306,61 @@ def _disabled(env_var):
     return os.getenv(env_var, '').strip() in ('1', 'true', 'True')
 
 
+# Weather gap fill: days the nearest NOAA station did not report take the
+# gridMET cell at the gauge, shifted by the station-minus-gridMET mean
+# temperature difference for that calendar month (all months pooled when a
+# month has fewer than this many overlapping days).
+WEATHER_FILL_MIN_OVERLAP_DAYS = 20
+WEATHER_COLUMNS = ['TMIN', 'TMAX', 'precipitation']
+
+
+def fill_weather_gaps(noaa_data, grid_data):
+    """
+    Fill missing NOAA days with gridMET point weather (both in training units).
+
+    Returns (filled DataFrame[Date, TMIN, TMAX, precipitation], days filled).
+    Days the station reported keep the station values; for a missing day
+    TMIN/TMAX are gridMET plus that month's mean station-minus-gridMET offset
+    and precipitation is gridMET unchanged. A missing station precipitation
+    on a day with station temperatures is filled the same way. Pure function.
+    """
+    if grid_data is None or grid_data.empty:
+        return noaa_data, 0
+    grid = grid_data[['Date', *WEATHER_COLUMNS]].copy()
+    grid['Date'] = pd.to_datetime(grid['Date']).dt.normalize()
+    grid = grid.set_index('Date').apply(pd.to_numeric, errors='coerce')
+    if noaa_data is None or noaa_data.empty:
+        return grid.reset_index(), int(grid[['TMIN', 'TMAX']].notna().all(axis=1).sum())
+    noaa = noaa_data.copy()
+    noaa['Date'] = pd.to_datetime(noaa['Date']).dt.normalize()
+    extra = [c for c in noaa.columns if c not in ('Date', *WEATHER_COLUMNS)]
+    noaa = noaa.drop_duplicates('Date').set_index('Date')
+    for col in WEATHER_COLUMNS:
+        if col not in noaa.columns:
+            noaa[col] = float('nan')
+        noaa[col] = pd.to_numeric(noaa[col], errors='coerce')
+    index = noaa.index.union(grid.index)
+    station = noaa.reindex(index)
+    g = grid.reindex(index)
+    out = station[WEATHER_COLUMNS].copy()
+    month = index.month
+    for col in ('TMIN', 'TMAX'):
+        diff = station[col] - g[col]
+        pooled = diff.mean() if diff.notna().any() else 0.0
+        counts = diff.groupby(month).count()
+        means = diff.groupby(month).mean()
+        offset = pd.Series([means[m] if counts.get(m, 0) >= WEATHER_FILL_MIN_OVERLAP_DAYS else pooled
+                            for m in month], index=index)
+        out[col] = station[col].fillna(g[col] + offset)
+    out['precipitation'] = station['precipitation'].fillna(g['precipitation'])
+    filled = int((station[['TMIN', 'TMAX']].isna().any(axis=1)
+                  & out[['TMIN', 'TMAX']].notna().all(axis=1)).sum())
+    for col in extra:
+        out[col] = station[col]
+    out.index.name = 'Date'
+    return out.reset_index(), filled
+
+
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None,
                            coords=None):
     """
@@ -349,6 +404,17 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
         # pass the coverage gate even though one did over the training years.
         logger.info("No NOAA station for %s; using fallback weather", site_id)
         noaa_data = noaa_fallback(latitude, longitude, start_date, end_date)
+
+    # Station outages (a GHCND station that stops reporting) otherwise drop
+    # every day without temperature from training; fill them from gridMET.
+    if not _disabled('OPENFLOW_DISABLE_WEATHER_FILL'):
+        try:
+            grid = get_basin_precip.gridmet_point_weather(latitude, longitude, start_date, end_date)
+            noaa_data, n_filled = fill_weather_gaps(noaa_data, grid)
+            if n_filled:
+                logger.info("Filled %d NOAA weather days for %s from gridMET", n_filled, site_id)
+        except Exception as e:
+            logger.warning("gridMET weather gap fill skipped for %s: %s", site_id, e)
 
     if noaa_data is None or noaa_data.empty:
         logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
@@ -482,7 +548,15 @@ def get_base_path():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def main(training_num_years=7):
+# Years of history to train on. Longer records span more wet and dry snow
+# years, so the model learns the snowpack -> runoff link instead of the
+# seasonal cycle of a few particular years. OPENFLOW_TRAINING_YEARS overrides.
+TRAINING_YEARS = 15
+
+
+def main(training_num_years=None):
+    if training_num_years is None:
+        training_num_years = int(os.getenv('OPENFLOW_TRAINING_YEARS', '') or TRAINING_YEARS)
     all_data = {}
     site_ids = get_site_ids()
     base_path = get_base_path()

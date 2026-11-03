@@ -71,6 +71,19 @@ jobs:
         OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
       run: python openFlowML/train.py
 
+    # train.py scores the model on held-out test windows in cfs, per station
+    # and lead day, against persistence and the upstream-change reference
+    # (quality_report.json / .md, see openFlowML/evaluate.py). A model that
+    # fails the gate (worse than "no change", or flattening floods) is not
+    # published; its artifacts still upload below for inspection.
+    - name: Quality gate
+      id: quality
+      continue-on-error: true
+      working-directory: openFlowML
+      run: |
+        python evaluate.py --base-path "$GITHUB_WORKSPACE" --gate | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "${PIPESTATUS[0]}"
+
     - name: Export mobile artifacts (CoreML + TFLite + manifest)
       id: export
       # Best-effort: a Phase 6 regression must NOT lose the trained .h5. The
@@ -85,7 +98,7 @@ jobs:
 
     - name: Compute release tag
       id: tag
-      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success'
+      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success' && steps.quality.outcome == 'success'
       # Use the UTC date as the base tag and suffix -rN on collision so a
       # same-day re-run still produces a fresh release.
       run: |
@@ -99,7 +112,7 @@ jobs:
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
     - name: Publish GitHub Release
-      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success'
+      if: github.ref == 'refs/heads/main' && steps.export.outcome == 'success' && steps.quality.outcome == 'success'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.tag.outputs.tag }}
@@ -124,6 +137,8 @@ jobs:
           upstream_gauges.json
           basin_zones.json
           manifest.json
+          quality_report.json
+          quality_report.md
 
     # Belt-and-braces: even on release-step failure, the artifact upload
     # keeps the trained model retrievable for debugging the release path.
@@ -144,6 +159,8 @@ jobs:
           ./upstream_gauges.json
           ./basin_zones.json
           ./manifest.json
+          ./quality_report.json
+          ./quality_report.md
         if-no-files-found: warn
 
     # Per-station hindcast charts (highest-flow held-out test window, model

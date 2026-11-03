@@ -370,7 +370,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             ml_daily = ml_daily[(ml_daily['Date'] >= pd.Timestamp(daily.index[0]))
                                 & (ml_daily['Date'] <= pd.Timestamp(daily.index[-1]))]
             summary['ml'] = {
-                'version': res['version'], **res['info'],
+                'version': res['version'], **res['info'], 'verified': res.get('verified'),
                 'daily': [{'date': str(r.Date.date()), 'min_cfs': round(float(r.min_cfs)),
                            'max_cfs': round(float(r.max_cfs))} for r in ml_daily.itertuples()],
             }
@@ -435,6 +435,12 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily min–max, "
                          f"from data through {m['anchor']}"
                          f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}.")
+            v = m.get('verified')
+            if v:
+                footnote += ("\nML verified on " + f"{v['windows']} held-out forecasts"
+                             + (f" ({v['issued'][0]} to {v['issued'][1]})" if v.get('issued') else '')
+                             + ": typical error " + ', '.join(f"day {d} {e:.0f}%" for d, e in zip(v['leads'], v['model_error_pct']))
+                             + " (no-change forecast: " + ', '.join(f"{e:.0f}%" for e in v['persistence_error_pct']) + ").")
             ml_kw = {'ml': {'dates': ml_daily['Date'], 'min': ml_daily['min_cfs'].to_numpy(),
                             'max': ml_daily['max_cfs'].to_numpy(),
                             'label': 'OpenFlow ML model (daily min–max)'}}
@@ -503,6 +509,11 @@ def format_summary(s: dict) -> str:
     if m and m.get('daily'):
         lines.append(f"  ML model{(' ' + m['version']) if m.get('version') else ''} (data through {m['anchor']}): "
                      + ', '.join(f"{pd.Timestamp(d['date']):%a} {d['min_cfs']:,}–{d['max_cfs']:,}" for d in m['daily']))
+        v = m.get('verified')
+        if v:
+            lines.append(f"  ML held-out error ({v['windows']} forecasts): "
+                         + ', '.join(f"day {d} {e:.1f}% (no-change {p:.1f}%)" for d, e, p in
+                                     zip(v['leads'], v['model_error_pct'], v['persistence_error_pct'])))
     elif m and m.get('error'):
         lines.append(f"  ML model: unavailable ({m['error']})")
     if s.get('nws_official_forecast_issued_utc'):
