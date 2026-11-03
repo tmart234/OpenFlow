@@ -4,6 +4,7 @@
     "Keys are OpenFlow site ids (same format as .github/site_ids.txt).",
     "Per upstream gauge:",
     "  site_id     -- daily history source for TRAINING (DWR:<abbrev> or USGS:<id>)",
+    "  usgs_id     -- USGS id used to delineate the gauged area (NLDI) when building basin_zones.json",
     "  nws_lid     -- NWS gauge id; NWPS supplies ~30 days of observations and the current RFC forecast (inference + routing CLI)",
     "  lag_days    -- daily travel time used for the ML 'upstream_flow' feature: upstream_flow(d) = sum_i weight_i * Q_i(d - lag_days_i)",
     "  weight      -- relative contribution in that routed sum (absorbs reach gains / diversion losses)",
@@ -11,13 +12,19 @@
     "                 the recent calibration window is too quiet to fit them; normally they are re-fit on the last ~4 weeks.",
     "Per target:",
     "  forecast_days -- how many days of RFC forecast to expect at the upstream gauges (ML decoder 'upstream_known' horizon = min(lag_days) + forecast_days)",
-    "Defaults for USGS:08276500 were calibrated on the Oct 23-31 2026 flood (Rio Grande at Alamosa + Conejos nr Mogote -> Taos Junction Bridge, RMSE ~150 cfs)."
+    "Defaults for USGS:08276500 were calibrated on the Oct 23-31 2026 flood (Rio Grande at Alamosa + Conejos nr Mogote -> Taos Junction Bridge, RMSE ~150 cfs).",
+    "Stations with an empty `upstream` list are forecast from the NWS RFC forecast for the gauge itself (mode `nws`) when one is current."
   ],
   "USGS:08276500": {
     "name": "Rio Grande below Taos Junction Bridge near Taos, NM",
     "short_name": "Lower Taos Box",
     "reach": "Lower Taos Box (John Dunn Bridge to Taos Junction Bridge)",
-    "aliases": ["taos-box", "lower-taos-box", "taos", "TJBN5"],
+    "aliases": [
+      "taos-box",
+      "lower-taos-box",
+      "taos",
+      "TJBN5"
+    ],
     "nws_lid": "TJBN5",
     "timezone": "America/Denver",
     "forecast_days": 5,
@@ -25,6 +32,7 @@
       {
         "name": "Rio Grande at Alamosa, CO",
         "site_id": "DWR:RIOALACO",
+        "usgs_id": "08223000",
         "nws_lid": "ALAC2",
         "lag_days": 2,
         "weight": 1.3,
@@ -34,6 +42,7 @@
       {
         "name": "Conejos River near Mogote, CO",
         "site_id": "DWR:CONMOGCO",
+        "usgs_id": "08246500",
         "nws_lid": "MOGC2",
         "lag_days": 5,
         "weight": 0.7,
@@ -41,10 +50,152 @@
         "k_hours": 72
       }
     ],
+    "anchor": {
+      "_doc": "Gauge below the San Luis Valley diversions. In irrigation season (Apr-Oct) most of a rise at Alamosa/Mogote is diverted before the state line; in summer 2026 Lobatos ran ~7 cfs while the supply above was ~50 cfs. The ML upstream_flow is Lobatos lagged 1 day; days after its last observation continue it with the Alamosa/Mogote change times the recent Lobatos/supply ratio (get_upstream.anchored_daily). The routing CLI still routes the upstream gauges directly.",
+      "name": "Rio Grande near Lobatos, CO (state line)",
+      "site_id": "DWR:RIOLOBCO",
+      "usgs_id": "08251500",
+      "nws_lid": "LOBC2",
+      "lag_days": 1,
+      "weight": 1.0
+    },
     "context_gauges": [
-      {"name": "Rio Grande near Del Norte, CO", "nws_lid": "DNRC2"},
-      {"name": "Rio Grande near Lobatos, CO (state line)", "nws_lid": "LOBC2"},
-      {"name": "Rio Grande near Cerro, NM", "nws_lid": "CERN5"}
+      {
+        "name": "Rio Grande near Del Norte, CO",
+        "nws_lid": "DNRC2"
+      },
+      {
+        "name": "Rio Grande near Lobatos, CO (state line)",
+        "nws_lid": "LOBC2"
+      },
+      {
+        "name": "Rio Grande near Cerro, NM",
+        "nws_lid": "CERN5"
+      },
+      {
+        "name": "Costilla Creek at Costilla, NM",
+        "nws_lid": "COSN5"
+      },
+      {
+        "name": "Rio Pueblo de Taos below Los Cordovas, NM",
+        "nws_lid": "TBCN5"
+      }
+    ],
+    "rain": {
+      "_doc": "Rain on the ungauged part of the basin (basin_zones.json) -> local inflow in routing.py. Defaults are used when the calibration window has too little rain to fit them.",
+      "lag_hours": 12,
+      "k_hours": 48,
+      "runoff_ratio": 0.03
+    }
+  },
+  "DWR:ARKCANCO": {
+    "name": "Arkansas River at Cañon City, CO",
+    "short_name": "Royal Gorge",
+    "reach": "Royal Gorge of the Arkansas (Parkdale to Cañon City)",
+    "aliases": [
+      "royal-gorge",
+      "royal",
+      "arkansas-royal-gorge",
+      "CNCC2"
+    ],
+    "nws_lid": "CNCC2",
+    "timezone": "America/Denver",
+    "forecast_days": 0,
+    "upstream": [
+      {
+        "name": "Arkansas River near Wellsville, CO",
+        "site_id": "DWR:ARKWELCO",
+        "usgs_id": "07093700",
+        "nws_lid": "WSVC2",
+        "lag_days": 1,
+        "weight": 1.0,
+        "lag_hours": 12,
+        "k_hours": 12
+      }
+    ],
+    "context_gauges": [
+      {
+        "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in)",
+        "nws_lid": "PDLC2"
+      },
+      {
+        "name": "Arkansas River at Salida, CO",
+        "nws_lid": "SALC2"
+      }
+    ],
+    "rain": {
+      "_doc": "Local inflow from Grape Creek / Texas Creek etc. between Wellsville and Canon City.",
+      "lag_hours": 6,
+      "k_hours": 24,
+      "runoff_ratio": 0.03
+    }
+  },
+  "DWR:CONMOGCO": {
+    "name": "Conejos River near Mogote, CO",
+    "short_name": "Conejos River",
+    "reach": "Conejos River above Mogote",
+    "aliases": [
+      "conejos",
+      "conejos-river",
+      "mogote",
+      "MOGC2"
+    ],
+    "nws_lid": "MOGC2",
+    "timezone": "America/Denver",
+    "forecast_days": 0,
+    "upstream": [],
+    "context_gauges": [
+      {
+        "name": "Rio Grande near Del Norte, CO (neighbouring basin)",
+        "nws_lid": "DNRC2"
+      }
+    ]
+  },
+  "USGS:09180000": {
+    "name": "Dolores River near Cisco, UT",
+    "short_name": "Dolores River (Gateway–Dewey)",
+    "reach": "Dolores River, Gateway, CO to Dewey Bridge, UT (final Colorado-to-Utah section)",
+    "aliases": [
+      "dolores",
+      "dolores-gateway",
+      "gateway-dewey",
+      "dolores-cisco",
+      "DOLU1"
+    ],
+    "nws_lid": "DOLU1",
+    "timezone": "America/Denver",
+    "forecast_days": 5,
+    "upstream": [
+      {
+        "name": "Dolores River near Bedrock, CO",
+        "site_id": "USGS:09171100",
+        "usgs_id": "09171100",
+        "nws_lid": "DBDC2",
+        "lag_days": 1,
+        "weight": 1.0,
+        "lag_hours": 18,
+        "k_hours": 12
+      },
+      {
+        "name": "San Miguel River at Uravan, CO",
+        "site_id": "USGS:09177000",
+        "usgs_id": "09177000",
+        "nws_lid": "SMUC2",
+        "lag_days": 1,
+        "weight": 1.0,
+        "lag_hours": 16,
+        "k_hours": 12
+      }
+    ],
+    "context_gauges": [
+      {
+        "name": "Dolores River near Gateway, CO (section put-in)",
+        "nws_lid": "DGAC2"
+      },
+      {
+        "name": "San Miguel River near Placerville, CO",
+        "nws_lid": "SMPC2"
+      }
     ]
   }
 }

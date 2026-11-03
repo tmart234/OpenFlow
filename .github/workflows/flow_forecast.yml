@@ -1,18 +1,19 @@
 name: Flow Forecast
 
-# On-demand upstream-routing forecast + chart for a registered station
-# (data/upstream_gauges.json), e.g. the Lower Taos Box. No trained model
-# needed. The CSV / JSON / PNG are uploaded as a workflow artifact.
+# On-demand weekly forecast + chart for registered stations
+# (data/upstream_gauges.json): Lower Taos Box, Royal Gorge, Conejos, Dolores
+# (Gateway-Dewey) by default. No trained model needed; when a model-* release
+# exists its ML forecast is overlaid on each chart. The CSV / JSON / PNG are uploaded as a workflow artifact.
 # To run it on a schedule, add e.g.:
 #   schedule:
 #     - cron: '17 13 * * *'   # daily, ~6 AM Mountain
 on:
   workflow_dispatch:
     inputs:
-      site:
-        description: 'Station alias, site id, or NWS LID (e.g. taos-box)'
+      sites:
+        description: 'Comma-separated stations: alias, site id, or NWS LID'
         type: string
-        default: taos-box
+        default: taos-box,royal-gorge,conejos,dolores
       days:
         description: 'Local calendar days to forecast'
         type: string
@@ -21,6 +22,8 @@ on:
 jobs:
   forecast:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read      # download the model release
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -30,22 +33,52 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Download the latest trained model release (if any)
+      id: model
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName \
+              --jq '[.[] | select(.tagName | startswith("model-"))][0].tagName // empty')
+        if [ -n "$TAG" ]; then
+          mkdir -p model_release
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir model_release \
+            --pattern lstm_model.h5 --pattern '*.json'
+          echo "dir=model_release" >> "$GITHUB_OUTPUT"
+          echo "Using model release $TAG"
+        else
+          echo "No model-* release yet: charts show the routing / NWS forecast only"
+        fi
+
     - name: Install dependencies
+      env:
+        HAS_MODEL: ${{ steps.model.outputs.dir }}
       run: |
         python -m pip install --upgrade pip
-        pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7"
+        if [ -n "$HAS_MODEL" ]; then
+          # Full training env (tensorflow) to run the ML model for the overlay.
+          pip install -r openFlowML/requirements.txt scipy h5py
+        else
+          # scipy reads gridMET (NetCDF-3); h5py reads the NWS Stage IV analysis.
+          pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7" scipy h5py
+        fi
 
     - name: Run forecast
       # Explicit `shell: bash` runs with -o pipefail, so a failing forecast
       # fails the step even though its output is piped through tee.
       shell: bash
       env:
-        SITE: ${{ inputs.site || 'taos-box' }}
+        SITES: ${{ inputs.sites || 'taos-box,royal-gorge,conejos,dolores' }}
+        MODEL_DIR: ${{ steps.model.outputs.dir }}
         DAYS: ${{ inputs.days || '7' }}
       run: |
         mkdir -p forecast_out
-        python openFlowML/flow_forecast.py --site "$SITE" --days "$DAYS" \
-          --out-dir forecast_out | tee forecast_out/summary.txt
+        IFS=',' read -ra LIST <<< "$SITES"
+        for site in "${LIST[@]}"; do
+          python openFlowML/flow_forecast.py --site "$(echo "$site" | xargs)" --days "$DAYS" \
+            --out-dir forecast_out ${MODEL_DIR:+--model-dir "$MODEL_DIR"} | tee -a forecast_out/summary.txt
+          echo >> forecast_out/summary.txt
+        done
         { echo '```'; cat forecast_out/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload forecast

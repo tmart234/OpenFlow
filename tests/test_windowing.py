@@ -30,6 +30,8 @@ def _make_station_frame(site_id, station_idx, basin_idx, n_days=120, start='2022
         'upstream_flow': rng.standard_normal(n_days),
         'upstream_observed': np.ones(n_days, dtype=int),
         'upstream_known_days': 7,
+        **{c: rng.standard_normal(n_days) for c in windowing.BASIN_PRECIP_FEATURES},
+        'basin_precip_observed': np.ones(n_days, dtype=int),
         'doy_sin': np.sin(2 * np.pi * np.arange(n_days) / 365),
         'doy_cos': np.cos(2 * np.pi * np.arange(n_days) / 365),
     })
@@ -254,3 +256,56 @@ def test_build_windows_rejects_dataframe_missing_upstream_flow():
     df = _make_station_frame('USGS:A', 1, 1).drop(columns=['upstream_flow'])
     with pytest.raises(ValueError):
         windowing.build_windows(df)
+
+
+def test_basin_precip_features_in_both_windows_with_decoder_mask():
+    for c in windowing.BASIN_PRECIP_FEATURES:
+        assert c in windowing.ENCODER_FEATURES and c in windowing.DECODER_FEATURES
+    assert 'basin_precip_observed' in windowing.ENCODER_FEATURES
+    assert 'basin_precip_observed' not in windowing.DECODER_FEATURES
+    assert 'basin_precip_known' in windowing.DECODER_FEATURES
+    assert 'basin_precip_known' in windowing.WINDOW_BUILT_DECODER_FEATURES
+
+
+def test_basin_precip_decoder_window_masks_beyond_qpf_horizon():
+    vals = np.arange(10 * 6, dtype=float).reshape(10, 6) + 1
+    obs = np.ones(10)
+    obs[2] = 0
+    out, known = windowing.basin_precip_decoder_window(vals, obs, known_days=7)
+    np.testing.assert_array_equal(known, [1, 1, 0, 1, 1, 1, 1, 0, 0, 0])
+    np.testing.assert_array_equal(out[0], vals[0])
+    assert (out[2] == 0).all() and (out[7:] == 0).all()
+
+
+def test_windows_apply_basin_precip_mask():
+    df = _make_station_frame('USGS:A', 1, 1, n_days=120)
+    s = windowing.build_windows(df, encoder_days=60, decoder_days=14)[0]
+    cols = [windowing.DECODER_FEATURES.index(c) for c in windowing.BASIN_PRECIP_FEATURES]
+    known = s.decoder_X[:, windowing.DECODER_FEATURES.index('basin_precip_known')]
+    np.testing.assert_array_equal(known, [1] * windowing.BASIN_PRECIP_KNOWN_DAYS
+                                  + [0] * (14 - windowing.BASIN_PRECIP_KNOWN_DAYS))
+    rows = df[windowing.BASIN_PRECIP_FEATURES].to_numpy()[60:60 + windowing.BASIN_PRECIP_KNOWN_DAYS]
+    np.testing.assert_allclose(s.decoder_X[:windowing.BASIN_PRECIP_KNOWN_DAYS][:, cols], rows)
+    assert (s.decoder_X[windowing.BASIN_PRECIP_KNOWN_DAYS:][:, cols] == 0).all()
+
+
+def test_basin_precip_known_days_matches_qpf_horizon():
+    from data import get_basin_precip
+    assert windowing.BASIN_PRECIP_KNOWN_DAYS == get_basin_precip.QPF_DAYS
+    assert windowing.BASIN_PRECIP_FEATURES == get_basin_precip.FEATURE_COLUMNS
+
+
+def test_upstream_change_is_relative_to_last_encoder_day_on_known_days():
+    out = windowing.upstream_change(np.array([2.0, 3.0, 3.0]), np.array([1, 1, 0]), last_value=1.5)
+    np.testing.assert_allclose(out, [0.5, 1.5, 0.0])
+    assert (windowing.upstream_change(np.ones(3), np.ones(3), 1.0, last_observed=0) == 0).all()
+
+
+def test_windows_carry_upstream_change():
+    df = _make_station_frame('USGS:A', 1, 1, n_days=120)
+    df['upstream_known_days'] = 3
+    s = windowing.build_windows(df, encoder_days=60, decoder_days=14)[0]
+    up = df['upstream_flow'].to_numpy()
+    chg = s.decoder_X[:, windowing.DECODER_FEATURES.index('upstream_change')]
+    np.testing.assert_allclose(chg[:3], up[60:63] - up[59])
+    assert (chg[3:] == 0).all()

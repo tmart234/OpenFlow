@@ -359,3 +359,96 @@ def test_merge_does_not_carry_upstream_across_long_gaps():
         upstream_data=upstream, upstream_known_days=7).set_index('Date')
     assert merged.loc['2022-01-10', 'upstream_observed'] == 0
     assert merged.loc['2022-01-02', 'upstream_observed'] == 1
+
+
+def test_merge_attaches_basin_precip_without_interpolating_rain():
+    noaa, flow = _make_frames()
+    dates = pd.date_range('2022-01-01', '2022-01-20', freq='D')
+    cols = ['rain_local', 'rain_mid', 'rain_far', 'snow_local', 'snow_mid', 'snow_far']
+    bp = pd.DataFrame({'Date': dates, **{c: 2.0 for c in cols}})
+    bp.loc[10, cols] = np.nan                   # one missing day stays missing
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20),
+        basin_precip_data=bp).set_index('Date')
+    assert merged.loc['2022-01-11', 'basin_precip_observed'] == 0
+    assert merged.loc['2022-01-11', 'rain_local'] == 0.0
+    assert merged.loc['2022-01-12', 'basin_precip_observed'] == 1
+    assert merged.loc['2022-01-12', 'snow_far'] == 2.0
+
+
+def test_merge_defaults_basin_precip_to_placeholder():
+    noaa, flow = _make_frames()
+    merged = combine_data.merge_dataframes(
+        noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
+    assert (merged['basin_precip_observed'] == 0).all()
+    assert (merged['rain_mid'] == 0.0).all()
+
+
+def test_fetch_uses_given_coords_without_a_second_lookup(monkeypatch):
+    import pytest
+    monkeypatch.setattr(combine_data, 'get_usgs_coordinates',
+                        lambda *a: pytest.fail('coordinates should not be looked up again'))
+    seen = {}
+
+    def fake_noaa(lat, lon, start, end):
+        seen['latlon'] = (lat, lon)
+        return None, pd.DataFrame()
+    monkeypatch.setattr(combine_data.get_noaa, 'main', fake_noaa)
+    monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather',
+                        lambda lat, lon, s, e: seen.setdefault('grid', (lat, lon)) and pd.DataFrame())
+    out = combine_data.fetch_and_process_data(
+        'USGS', 'X', datetime(2026, 1, 1), datetime(2026, 1, 2), pd.DataFrame(),
+        coords={'lat': 36.3, 'lon': -105.7})
+    assert out is None and seen['latlon'] == (36.3, -105.7) == seen['grid']
+
+
+def test_fetch_fills_a_missing_station_from_gridmet(monkeypatch):
+    days = pd.date_range('2026-01-01', '2026-01-02')
+    monkeypatch.setattr(combine_data.get_noaa, 'main', lambda *a: (None, pd.DataFrame()))
+    monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather', lambda *a: pd.DataFrame(
+        {'Date': days, 'TMIN': -10.0, 'TMAX': 50.0, 'precipitation': 0.0}))
+    monkeypatch.setenv('OPENFLOW_DISABLE_SMAP', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_DROUGHT', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_RESERVOIR', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_UPSTREAM', '1')
+    monkeypatch.setenv('OPENFLOW_DISABLE_BASIN_PRECIP', '1')
+    monkeypatch.setattr(combine_data.get_swe, 'get_huc_id', lambda *a, **k: None)
+    monkeypatch.setattr(combine_data.get_swe, 'get_swe', lambda *a: pd.DataFrame(columns=['Date', 'SWE']))
+    out = combine_data.fetch_and_process_data(
+        'USGS', 'X', days[0], days[-1], pd.DataFrame(), coords={'lat': 36.3, 'lon': -105.7})
+    assert list(out['noaa_data']['TMIN']) == [-10.0, -10.0]
+    monkeypatch.setenv('OPENFLOW_DISABLE_WEATHER_FILL', '1')
+    assert combine_data.fetch_and_process_data(
+        'USGS', 'X', days[0], days[-1], pd.DataFrame(), coords={'lat': 36.3, 'lon': -105.7}) is None
+
+
+def test_fill_weather_gaps_uses_gridmet_with_monthly_station_offset():
+    import pytest
+    days = pd.date_range('2025-01-01', '2025-03-31')
+    grid = pd.DataFrame({'Date': days, 'TMIN': -50.0, 'TMAX': 50.0, 'precipitation': 1.0})
+    # Station reports Jan + Feb (2 deg C warmer than gridMET in Jan, 1 deg in Feb), then stops.
+    rep = days[days < '2025-03-01']
+    noaa = pd.DataFrame({'Date': rep.strftime('%Y-%m-%d'),
+                         'TMIN': np.where(rep.month == 1, -30.0, -40.0),
+                         'TMAX': np.where(rep.month == 1, 70.0, 60.0),
+                         'precipitation': 0.0})
+    noaa.loc[10, ['TMIN', 'TMAX']] = np.nan            # one January outage day
+    out, n = combine_data.fill_weather_gaps(noaa, grid)
+    out = out.set_index('Date')
+    assert n == 1 + 31                                   # Jan 11 + all of March
+    assert out.loc['2025-01-11', 'TMIN'] == pytest.approx(-30.0)   # Jan offset +20
+    assert out.loc['2025-01-11', 'precipitation'] == 0.0           # station precip kept
+    # March has no overlap -> pooled offset (Jan +20 / Feb +10, day-weighted).
+    pooled = (30 * 20 + 28 * 10) / 58
+    assert out.loc['2025-03-15', 'TMIN'] == pytest.approx(-50.0 + pooled)
+    assert out.loc['2025-03-15', 'precipitation'] == 1.0
+    assert out.loc['2025-02-10', 'TMAX'] == 60.0         # reported days untouched
+
+
+def test_fill_weather_gaps_without_station_returns_gridmet():
+    grid = pd.DataFrame({'Date': pd.date_range('2025-01-01', periods=3), 'TMIN': 1.0,
+                         'TMAX': 2.0, 'precipitation': 0.5})
+    out, n = combine_data.fill_weather_gaps(pd.DataFrame(), grid)
+    assert n == 3 and list(out.columns) == ['Date', 'TMIN', 'TMAX', 'precipitation']
+    same, n0 = combine_data.fill_weather_gaps(grid, None)
+    assert n0 == 0 and same is grid

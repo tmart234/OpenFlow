@@ -39,7 +39,7 @@ flow_forecast.py for the CLI that wires it all together.
 from dataclasses import dataclass, field
 import itertools
 import logging
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -152,14 +152,21 @@ def fit(target: np.ndarray,
         k_grid: Sequence[float] = DEFAULT_K_GRID,
         top_n: int = 5,
         warmup_hours: int = WARMUP_HOURS,
-        sweeps: int = 3) -> List[RoutingFit]:
+        sweeps: int = 3,
+        coef_bounds: Optional[Tuple[float, float]] = None,
+        grids: Optional[Sequence[Tuple[Sequence[int], Sequence[float]]]] = None) -> List[RoutingFit]:
     """
     Calibrate (lag_i, K_i) by grid search and (c_i, b) by least squares.
 
     Exhaustive for <= 2 upstream inputs; coordinate descent (one input's
     (lag, K) at a time, `sweeps` passes) beyond that so cost stays linear in
-    the number of inputs. Parameter sets with any negative c_i are rejected
-    (an upstream gauge cannot contribute negative flow). Returns up to top_n
+    the number of inputs. `grids` gives each input its own (lag_grid,
+    k_grid) -- e.g. a window around a registry prior -- instead of the shared
+    lag_grid / k_grid. Parameter sets with any negative c_i are rejected
+    (an upstream gauge cannot contribute negative flow), as are sets with a
+    coefficient outside `coef_bounds` when given -- e.g. (0.25, 2.5): a gauge
+    "tripling" on its way downstream means the fit is absorbing something
+    else (local tributary inflow) and should not be trusted. Returns up to top_n
     fits, best (lowest RMSE) first. Inputs and target must be hourly arrays
     of equal length with no NaN in the inputs; NaN target hours are ignored.
     """
@@ -177,7 +184,11 @@ def fit(target: np.ndarray,
     if rows.sum() < 24:
         raise ValueError("not enough target observations to calibrate")
 
-    combos = list(itertools.product(lag_grid, k_grid))
+    if grids is None:
+        grids = [(lag_grid, k_grid)] * len(inputs)
+    if len(grids) != len(inputs):
+        raise ValueError("need one (lag_grid, k_grid) per input")
+    combos_per_input = [list(itertools.product(lg, kg)) for lg, kg in grids]
     cache: Dict[tuple, np.ndarray] = {}
 
     def routed(i, lag, k):
@@ -194,21 +205,22 @@ def fit(target: np.ndarray,
         r = [routed(i, lag, k) for i, (lag, k) in enumerate(params)]
         coefs, b, rmse = _solve(target, r, rows)
         res = None
-        if (coefs >= 0).all():
+        lo, hi = coef_bounds if coef_bounds else (0.0, np.inf)
+        if (coefs >= lo).all() and (coefs <= hi).all():
             res = RoutingFit([p[0] for p in params], [p[1] for p in params],
                              coefs.tolist(), b, rmse)
         results[params] = res
         return res
 
     if len(inputs) <= 2:
-        for params in itertools.product(combos, repeat=len(inputs)):
+        for params in itertools.product(*combos_per_input):
             evaluate(tuple(params))
     else:
-        current = [(lag_grid[len(lag_grid) // 3], k_grid[len(k_grid) // 3])] * len(inputs)
+        current = [(lg[len(lg) // 3], kg[len(kg) // 3]) for lg, kg in grids]
         for _ in range(sweeps):
             for i in range(len(inputs)):
                 best = None
-                for c in combos:
+                for c in combos_per_input[i]:
                     trial = list(current)
                     trial[i] = c
                     res = evaluate(tuple(trial))
@@ -219,6 +231,44 @@ def fit(target: np.ndarray,
 
     fits = sorted((f for f in results.values() if f is not None), key=lambda f: f.rmse)
     return fits[:top_n]
+
+
+def add_input(target: np.ndarray, inputs: Sequence[np.ndarray], base_fits: Sequence[RoutingFit],
+              extra: np.ndarray, lag_grid: Sequence[int] = DEFAULT_LAG_GRID,
+              k_grid: Sequence[float] = DEFAULT_K_GRID, max_coef: Optional[float] = None,
+              warmup_hours: int = WARMUP_HOURS) -> List[RoutingFit]:
+    """
+    Second-stage fit of an extra input (the rain term) on the RESIDUAL of
+    each base fit: the upstream travel times AND weights stay exactly as the
+    upstream hydrographs identified them, and the extra input only explains
+    what they could not. Re-solving everything jointly lets rain "steal"
+    weight from an upstream gauge whenever both rise in the same storm.
+    Searches the extra input's (lag, K); solves its coefficient (bounded to
+    [0, max_coef]) plus an intercept adjustment. A base fit with no valid
+    extra term keeps a zero coefficient.
+    """
+    target = np.asarray(target, dtype=float)
+    extra = np.asarray(extra, dtype=float)
+    rows = np.isfinite(target)
+    rows[:min(warmup_hours, len(target))] = False
+    extra_routed = {(lag, k): route(extra, lag, k) for lag in lag_grid for k in k_grid}
+    out = []
+    for base in base_fits:
+        resid = target - base.predict([np.asarray(x, float) for x in inputs])
+        best = None
+        for (lag, k), r in extra_routed.items():
+            coefs, b, rmse = _solve(resid, [r], rows)
+            c = float(coefs[0])
+            if c < 0 or (max_coef is not None and c > max_coef):
+                continue
+            if best is None or rmse < best.rmse:
+                best = RoutingFit(list(base.lags) + [int(lag)], list(base.ks) + [float(k)],
+                                  list(base.coefs) + [c], base.intercept + b, rmse, source=base.source)
+        if best is None:
+            best = RoutingFit(list(base.lags) + [int(lag_grid[0])], list(base.ks) + [float(k_grid[0])],
+                              list(base.coefs) + [0.0], base.intercept, base.rmse, source=base.source)
+        out.append(best)
+    return sorted(out, key=lambda f: f.rmse)
 
 
 def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
@@ -327,7 +377,7 @@ class EnsembleForecast:
 
 def forecast(fits: Sequence[RoutingFit], inputs: Sequence[np.ndarray],
              target_obs: np.ndarray, now_idx: int,
-             bias_tau_hours: float = 24.0, anchor_hours: int = 4) -> EnsembleForecast:
+             bias_tau_hours: float = 24.0, anchor_hours: int = 1) -> EnsembleForecast:
     """
     Run each fit over the full (obs + forecast) inputs, bias-correct every
     member to the mean of the last `anchor_hours` target observations (the

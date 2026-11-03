@@ -80,6 +80,7 @@ def build_encoder_decoder(
     learning_rate: float = 1e-3,
     clipnorm: float = 1.0,
     huber_delta: float = 1.0,
+    linear_skip: bool = True,
 ) -> Model:
     """
     Build and compile the encoder-decoder model.
@@ -146,6 +147,19 @@ def build_encoder_decoder(
         name='delta_head',
     )(decoder_seq)
 
+    # Linear skip from the forecast-time inputs straight to the delta, so a
+    # direct relationship -- "routed upstream flow rises by X" (decoder
+    # upstream_change) or "N mm of rain falls on the local zone" -> "flow
+    # here rises" -- is one learned coefficient instead of something the LSTM
+    # must discover from few flood windows. Zero-initialised: training starts
+    # from the LSTM-only behaviour.
+    if linear_skip:
+        skip = layers.TimeDistributed(
+            layers.Dense(target_features, use_bias=False, kernel_initializer='zeros'),
+            name='linear_skip',
+        )(decoder_input)
+        delta = layers.Add(name='delta_plus_skip')([delta, skip])
+
     # Final output = persistence + delta. Worst-case (delta = 0) reproduces the
     # persistence baseline; any nonzero output is an improvement over it.
     output = layers.Add(name='persistence_plus_delta')([delta, persistence_broadcast])
@@ -166,4 +180,28 @@ def build_encoder_decoder(
         loss=tf.keras.losses.Huber(delta=huber_delta),
         metrics=['mae'],
     )
+    return model
+
+
+def average_ensemble(members, name: str = 'flow_seq2seq_ensemble') -> Model:
+    """
+    One Keras model that runs every member on the same inputs and averages
+    their outputs (scaled log space, i.e. a geometric mean in cfs). Members
+    trained from different random seeds make different small errors;
+    averaging removes much of that noise (most visibly on day 1) without
+    flattening a peak they agree on. The wrapper keeps the members' input
+    names and shapes, so the mobile contract is unchanged.
+    """
+    members = list(members)
+    if len(members) == 1:
+        return members[0]
+    first = members[0]
+    inputs = {k: layers.Input(shape=t.shape[1:], dtype=t.dtype, name=k)
+              for k, t in first.input.items()}
+    outputs = []
+    for i, m in enumerate(members):
+        m._name = f'member_{i}'
+        outputs.append(m(inputs))
+    model = Model(inputs=inputs, outputs=layers.Average(name='ensemble_mean')(outputs), name=name)
+    model.compile(optimizer=first.optimizer.__class__(), loss=first.loss, metrics=['mae'])
     return model

@@ -45,6 +45,7 @@ TFLITE_INT8_NAME = 'lstm_model_int8.tflite'
 MANIFEST_NAME = 'manifest.json'
 TRAINING_CONFIG_NAME = 'training_config.json'
 UPSTREAM_REGISTRY_NAME = 'upstream_gauges.json'
+BASIN_ZONES_NAME = 'basin_zones.json'
 
 # Maximum per-output absolute error (scaled space) the int8-quantized TFLite
 # is allowed to introduce vs the float32 Keras model. Beyond this we ship
@@ -130,7 +131,19 @@ def export_coreml(h5_path, out_dir):
 
 
 def _rebuild_without_mask_zero(net, config):
-    """Build a fresh model with mask_zero=False and copy weights from `net`."""
+    """
+    Build a fresh model with mask_zero=False and copy weights from `net`. An
+    averaged ensemble (model.average_ensemble) is rebuilt member by member.
+    """
+    import tensorflow as tf
+    import model as model_mod
+    members = [layer for layer in net.layers if isinstance(layer, tf.keras.Model)]
+    if members:
+        return model_mod.average_ensemble([_rebuild_member_without_mask_zero(m, config) for m in members])
+    return _rebuild_member_without_mask_zero(net, config)
+
+
+def _rebuild_member_without_mask_zero(net, config):
     import model as model_mod
     rebuilt = model_mod.build_encoder_decoder(
         num_stations=config['num_stations'],
@@ -327,6 +340,7 @@ def write_manifest(base_path, config, artifact_files, tflite_mode,
             'num_basins': config['num_basins'],
             'window_built_decoder_features': config.get('window_built_decoder_features', []),
             'upstream_known_days': config.get('upstream_known_days', {}),
+            'basin_precip_known_days': config.get('basin_precip_known_days'),
         },
         'files': files,
     }
@@ -373,7 +387,8 @@ def export_all(base_path):
                 pass
 
     artifact_files = [H5_NAME, 'scalers.json', 'station_index.json',
-                      'basin_index.json', TRAINING_CONFIG_NAME, UPSTREAM_REGISTRY_NAME]
+                      'basin_index.json', TRAINING_CONFIG_NAME, UPSTREAM_REGISTRY_NAME,
+                      BASIN_ZONES_NAME]
     if mlpackage_zip:
         artifact_files.append(MLPACKAGE_ZIP_NAME)
     if tflite_result:

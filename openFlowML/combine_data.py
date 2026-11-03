@@ -5,6 +5,7 @@ import data.get_CODWR_flow as get_CODWR_flow
 import data.get_noaa as get_noaa
 import data.get_swe as get_swe
 import data.get_upstream as get_upstream
+import data.get_basin_precip as get_basin_precip
 import normalize_data
 import windowing
 import pandas as pd
@@ -37,6 +38,13 @@ Upstream gauges:
     flow are known at forecast time; windowing uses it). Stations without
     upstream gauges get the 0 placeholder + indicator 0, like reservoirs.
   - Set OPENFLOW_DISABLE_UPSTREAM=1 to run the ablation without it.
+
+Basin precipitation by travel-time zone:
+  - Stations in data/basin_zones.json get rain_/snow_{local,mid,far}: gridMET
+    daily rain and snowfall averaged over each river-distance zone of the
+    contributing area (data/get_basin_precip.py), with basin_precip_observed.
+    Rain is never interpolated across missing days (observed = 0 instead).
+  - Set OPENFLOW_DISABLE_BASIN_PRECIP=1 to run the ablation without it.
 """
 
 if not logging.getLogger().hasHandlers():
@@ -90,7 +98,8 @@ def _to_daily_series(df, value_columns, daily_index):
 def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
                      swe_data=None, sm_data=None,
                      drought_data=None, reservoir_data=None,
-                     huc8=None, upstream_data=None, upstream_known_days=0):
+                     huc8=None, upstream_data=None, upstream_known_days=0,
+                     basin_precip_data=None):
     """
     Merge a site's flow, NOAA temperature, SWE, SMAP soil moisture, USDM
     drought, and USBR reservoir series onto one regular daily index.
@@ -203,6 +212,17 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         else:
             combined['upstream_flow'] = float('nan')
 
+        # Basin zone rain / snow (mm/day). No interpolation: a missing day
+        # of rain is unknown, not the average of its neighbours.
+        bp_cols = get_basin_precip.FEATURE_COLUMNS
+        if basin_precip_data is not None and not basin_precip_data.empty:
+            bp_daily = _to_daily_series(basin_precip_data, bp_cols, daily_index)
+            for col in bp_cols:
+                combined[col] = pd.to_numeric(bp_daily[col], errors='coerce')
+        else:
+            for col in bp_cols:
+                combined[col] = float('nan')
+
         # Drop rows still missing any core flow/temp value. SWE / soil_moisture
         # / precipitation are NOT in CORE_COLUMNS, so a missing one never
         # drops a row.
@@ -260,6 +280,10 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         combined['upstream_flow'] = up_series.fillna(0.0)
         combined['upstream_known_days'] = (
             int(upstream_known_days) if combined['upstream_observed'].any() else 0)
+
+        combined['basin_precip_observed'] = (
+            combined[bp_cols].notna().all(axis=1).astype('int64'))
+        combined[bp_cols] = combined[bp_cols].fillna(0.0)
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,
@@ -282,7 +306,63 @@ def _disabled(env_var):
     return os.getenv(env_var, '').strip() in ('1', 'true', 'True')
 
 
-def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
+# Weather gap fill: days the nearest NOAA station did not report take the
+# gridMET cell at the gauge, shifted by the station-minus-gridMET mean
+# temperature difference for that calendar month (all months pooled when a
+# month has fewer than this many overlapping days).
+WEATHER_FILL_MIN_OVERLAP_DAYS = 20
+WEATHER_COLUMNS = ['TMIN', 'TMAX', 'precipitation']
+
+
+def fill_weather_gaps(noaa_data, grid_data):
+    """
+    Fill missing NOAA days with gridMET point weather (both in training units).
+
+    Returns (filled DataFrame[Date, TMIN, TMAX, precipitation], days filled).
+    Days the station reported keep the station values; for a missing day
+    TMIN/TMAX are gridMET plus that month's mean station-minus-gridMET offset
+    and precipitation is gridMET unchanged. A missing station precipitation
+    on a day with station temperatures is filled the same way. Pure function.
+    """
+    if grid_data is None or grid_data.empty:
+        return noaa_data, 0
+    grid = grid_data[['Date', *WEATHER_COLUMNS]].copy()
+    grid['Date'] = pd.to_datetime(grid['Date']).dt.normalize()
+    grid = grid.set_index('Date').apply(pd.to_numeric, errors='coerce')
+    if noaa_data is None or noaa_data.empty:
+        return grid.reset_index(), int(grid[['TMIN', 'TMAX']].notna().all(axis=1).sum())
+    noaa = noaa_data.copy()
+    noaa['Date'] = pd.to_datetime(noaa['Date']).dt.normalize()
+    extra = [c for c in noaa.columns if c not in ('Date', *WEATHER_COLUMNS)]
+    noaa = noaa.drop_duplicates('Date').set_index('Date')
+    for col in WEATHER_COLUMNS:
+        if col not in noaa.columns:
+            noaa[col] = float('nan')
+        noaa[col] = pd.to_numeric(noaa[col], errors='coerce')
+    index = noaa.index.union(grid.index)
+    station = noaa.reindex(index)
+    g = grid.reindex(index)
+    out = station[WEATHER_COLUMNS].copy()
+    month = index.month
+    for col in ('TMIN', 'TMAX'):
+        diff = station[col] - g[col]
+        pooled = diff.mean() if diff.notna().any() else 0.0
+        counts = diff.groupby(month).count()
+        means = diff.groupby(month).mean()
+        offset = pd.Series([means[m] if counts.get(m, 0) >= WEATHER_FILL_MIN_OVERLAP_DAYS else pooled
+                            for m in month], index=index)
+        out[col] = station[col].fillna(g[col] + offset)
+    out['precipitation'] = station['precipitation'].fillna(g['precipitation'])
+    filled = int((station[['TMIN', 'TMAX']].isna().any(axis=1)
+                  & out[['TMIN', 'TMAX']].notna().all(axis=1)).sum())
+    for col in extra:
+        out[col] = station[col]
+    out.index.name = 'Date'
+    return out.reset_index(), filled
+
+
+def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None,
+                           coords=None):
     """
     Resolve a site's coordinates and fetch all its auxiliary timeseries:
     NOAA temperature, NRCS SWE, SMAP soil moisture, USDM drought, USBR
@@ -290,7 +370,7 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
 
     Returns a dict with keys:
       noaa_data, swe_data, sm_data, drought_data, reservoir_data,
-      upstream_data, upstream_known_days, huc8
+      upstream_data, upstream_known_days, basin_precip_data, huc8
     Any data frame may be empty (auxiliary features degrade gracefully; only
     missing NOAA causes the caller to skip the site). huc8 may be None.
 
@@ -298,7 +378,9 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     ablation runs:
       OPENFLOW_DISABLE_SMAP, OPENFLOW_DISABLE_DROUGHT, OPENFLOW_DISABLE_RESERVOIR
     """
-    if prefix == "USGS":
+    if coords is not None:   # caller already resolved them (saves a flaky second lookup)
+        coords_dict = {'latitude': coords['lat'], 'longitude': coords['lon']}
+    elif prefix == "USGS":
         coords_dict = get_usgs_coordinates(site_id)
     elif prefix == "DWR":
         coords_dict = get_dwr_coordinates(site_id)
@@ -316,6 +398,23 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = end_date.strftime('%Y-%m-%d')
     closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_str, end_str)
+
+    if (noaa_data is None or noaa_data.empty) and noaa_fallback is not None:
+        # Inference over a short recent window: no nearby GHCND station may
+        # pass the coverage gate even though one did over the training years.
+        logger.info("No NOAA station for %s; using fallback weather", site_id)
+        noaa_data = noaa_fallback(latitude, longitude, start_date, end_date)
+
+    # Station outages (a GHCND station that stops reporting) otherwise drop
+    # every day without temperature from training; fill them from gridMET.
+    if not _disabled('OPENFLOW_DISABLE_WEATHER_FILL'):
+        try:
+            grid = get_basin_precip.gridmet_point_weather(latitude, longitude, start_date, end_date)
+            noaa_data, n_filled = fill_weather_gaps(noaa_data, grid)
+            if n_filled:
+                logger.info("Filled %d NOAA weather days for %s from gridMET", n_filled, site_id)
+        except Exception as e:
+            logger.warning("gridMET weather gap fill skipped for %s: %s", site_id, e)
 
     if noaa_data is None or noaa_data.empty:
         logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
@@ -394,12 +493,21 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data):
     except Exception as e:
         logger.warning("Upstream fetch failed for %s: %s", site_id, e)
 
+    # Basin precipitation by travel-time zone (gridMET over basin_zones.json).
+    try:
+        basin_precip_data = get_basin_precip.get_zone_precip_daily(
+            f"{prefix}:{site_id}", start_date, end_date)
+    except Exception as e:
+        logger.warning("Basin precip fetch failed for %s: %s", site_id, e)
+        basin_precip_data = pd.DataFrame(columns=['Date'] + get_basin_precip.FEATURE_COLUMNS)
+
     return {
         'noaa_data': noaa_data,
         'swe_data': swe_data,
         'sm_data': sm_data,
         'drought_data': drought_data,
         'reservoir_data': reservoir_data,
+        'basin_precip_data': basin_precip_data,
         'upstream_data': upstream_data,
         'upstream_known_days': upstream_known_days,
         'huc8': huc8,
@@ -440,7 +548,15 @@ def get_base_path():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def main(training_num_years=7):
+# Years of history to train on. Longer records span more wet and dry snow
+# years, so the model learns the snowpack -> runoff link instead of the
+# seasonal cycle of a few particular years. OPENFLOW_TRAINING_YEARS overrides.
+TRAINING_YEARS = 15
+
+
+def main(training_num_years=None):
+    if training_num_years is None:
+        training_num_years = int(os.getenv('OPENFLOW_TRAINING_YEARS', '') or TRAINING_YEARS)
     all_data = {}
     site_ids = get_site_ids()
     base_path = get_base_path()
@@ -476,7 +592,8 @@ def main(training_num_years=7):
                 reservoir_data=fetched['reservoir_data'],
                 huc8=fetched['huc8'],
                 upstream_data=fetched.get('upstream_data'),
-                upstream_known_days=fetched.get('upstream_known_days', 0))
+                upstream_known_days=fetched.get('upstream_known_days', 0),
+                basin_precip_data=fetched.get('basin_precip_data'))
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue

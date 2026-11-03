@@ -26,8 +26,9 @@ import json
 import logging
 import os
 from datetime import timedelta
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,20 @@ def known_days(cfg: Optional[dict], decoder_days: int) -> int:
 def max_lag_days(cfg: Optional[dict]) -> int:
     if not cfg or not cfg.get('upstream'):
         return 0
-    return max(int(g.get('lag_days', 0)) for g in cfg['upstream'])
+    lags = [int(g.get('lag_days', 0)) for g in cfg['upstream']]
+    if cfg.get('anchor'):
+        lags.append(int(cfg['anchor'].get('lag_days', 0)))
+    return max(lags)
+
+
+def gauge_ids(cfg: Optional[dict]) -> List[str]:
+    """Every gauge a station's routed upstream needs: upstream gauges, then the anchor."""
+    if not cfg or not cfg.get('upstream'):
+        return []
+    ids = [g['site_id'] for g in cfg['upstream']]
+    if cfg.get('anchor'):
+        ids.append(cfg['anchor']['site_id'])
+    return ids
 
 
 def interpolate_short_gaps(series: pd.Series, max_gap_days: int) -> pd.Series:
@@ -126,20 +140,68 @@ def routed_daily(series_by_site: Dict[str, pd.Series], cfg: dict) -> pd.Series:
     """
     Route upstream daily-mean series to the target: shift each gauge later by
     its lag_days, scale by its weight, and sum. A day is NaN unless every
-    upstream gauge contributes a value. Pure function (no I/O).
+    upstream gauge contributes a value. With an `anchor` gauge in cfg the sum
+    is only the supply that anchored_daily scales (see there). Pure function
+    (no I/O); empty when any needed gauge has no series.
     """
+    empty = pd.Series(dtype='float64', name='upstream_flow')
     parts = []
     for gauge in cfg['upstream']:
         s = series_by_site.get(gauge['site_id'])
         if s is None or len(s) == 0:
-            return pd.Series(dtype='float64', name='upstream_flow')
+            return empty
         d = _daily(s)
         d.index = d.index + pd.Timedelta(days=int(gauge.get('lag_days', 0)))
         parts.append(d * float(gauge.get('weight', 1.0)))
     frame = pd.concat(parts, axis=1)
     out = frame.sum(axis=1, min_count=len(parts))
+    if cfg.get('anchor'):
+        anchor = series_by_site.get(cfg['anchor']['site_id'])
+        if anchor is None or len(anchor) == 0:
+            return empty
+        out = anchored_daily(anchor, out, cfg['anchor'])
     out.name = 'upstream_flow'
     out.index.name = 'Date'
+    return out
+
+
+# Anchor gauges: the recent anchor/supply ratio that scales supply changes.
+ANCHOR_RATIO_DAYS = 7
+ANCHOR_RATIO_MAX = 1.5
+
+
+def anchored_daily(anchor: pd.Series, supply: pd.Series, anchor_cfg: dict) -> pd.Series:
+    """
+    Upstream flow seen through an anchor gauge: a gauge below the diversions
+    between the upstream gauges and the target (Lobatos for the Taos Box, below
+    the San Luis Valley irrigation ditches). In irrigation season most of a
+    rise at Alamosa never reaches Taos; the anchor shows what actually does.
+
+    anchor: the anchor gauge's flow (any time step; daily-meaned and shifted
+    by anchor_cfg lag_days onto target dates). supply: routed_daily of the
+    upstream gauges, on target dates (observations, then RFC forecasts).
+
+    Result: the lagged anchor wherever it has a value. Target dates after the
+    last anchor value continue it with the supply's change since that date,
+    scaled by the pass-through ratio anchor/supply over the last
+    ANCHOR_RATIO_DAYS days both have (clipped to [0, ANCHOR_RATIO_MAX]),
+    floored at 0. Training data (anchor observed every day) is just the lagged
+    anchor; the continuation is how inference reaches the RFC forecast days.
+    """
+    a = _daily(anchor) * float(anchor_cfg.get('weight', 1.0))
+    a.index = a.index + pd.Timedelta(days=int(anchor_cfg.get('lag_days', 0)))
+    supply = supply.copy()
+    supply.index = pd.DatetimeIndex(supply.index).normalize()
+    out = a.reindex(a.index.union(supply.index))
+    last = a.last_valid_index()
+    if last is None or pd.isna(supply.get(last)):
+        return out
+    both = pd.concat([a, supply], axis=1, keys=['a', 's']).dropna()
+    both = both[both.index <= last].tail(ANCHOR_RATIO_DAYS)
+    ratio = (float(np.clip(both['a'].mean() / both['s'].mean(), 0.0, ANCHOR_RATIO_MAX))
+             if len(both) and both['s'].mean() > 0 else 0.0)
+    future = supply[(supply.index > last) & supply.notna()]
+    out.loc[future.index] = np.maximum(a[last] + ratio * (future - supply[last]), 0.0)
     return out
 
 
@@ -182,18 +244,17 @@ def get_upstream(site_id: str, start_date, end_date,
         return empty
     fetch_start = start_date - timedelta(days=max_lag_days(cfg) + UPSTREAM_MAX_GAP_DAYS)
     series = {}
-    for gauge in cfg['upstream']:
+    for gauge_id in gauge_ids(cfg):
         try:
-            s = fetch_daily_mean(gauge['site_id'], fetch_start, end_date)
+            s = fetch_daily_mean(gauge_id, fetch_start, end_date)
         except Exception as e:
-            logger.warning("Upstream fetch failed for %s (%s): %s",
-                           site_id, gauge['site_id'], e)
+            logger.warning("Upstream fetch failed for %s (%s): %s", site_id, gauge_id, e)
             return empty
         if s.empty:
             logger.warning("No upstream data for %s from %s; upstream feature disabled",
-                           site_id, gauge['site_id'])
+                           site_id, gauge_id)
             return empty
-        series[gauge['site_id']] = s
+        series[gauge_id] = s
     routed = routed_daily(series, cfg)
     routed = routed[(routed.index >= pd.Timestamp(start_date).normalize())
                     & (routed.index <= pd.Timestamp(end_date).normalize())]

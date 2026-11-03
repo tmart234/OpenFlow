@@ -93,13 +93,20 @@ def test_get_upstream_routes_fetched_series(monkeypatch):
     def fake_fetch(site_id, start, end):
         calls.append((site_id, start))
         idx = pd.date_range('2021-12-01', '2022-02-01', freq='D')
-        return pd.Series(100.0 if site_id.endswith('RIOALACO') else 50.0, index=idx)
+        return pd.Series({'DWR:RIOALACO': 100.0, 'DWR:CONMOGCO': 50.0}.get(site_id, 30.0), index=idx)
 
     monkeypatch.setattr(get_upstream, 'fetch_daily_mean', fake_fetch)
     df = get_upstream.get_upstream(TAOS, datetime(2022, 1, 1), datetime(2022, 1, 31))
     assert list(df.columns) == ['Date', 'upstream_flow']
     assert len(df) == 31
-    cfg = get_upstream.load_registry()[TAOS]
+    # Taos is anchored at Lobatos: the routed value is the (lagged) anchor flow.
+    assert {c[0] for c in calls} == {'DWR:RIOALACO', 'DWR:CONMOGCO', 'DWR:RIOLOBCO'}
+    assert df['upstream_flow'].iloc[-1] == pytest.approx(30.0)
+    reg = get_upstream.load_registry()
+    cfg = dict(reg[TAOS])
+    cfg.pop('anchor')
+    monkeypatch.setattr(get_upstream, 'load_registry', lambda path=None: {**reg, TAOS: cfg})
+    df = get_upstream.get_upstream(TAOS, datetime(2022, 1, 1), datetime(2022, 1, 31))
     w = {g['site_id']: g['weight'] for g in cfg['upstream']}
     assert df['upstream_flow'].iloc[-1] == pytest.approx(100 * w['DWR:RIOALACO'] + 50 * w['DWR:CONMOGCO'])
     # History is fetched far enough back to cover the longest lag.
@@ -129,3 +136,43 @@ def test_fetch_daily_mean_dispatches_on_prefix(monkeypatch):
     assert get_upstream.fetch_daily_mean('USGS:1', None, None).iloc[0] == 7.0
     with pytest.raises(ValueError):
         get_upstream.fetch_daily_mean('NOAA:1', None, None)
+
+
+def _anchor_cfg():
+    return {'upstream': [{'site_id': 'A', 'lag_days': 2, 'weight': 1.0}],
+            'anchor': {'site_id': 'L', 'lag_days': 1, 'weight': 1.0}}
+
+
+def test_anchored_routing_is_the_lagged_anchor_where_observed():
+    days = pd.date_range('2026-06-01', periods=10)
+    series = {'A': pd.Series(200.0, index=days), 'L': pd.Series(np.arange(10) + 20.0, index=days)}
+    out = get_upstream.routed_daily(series, _anchor_cfg())
+    # Lobatos shifted 1 day; the 200-cfs supply never shows up while the anchor has data.
+    assert out.loc['2026-06-02'] == 20.0 and out.loc['2026-06-11'] == 29.0
+    assert out.name == 'upstream_flow'
+
+
+def test_anchored_routing_scales_future_supply_changes_by_pass_through():
+    days = pd.date_range('2026-06-01', periods=10)
+    supply_up = pd.Series(100.0, index=pd.date_range('2026-06-01', periods=14))
+    supply_up.iloc[-3:] = 300.0                  # RFC forecast: +200 cfs upstream
+    series = {'A': supply_up, 'L': pd.Series(25.0, index=days)}   # 25% passes the ditches
+    out = get_upstream.routed_daily(series, _anchor_cfg())
+    # Anchor ends 2026-06-11 (10 obs + 1 day lag); supply (lag 2) runs to 06-16.
+    assert out.loc['2026-06-11'] == 25.0
+    assert out.loc['2026-06-13'] == pytest.approx(25.0)                 # supply unchanged
+    assert out.loc['2026-06-14'] == pytest.approx(25.0 + 0.25 * 200)    # scaled rise
+    assert out.index.max() == pd.Timestamp('2026-06-16')
+
+
+def test_anchored_routing_needs_the_anchor_series():
+    days = pd.date_range('2026-06-01', periods=5)
+    out = get_upstream.routed_daily({'A': pd.Series(1.0, index=days)}, _anchor_cfg())
+    assert out.empty
+    assert get_upstream.gauge_ids(_anchor_cfg()) == ['A', 'L']
+    assert get_upstream.max_lag_days(_anchor_cfg()) == 2
+
+
+def test_taos_box_is_anchored_at_lobatos():
+    cfg = get_upstream.upstream_config('USGS:08276500')
+    assert cfg['anchor']['site_id'] == 'DWR:RIOLOBCO' and cfg['anchor']['lag_days'] == 1

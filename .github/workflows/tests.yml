@@ -57,7 +57,7 @@ jobs:
 
     - name: Import training pipeline (smoke)
       working-directory: openFlowML
-      run: python -c "import combine_data, normalize_data, windowing, model, train, baselines, routing, charts, hindcast, flow_forecast; print('training pipeline imports OK')"
+      run: python -c "import combine_data, normalize_data, windowing, model, train, baselines, routing, charts, hindcast, flow_forecast, ml_inference; print('training pipeline imports OK')"
 
     - name: Run model + windowing tests
-      run: python -m pytest -v tests/test_model.py tests/test_windowing.py tests/test_routing.py tests/test_charts.py tests/test_hindcast.py tests/test_train_smoke.py
+      run: python -m pytest -v tests/test_model.py tests/test_windowing.py tests/test_routing.py tests/test_charts.py tests/test_hindcast.py tests/test_train_smoke.py tests/test_ml_inference.py

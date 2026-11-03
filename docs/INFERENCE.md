@@ -16,8 +16,12 @@ Every successful weekly training run on `main` produces a GitHub Release tagged 
 | `station_index.json` | Map `site_id` → embedding index. Index `0` is reserved for "unseen". |
 | `basin_index.json` | Map HUC8 → embedding index. Index `0` is reserved for "unseen". |
 | `training_config.json` | Schema: encoder/decoder window sizes, feature names, vocab sizes, per-station `upstream_known_days`. |
-| `upstream_gauges.json` | Upstream-gauge registry: for each station, the upstream gauges (training `site_id`, NWS `nws_lid`), `lag_days`, `weight`, and `forecast_days`. Needed to build the `upstream_flow` inputs. |
+| `upstream_gauges.json` | Upstream-gauge registry: for each station, the upstream gauges (training `site_id`, NWS `nws_lid`), `lag_days`, `weight`, `forecast_days`, and an optional `anchor` gauge. Needed to build the `upstream_flow` inputs. |
+| `basin_zones.json` | Per-station travel-time precipitation zones: zone polygons (local / mid / far by river distance), the ungauged area, and area-weighted sample `points` with their NWS gridpoint (`WFO/x,y`). Needed to build the basin rain/snow inputs. |
 | `manifest.json` | sha256 + byte size per artifact, plus tool versions and the schema block. Verify on download. |
+| `quality_report.json` / `.md` | Held-out verification of this training recipe (`openFlowML/evaluate.py`). Per station and lead day: median absolute % error of the daily maximum flow vs persistence, flood-peak ratio and timing, and recession error, plus the quality gate result. CI publishes a release only when the gate passes. |
+
+The model is an **average of several networks** (`training_config.ensemble_size`), each trained from a different random seed, wrapped in one Keras graph (`model.average_ensemble`). Inputs and outputs are unchanged, so consumers need do nothing. With `training_config.final_refit = true`, the published networks were retrained on every window, including the test years, after `quality_report` was measured on the held-out run.
 
 ### Verifying a downloaded release
 
@@ -32,6 +36,26 @@ for entry in manifest["files"]:
             h.update(chunk)
     assert h.hexdigest() == entry["sha256"], entry["name"]
 ```
+
+## Python reference implementation
+
+`openFlowML/ml_inference.py` runs a trained model for a station as of today. It is the executable version of this document:
+- **Encoder (last 60 days):** built with the same code as training (`combine_data`). Gaps are bridged as described below.
+- **Decoder (next 14 days):** forecast weather, routed upstream flow and basin rain/snow, using the hold and mask rules from `windowing`.
+- **Output:** daily min/max cfs, inverted with `scalers.json`.
+
+Run it from the CLI with `python openFlowML/flow_forecast.py --site taos-box --model-dir <release dir>`. That draws the model's daily min–max next to the routing or NWS forecast. The **Flow Forecast** workflow does the same automatically with the newest `model-*` release.
+
+**Units.** Training used raw NOAA GHCND daily summaries:
+- `TMIN` / `TMAX` in **tenths of °C**;
+- `precipitation` in mm.
+
+Forecast temperatures must be converted to these units (°C × 10). (`data/get_forecast.py` returns °F, which does not match.)
+
+**Gaps between the data sources:**
+- **Station outages:** days the nearest NOAA station did not report take the gridMET cell at the gauge (`get_basin_precip.gridmet_point_weather`). Temperatures are shifted by that calendar month's mean station-minus-gridMET difference (`combine_data.fill_weather_gaps`). Training does the same, so a station that stops reporting no longer removes those days from the training data.
+- **NOAA lag:** NOAA daily data runs 2–4 days behind. The reference bridges those days by interpolating temperature toward the NWS forecast for today, with precipitation from the observed local-zone basin rain.
+- **Disabled sources:** `training_config.disabled_sources` lists data sources that training switched off (e.g. `SMAP` without Earthdata credentials). Inference switches the same ones off, so the model sees the placeholders it was trained on.
 
 ## Input tensors
 
@@ -76,6 +100,17 @@ where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the 
 - **Encoder days:** use observed daily means. Training used each gauge's `site_id`: the CO DWR daily archive for `DWR:` ids, USGS IV averaged to daily for `USGS:` ids. NWPS (`https://api.water.noaa.gov/nwps/v1/gauges/{nws_lid}/stageflow`, `observed`; flow is `secondary` in kcfs) covers about the last 30 days.
 - **Decoder days:** for days `d < lag_days_i`, `Q_i(d - lag_days_i)` is still an observation. After that, use the daily mean of the NWS River Forecast Center forecast at `nws_lid` (the `forecast` half of the same NWPS payload).
 
+**Anchor gauge (stations with an `anchor` entry; currently the Taos Box, anchored at Rio Grande near Lobatos).** Some rivers lose most of an upstream rise to diversions before the target. Between Alamosa / Mogote and the Taos Box, the San Luis Valley irrigation ditches take most of it from April to October. For such a station, `upstream_flow` is the anchor gauge below the diversions instead of the sum above:
+
+```
+supply(d)         = sum over upstream gauges i of weight_i * Q_i(d - lag_days_i)       (as above)
+upstream_flow(d)  = weight_a * Q_anchor(d - lag_days_a)                  while the anchor has a value
+                  = max(0, A_last + r * (supply(d) - supply(d_last)))     after its last value
+r                 = clip(mean(A) / mean(supply), 0, 1.5) over the last 7 days both exist up to d_last
+```
+
+`A_last` is the anchor value on `d_last`, its last routed date. Training only ever sees the first line, because the anchor is observed every day. The continuation carries the upstream RFC forecasts through the diversions at the current pass-through ratio. `get_upstream.anchored_daily` is the reference implementation. The anchor counts toward "every gauge has a value" for `upstream_observed`.
+
 **`upstream_observed` (encoder only, 0/1).** Set it to 1 when every upstream gauge has a value for that day. Otherwise, and for every station without upstream gauges, set `upstream_flow` to `0.0` *in scaled space* and `upstream_observed` to 0.
 
 **`upstream_known` (decoder only, 0/1)** is built per forecast, not read from data. Let `K = training_config.upstream_known_days[site_id]` (0 when the site is absent). This equals `min(lag_days) + forecast_days`, capped at `decoder_days`. For decoder day `d` (0-based):
@@ -83,9 +118,43 @@ where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the 
 - `d < K` and the routed value exists: use it, `upstream_known = 1`.
 - otherwise: **hold** the last known value (starting from the last encoder day's `upstream_flow`) and set `upstream_known = 0`.
 
+**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`).
+
 `windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
 
 `openFlowML/flow_forecast.py` builds these same upstream inputs from live NWPS data. It routes them hourly, without the ML model, to produce the CLI and CI forecast charts.
+
+## Basin rain / snow inputs (travel-time zones)
+
+Every station in `basin_zones.json` has its contributing area (from the USGS NLDI network; closed basins excluded) split into three zones by river distance to the gauge. The default split is `zone_km = [100, 250]`:
+
+- `local` (100 river-km or less)
+- `mid` (100–250 river-km)
+- `far` (over 250 river-km)
+
+The model gets one rain and one snow column per zone:
+
+- encoder and decoder: `rain_local`, `rain_mid`, `rain_far`, `snow_local`, `snow_mid`, `snow_far`
+- encoder only: `basin_precip_observed`
+- decoder only: `basin_precip_known`
+
+**Units and scaling.** Values are the zone-mean daily precipitation in mm, split into rain and snow (water equivalent). Scale each column with its `scalers.json` entry (log1p, then z-score).
+
+**Rain vs snow** uses one rule everywhere: the liquid fraction is `clip((T + 1) / 4, 0, 1)` with `T` the daily mean air temperature in °C (`basin_zones.liquid_fraction`). Rain is `precip × fraction`; snow is the rest.
+
+**Encoder days.** Training used gridMET daily grids (`pr`, `tmmn`, `tmmx`) averaged over each zone polygon. At inference:
+
+- Use gridMET (about 2 days behind real time).
+- Fill the remaining days with the NWS Stage IV daily analysis: `nws_precip_1day_YYYYMMDD_conus.nc`, covering the 24 h ending at 12Z on that date, mapped to the previous local day. Split rain/snow using the zone's latest gridMET mean temperature.
+- `basin_precip_observed` = 1 when the day has a value. Otherwise set all six columns to `0.0` *in scaled space* and the indicator to 0.
+
+**Decoder days.** Use NWS gridpoint forecasts (`https://api.weather.gov/gridpoints/{nws}` for each sample point):
+
+- `quantitativePrecipitation` is 6-hourly mm, spread evenly over its hours; `temperature` is hourly.
+- Sum to local calendar days per point, split rain/snow on that day's mean temperature, then take the area-weighted mean over the zone's points. Weights are `w`, normalised within the zone.
+- Decoder day `d` (0-based) keeps its values with `basin_precip_known = 1` when `d < training_config.basin_precip_known_days` (7) and the forecast exists. Later days are `0.0` with `basin_precip_known = 0`.
+
+`windowing.basin_precip_decoder_window` implements this rule. `data/get_basin_precip.inference_daily` is the reference for assembling the daily values. The point `precipitation` column (nearest rain gauge plus point forecast) is unchanged and still required.
 
 ## Output tensor
 
