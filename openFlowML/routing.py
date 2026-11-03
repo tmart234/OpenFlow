@@ -464,6 +464,8 @@ def anchored_input(anchor_obs: np.ndarray, supply: np.ndarray,
     season, about 0.9 in winter); the ditches' capacity is limited, so the
     part of a big rise beyond it passes at a higher rate
     (get_upstream.passed_change; anchor_cfg overrides its defaults).
+    anchor_cfg['fixed_ratio'] replaces r where nothing is diverted between
+    the supply and the anchor.
 
     Returns (values, info) with info = {'ratio', 'last_index'}.
     """
@@ -482,6 +484,11 @@ def anchored_input(anchor_obs: np.ndarray, supply: np.ndarray,
     mean_supply = float(np.mean(supply[lo:last + 1][window])) if window.any() else 0.0
     ratio = (float(np.clip(np.mean(values[lo:last + 1][window]) / mean_supply, 0.0, max_ratio))
              if mean_supply > 0 else 0.0)
+    if anchor_cfg and anchor_cfg.get('fixed_ratio') is not None:
+        # No diversions between the supply and this anchor (e.g. Lobatos ->
+        # Cerro): changes pass at a fixed rate; the gains between them are
+        # base flow, so the mean ratio would understate a rise.
+        ratio = float(anchor_cfg['fixed_ratio'])
     from data.get_upstream import passed_change
     values[last + 1:] = np.maximum(
         values[last] + passed_change(supply[last + 1:] - supply[last], ratio, anchor_cfg), 0.0)

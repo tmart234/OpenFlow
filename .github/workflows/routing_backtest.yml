@@ -2,7 +2,7 @@ name: Routing Crest Backtest
 
 # Scores the OpenFlow routing forecast (openFlowML/flow_forecast.py) on past
 # floods: for every sharp crest since 2015 at each routed station it issues
-# forecasts 12-72 h ahead (calibrated on the 28 days before, upstream gauges
+# forecasts 12-48 h ahead (calibrated on the 28 days before, upstream gauges
 # and gridMET rain as perfect forecasts) and checks when and how high the
 # forecast puts the crest (openFlowML/crest_backtest.py).
 #
@@ -35,7 +35,7 @@ jobs:
       matrix:
         include:
           - site: taos-box
-            leads: '12 24 48 72'
+            leads: '12 24 48'
           - site: dolores
             leads: '12 24 48'
           - site: royal-gorge

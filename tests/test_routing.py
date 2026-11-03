@@ -255,3 +255,10 @@ def test_fit_with_timing_weight_prefers_the_crest_timed_lag():
     err = lambda f: np.abs(routing.crest_timing_errors(f.predict([up]), routing.find_crests(target))).mean()
     assert timed.timing_mae_hours is not None and err(timed) <= err(plain)
     assert timed.to_dict()['timing_mae_hours'] == timed.timing_mae_hours
+
+
+def test_anchored_input_fixed_ratio_passes_changes_one_to_one():
+    supply = np.r_[np.full(200, 1000.0), np.full(50, 2000.0)]        # Lobatos +1,000 cfs
+    anchor = np.r_[np.full(200, 700.0), np.full(50, np.nan)]          # Cerro: mean ratio 0.7
+    values, info = routing.anchored_input(anchor, supply, anchor_cfg={'fixed_ratio': 1.0})
+    assert info['ratio'] == 1.0 and values[-1] == pytest.approx(1700.0)

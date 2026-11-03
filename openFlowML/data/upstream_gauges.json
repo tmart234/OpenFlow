@@ -73,6 +73,42 @@
       "lag_hours": 12,
       "k_hours": 12
     },
+    "routing": {
+      "_doc": "Hourly routing CLI only (flow_forecast.py, crest_backtest.py); the ML model keeps `anchor` (Lobatos, daily). The Rio Grande near Cerro crests a median 11 h before Taos Junction Bridge (25-75%: 9-12.5 h, 71 crests 2015-2026; 4-7 h above 1,000 cfs) and its rise is most of the Taos rise in nearly every flood, so the routing forecast routes Cerro (lag/K refitted each run). After Cerro's latest reading it continues with Lobatos (itself continued by Alamosa/Mogote) routed to Cerro's clock: from_anchor is the default (per-event least-squares median below 1,000 cfs), refitted on the calibration window whenever Lobatos moved (Oct 2026 flood: 2 h + K 12 h). Nothing is diverted between them, so changes pass 1:1 (fixed_ratio). Tributaries entering below Cerro are added at full weight with their measured travel times (cross-correlation of hourly changes 2015-2026), not fitted.",
+      "anchor": {
+        "name": "Rio Grande near Cerro, NM",
+        "site_id": "USGS:08263500",
+        "usgs_id": "08263500",
+        "nws_lid": "CERN5",
+        "lag_hours": 12,
+        "k_hours": 3,
+        "weight": 1.0,
+        "fixed_ratio": 1.0,
+        "from_anchor": {
+          "lag_hours": 18,
+          "k_hours": 3
+        }
+      },
+      "tributaries": [
+        {
+          "name": "Rio Pueblo de Taos below Los Cordovas, NM",
+          "site_id": "USGS:08276300",
+          "usgs_id": "08276300",
+          "nws_lid": "TBCN5",
+          "lag_hours": 2,
+          "k_hours": 3,
+          "weight": 1.0
+        },
+        {
+          "name": "Red River below Fish Hatchery near Questa, NM",
+          "site_id": "USGS:08266820",
+          "usgs_id": "08266820",
+          "lag_hours": 5,
+          "k_hours": 3,
+          "weight": 1.0
+        }
+      ]
+    },
     "context_gauges": [
       {
         "name": "Rio Grande near Del Norte, CO",

@@ -68,6 +68,8 @@ def fake_nwps(monkeypatch):
                             else pd.DataFrame())
         monkeypatch.setattr(get_basin_precip, 'nws_points_hourly',
                             lambda cfg: forecast_points or {})
+        import backtest_routing
+        monkeypatch.setattr(backtest_routing, 'usgs_hourly', lambda site, a, b: pd.Series(dtype=float))
         monkeypatch.setattr(nwps, 'get_gauge', lambda lid: {'flood': {'categories': {
             'action': {'flow': 7750}, 'minor': {'flow': 9800}}}})
     return install
@@ -295,6 +297,75 @@ def test_routed_forecast_is_pure_and_matches_the_cli_core():
     assert res['gauges'] == [cfg['anchor']] and len(res['ef'].central) == len(GRID)
     direct = flow_forecast.routed_forecast({k: v for k, v in cfg.items() if k != 'anchor'}, tgt, INOW, ins)
     assert direct['anchor'] is None and direct['gauges'] == cfg['upstream']
+
+
+def _cerro_scenario():
+    """Taos routed from Cerro (fed by Lobatos), with a storm on Rio Pueblo de Taos just before now."""
+    payloads, _ = _irrigation_scenario()
+    lob = np.array([q['secondary'] * 1000 for q in payloads['LOBC2']['observed']['data']])
+    a = np.array([q['secondary'] * 1000 for q in payloads['ALAC2']['observed']['data']])
+    a_full = (_pulse(NOW - pd.Timedelta(days=10), 1500, 20, 300) + _pulse(NOW + pd.Timedelta(hours=60), 300, 18, 0))
+    b_full = _pulse(NOW - pd.Timedelta(days=12), 800, 30, 200)
+    lob_full = 0.2 * (1.3 * routing.route(a_full, 6, 24) + 0.7 * routing.route(b_full, 24, 72))
+    assert np.allclose(lob_full[:INOW + 1], lob, rtol=1e-3) and np.allclose(a_full[:INOW + 1], a, rtol=1e-3)
+    cerro = 40 + routing.route(lob_full, 18, 3)
+    pueblo = _pulse(NOW - pd.Timedelta(hours=6), 600, 4, 25)
+    red = np.full(len(GRID), 50.0)
+    truth = 100 + routing.route(cerro, 10, 3) + routing.route(pueblo, 2, 3) + routing.route(red, 5, 3)
+    obs = slice(0, INOW + 1)
+    payloads['TJBN5']['observed'] = _block(GRID[obs], truth[obs])
+    payloads['CERN5'] = {'observed': _block(GRID[obs], cerro[obs]), 'forecast': {'data': []}}
+    payloads['TBCN5'] = {'observed': _block(GRID[obs], pueblo[obs]), 'forecast': {'data': []}}
+    return payloads, truth, pd.Series(red[obs], index=GRID[obs])
+
+
+def test_taos_routes_from_cerro_plus_tributaries(tmp_path, fake_nwps, monkeypatch):
+    payloads, truth, red = _cerro_scenario()
+    fake_nwps(payloads)
+    import backtest_routing
+    monkeypatch.setattr(backtest_routing, 'usgs_hourly', lambda site, a, b: red if site == '08266820' else pd.Series(dtype=float))
+    s = flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path), use_rain=False)
+    assert s['routing']['routed_from'] == 'routing anchor'
+    assert s['routing_anchor']['nws_lid'] == 'CERN5' and s['routing_anchor']['used']
+    assert [t['name'].split(' ')[0] for t in s['tributaries']] == ['Rio', 'Red']
+    fc = pd.read_csv(tmp_path / 'taos-box_forecast.csv')
+    fc = fc[fc['forecast_cfs'].notna()]
+    want = pd.Series(truth, index=GRID.strftime('%Y-%m-%dT%H:%MZ')).reindex(fc['time_utc']).to_numpy()
+    # The tributary storm water already measured reaches Taos in the next hours
+    # (after that the tributary's own future is a generic recession).
+    np.testing.assert_allclose(fc['forecast_cfs'].to_numpy()[:3], want[:3], rtol=0.06)
+    assert np.all(np.diff(fc['forecast_cfs'].to_numpy()[:10]) < 0)
+    # The next Lobatos wave: Lobatos -> Cerro refitted on the window.
+    assert s['peak']['cfs'] == pytest.approx(truth[INOW + 1:INOW + 1 + 5 * 24].max(), rel=0.1)
+    assert abs((pd.Timestamp(s['peak']['time_utc']) - GRID[INOW + 1 + int(np.argmax(truth[INOW + 1:INOW + 1 + 5 * 24]))])
+               / pd.Timedelta(hours=1)) <= 6
+
+
+def test_routed_forecast_tributaries_are_mass_balance_not_fitted():
+    payloads, truth, red = _cerro_scenario()
+    cfg = flow_forecast.get_upstream.load_registry()['USGS:08276500']
+    ser = lambda lid: np.array([q['secondary'] * 1000 for q in payloads[lid]['observed']['data']])
+    tgt = np.full(len(GRID), np.nan)
+    tgt[:INOW + 1] = truth[:INOW + 1]
+    ins = []
+    for lid in ('ALAC2', 'MOGC2'):
+        obs = pd.Series(ser(lid), index=GRID[:INOW + 1])
+        fc = pd.Series([q['secondary'] * 1000 for q in payloads[lid]['forecast']['data']],
+                       index=pd.DatetimeIndex([q['validTime'] for q in payloads[lid]['forecast']['data']]))
+        ins.append(routing.build_input(GRID, obs, fc)[0])
+    pad = lambda x: np.r_[x, np.full(len(GRID) - len(x), np.nan)]
+    tribs = [routing.build_input(GRID, pd.Series(ser('TBCN5'), index=GRID[:INOW + 1]))[0],
+             routing.build_input(GRID, red)[0]]
+    res = flow_forecast.routed_forecast(cfg, tgt, INOW, ins, anchor_obs=pad(ser('LOBC2')),
+                                        near_obs=pad(ser('CERN5')), tributary_inputs=tribs)
+    assert res['gauges'] == [cfg['routing']['anchor']] and res['tributaries']
+    assert res['near_anchor']['from_anchor_fitted']
+    assert abs(res['near_anchor']['from_anchor_lag_hours'] - 18) <= 4
+    # Observed hours are kept exactly; the routed fit only explains Cerro's part.
+    np.testing.assert_allclose(res['ef'].central[:INOW + 1], truth[:INOW + 1], rtol=1e-6)
+    assert res['fits'][0].coefs[0] == pytest.approx(1.0, abs=0.1)
+    with pytest.raises(ValueError):
+        flow_forecast.routed_forecast(cfg, tgt, INOW, ins, near_obs=pad(ser('CERN5')), tributary_inputs=tribs[:1])
 
 
 def test_skill_note_quotes_backtested_crest_timing(tmp_path):

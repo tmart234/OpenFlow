@@ -10,8 +10,9 @@ before the crest and scores, for each forecast:
 
 Each forecast is calibrated on the 28 days before it is issued, like the live
 CLI. Upstream gauges get their observed future as a perfect RFC forecast, so
-the score isolates routing and timing skill. An anchor gauge (no RFC
-forecast) is known only up to the issue time. Rain is off unless --rain:
+the score isolates routing and timing skill. Anchor gauges and tributaries
+(no RFC forecasts) are known only up to the issue time; tributaries then
+recede, as live. Rain is off unless --rain:
 then the routing rain term gets observed gridMET basin rain, a perfect rain
 forecast.
 
@@ -118,10 +119,17 @@ def gauge_hourly(site_id: str, start, end) -> pd.Series:
     return s[(s.index >= _utc(start)) & (s.index <= _utc(end))]
 
 
+def routing_gauges(cfg: dict) -> List[dict]:
+    """The routing anchor (cfg['routing']['anchor']) and tributaries, if any."""
+    rc = cfg.get('routing') or {}
+    return ([rc['anchor']] if rc.get('anchor') else []) + list(rc.get('tributaries') or [])
+
+
 def load(cfg: dict, site_id: str, start, end) -> Dict[str, pd.Series]:
-    """Hourly series for the target, every upstream gauge and the anchor."""
+    """Hourly series for the target, every upstream gauge, the anchor and the routing gauges."""
     ids = [site_id] + [g['site_id'] for g in cfg['upstream']] + \
-          ([cfg['anchor']['site_id']] if cfg.get('anchor') else [])
+          ([cfg['anchor']['site_id']] if cfg.get('anchor') else []) + \
+          [g['site_id'] for g in routing_gauges(cfg)]
     pad = pd.Timedelta(days=CALIB_DAYS + 5)
     return {i: gauge_hourly(i, pd.Timestamp(start) - pad, pd.Timestamp(end) + pad) for i in ids}
 
@@ -129,7 +137,7 @@ def load(cfg: dict, site_id: str, start, end) -> Dict[str, pd.Series]:
 def crest_travel_times(data: Dict[str, pd.Series], site_id: str, cfg: dict,
                        crests: Sequence[pd.Timestamp], max_lag_hours: int = 144) -> pd.DataFrame:
     """Per target crest, hours back to each upstream / anchor gauge's highest flow before it."""
-    gauges = list(cfg['upstream']) + ([cfg['anchor']] if cfg.get('anchor') else [])
+    gauges = list(cfg['upstream']) + ([cfg['anchor']] if cfg.get('anchor') else []) + routing_gauges(cfg)
     rows = []
     for t in crests:
         row = {'crest': t}
@@ -167,15 +175,29 @@ def run_one(cfg: dict, site_id: str, data: Dict[str, pd.Series], crest: pd.Times
         if not np.isfinite(x).all():
             return None
         ins.append(x)
-    anchor = None
-    if cfg.get('anchor'):
-        anchor = data[cfg['anchor']['site_id']].reindex(grid).interpolate(limit=6, limit_area='inside') \
-            .to_numpy(float, copy=True)
-        anchor[inow + 1:] = np.nan
+    def known_until_issue(g):
+        x = data[g['site_id']].reindex(grid).interpolate(limit=6, limit_area='inside').to_numpy(float, copy=True)
+        x[inow + 1:] = np.nan
+        return x
+    anchor = known_until_issue(cfg['anchor']) if cfg.get('anchor') else None
     kw, storm_mm = {}, np.nan
+    rc = cfg.get('routing') or {}
+    if rc.get('anchor'):
+        kw['near_obs'] = known_until_issue(rc['anchor'])
+    if rc.get('tributaries'):
+        # No RFC forecasts for these: observed up to the issue time, then a
+        # recession, as live (routing.build_input).
+        tribs = []
+        for g in rc['tributaries']:
+            obs = data[g['site_id']]
+            obs = obs[(obs.index >= grid[0]) & (obs.index <= issue)].dropna()
+            if obs.empty:
+                return None
+            tribs.append(routing.build_input(grid, obs)[0])
+        kw['tributary_inputs'] = tribs
     if rain is not None:
         flux, info = get_basin_precip.routing_rain_flux(rain['cfg'], grid, rain['observed'], None)
-        kw = {'rain_flux': flux, 'rain_calib_mm': float(info['rate_mm_per_hour'].iloc[:inow + 1].sum())}
+        kw.update(rain_flux=flux, rain_calib_mm=float(info['rate_mm_per_hour'].iloc[:inow + 1].sum()))
         k0 = grid.get_loc(crest)
         storm_mm = float(info['rate_mm_per_hour'].iloc[max(0, k0 - STORM_WINDOW_H):k0 + 1].sum())
     try:
@@ -196,7 +218,9 @@ def run_one(cfg: dict, site_id: str, data: Dict[str, pd.Series], crest: pd.Times
             'crest_ratio': float(cen[j] / truth[k]) if truth[k] > 0 else np.nan,
             'calibrated': bool(res['calibrated']), 'rain': rain is not None,
             'storm_mm': storm_mm,
-            'lags_h': res['fits'][0].lags[:len(ins) if res['anchor'] is None else 1]}
+            'lags_h': res['fits'][0].lags[:len(res['gauges'])],
+            'routed_from': ('routing anchor' if res.get('near_anchor') is not None
+                            else 'anchor' if res['anchor'] is not None else 'upstream')}
 
 
 def backtest(site: str, start, end, leads: Sequence[int] = DEFAULT_LEADS,
