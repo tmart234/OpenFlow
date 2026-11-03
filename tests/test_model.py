@@ -128,3 +128,20 @@ def test_average_ensemble_is_the_mean_of_members_and_round_trips(tmp_path):
                                         compile=False)
     np.testing.assert_allclose(loaded.predict(x, verbose=0), want, rtol=1e-5, atol=1e-6)
     assert model.average_ensemble([a]) is a
+
+
+def test_export_rebuild_without_mask_handles_an_ensemble():
+    import export_mobile
+    cfg = dict(num_stations=3, num_basins=3, encoder_features=windowing.ENCODER_FEATURES,
+               decoder_features=windowing.DECODER_FEATURES, target_features=windowing.TARGET_FEATURES,
+               encoder_days=windowing.ENCODER_DAYS, decoder_days=windowing.DECODER_DAYS)
+    members = [model.build_encoder_decoder(
+        num_stations=3, num_basins=3, encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES), target_features=len(windowing.TARGET_FEATURES),
+        encoder_days=windowing.ENCODER_DAYS, decoder_days=windowing.DECODER_DAYS) for _ in range(2)]
+    ens = model.average_ensemble(members)
+    rebuilt = export_mobile._rebuild_without_mask_zero(ens, cfg)
+    x = export_mobile._random_sample_inputs(cfg, n=3)
+    x['station_input'][:] = 1
+    x['basin_input'][:] = 1
+    np.testing.assert_allclose(rebuilt.predict(x, verbose=0), ens.predict(x, verbose=0), atol=1e-6)

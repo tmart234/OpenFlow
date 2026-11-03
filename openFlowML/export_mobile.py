@@ -131,7 +131,19 @@ def export_coreml(h5_path, out_dir):
 
 
 def _rebuild_without_mask_zero(net, config):
-    """Build a fresh model with mask_zero=False and copy weights from `net`."""
+    """
+    Build a fresh model with mask_zero=False and copy weights from `net`. An
+    averaged ensemble (model.average_ensemble) is rebuilt member by member.
+    """
+    import tensorflow as tf
+    import model as model_mod
+    members = [layer for layer in net.layers if isinstance(layer, tf.keras.Model)]
+    if members:
+        return model_mod.average_ensemble([_rebuild_member_without_mask_zero(m, config) for m in members])
+    return _rebuild_member_without_mask_zero(net, config)
+
+
+def _rebuild_member_without_mask_zero(net, config):
     import model as model_mod
     rebuilt = model_mod.build_encoder_decoder(
         num_stations=config['num_stations'],
