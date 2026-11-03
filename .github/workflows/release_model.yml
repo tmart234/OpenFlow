@@ -1,0 +1,116 @@
+name: Release Model
+
+# Publishes a trained model as a GitHub Release, tagged model-YYYY.MM.DD
+# (-rN on a second release the same day). The mobile app and the Flow
+# Forecast workflow download the newest model-* release.
+#
+#   automatic  after every successful "Weekly ML Training" run on dev or main
+#   manual     Actions -> Release Model -> Run workflow, with the run ID of any
+#              training run (e.g. one started from a train/** branch);
+#              optionally as a pre-release, which does not become "latest"
+#
+# A run is published only when its artifacts are complete, the manifest
+# checksums match, and its quality gate passed (openFlowML/release_check.py).
+# The release notes carry the quality report and point back to the run and
+# commit that produced the model.
+
+on:
+  workflow_run:
+    workflows: ['Weekly ML Training']
+    types: [completed]
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID of the Weekly ML Training run to release (the number in its URL)'
+        required: true
+      prerelease:
+        description: 'Publish as a pre-release (not marked latest)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create the tag + release
+  actions: read     # read the training run and download its artifacts
+
+concurrency:
+  group: release-model
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        # Tags are needed to pick a free model-YYYY.MM.DD[-rN] tag.
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Identify the training run
+      id: run
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.run_id || github.event.workflow_run.id }}
+      run: |
+        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > run.json
+        python - <<'EOF' >> "$GITHUB_OUTPUT"
+        import json, sys
+        r = json.load(open('run.json'))
+        if not r['path'].endswith('ml_training.yml'):
+            sys.exit(f"run {r['id']} is a {r['name']} run, not Weekly ML Training")
+        if r['conclusion'] != 'success':
+            sys.exit(f"run {r['id']} concluded {r['conclusion']}; only successful runs are released")
+        for key, value in (('id', r['id']), ('sha', r['head_sha']), ('branch', r['head_branch']),
+                           ('url', r['html_url']), ('number', r['run_number'])):
+            print(f"{key}={value}")
+        EOF
+
+    - name: Download the run's model artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: lstm_model_keras_release
+        path: model_release
+        run-id: ${{ steps.run.outputs.id }}
+        github-token: ${{ github.token }}
+
+    - name: Verify artifacts and quality gate; write release notes
+      run: |
+        python openFlowML/release_check.py --dir model_release --notes release_notes.md \
+          --run-url "${{ steps.run.outputs.url }}" --commit "${{ steps.run.outputs.sha }}" \
+          --branch "${{ steps.run.outputs.branch }}"
+        cat release_notes.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Compute release tag
+      id: tag
+      run: |
+        BASE_TAG="model-$(date -u +%Y.%m.%d)"
+        TAG="$BASE_TAG"
+        N=2
+        while git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; do
+          TAG="${BASE_TAG}-r${N}"
+          N=$((N + 1))
+        done
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Publish GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        # Tag the commit the model was trained from, not this workflow's ref.
+        target_commitish: ${{ steps.run.outputs.sha }}
+        name: Model ${{ steps.tag.outputs.tag }}
+        body_path: release_notes.md
+        prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
+        make_latest: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) && 'false' || 'true' }}
+        # Everything inference needs; manifest.json carries the sha256s.
+        # lstm_model_int8.tflite / lstm_model.mlpackage.zip ship only when the
+        # export produced them.
+        files: model_release/*
+        fail_on_unmatched_files: false

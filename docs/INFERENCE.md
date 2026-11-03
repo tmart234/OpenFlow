@@ -4,7 +4,12 @@ This document specifies what the [OpenFlowMobile](https://github.com/tmart234/Op
 
 ## Release artifacts
 
-Every successful weekly training run on `main` produces a GitHub Release tagged `model-YYYY.MM.DD` (with a `-r2`, `-r3`, ... suffix on same-day re-runs). The release attaches:
+Every successful training run on `dev` or `main` is published by the **Release Model** workflow (`.github/workflows/release_model.yml`) as a GitHub Release tagged `model-YYYY.MM.DD`, with a `-r2`, `-r3`, ... suffix on same-day releases. A run is published only if:
+- the manifest checksums match;
+- a mobile model was exported;
+- the quality gate passed (`openFlowML/release_check.py`).
+
+The release notes carry the quality report and link the training run and commit. The release attaches:
 
 | File | Purpose |
 | --- | --- |
@@ -104,12 +109,20 @@ where `Q_i` is gauge *i*'s daily-mean flow in cfs. Scale it like flow, with the 
 
 ```
 supply(d)         = sum over upstream gauges i of weight_i * Q_i(d - lag_days_i)       (as above)
-upstream_flow(d)  = weight_a * Q_anchor(d - lag_days_a)                  while the anchor has a value
-                  = max(0, A_last + r * (supply(d) - supply(d_last)))     after its last value
+upstream_flow(d)  = weight_a * Q_anchor(d - lag_days_a)                       while the anchor has a value
+                  = max(0, A_last + passed(supply(d) - supply(d_last)))        after its last value
 r                 = clip(mean(A) / mean(supply), 0, 1.5) over the last 7 days both exist up to d_last
+passed(dS)        = r * min(dS, C) + max(r, p) * max(dS - C, 0)
 ```
 
-`A_last` is the anchor value on `d_last`, its last routed date. Training only ever sees the first line, because the anchor is observed every day. The continuation carries the upstream RFC forecasts through the diversions at the current pass-through ratio. `get_upstream.anchored_daily` is the reference implementation. The anchor counts toward "every gauge has a value" for `upstream_observed`.
+`A_last` is the anchor value on `d_last`, its last routed date. Training only ever sees the first line, because the anchor is observed every day. The continuation carries the upstream RFC forecasts through the diversions:
+- Falls, and the first `C` cfs of a rise, pass at the current ratio `r`.
+- Ditch capacity is limited, so the rest of a big rise passes at `max(r, p)`.
+- Defaults are `C = 500` cfs (`divert_capacity_cfs`) and `p = 0.5` (`flood_pass_through`); an anchor entry can override them. In the late-October 2026 rain flood about half of a ~6,000 cfs rise reached Lobatos while `r` was about 0.15.
+
+`get_upstream.anchored_daily` and `get_upstream.passed_change` are the reference implementations. The anchor counts toward "every gauge has a value" for `upstream_observed`.
+
+The routing CLI (`flow_forecast.py`) uses the same anchor, hourly (`routing.anchored_input`). It routes Lobatos to the Taos Box, after its latest reading continues it with the Alamosa/Mogote observations and RFC forecasts by the same rule, and falls back to routing the upstream gauges directly when Lobatos has no recent data.
 
 **`upstream_observed` (encoder only, 0/1).** Set it to 1 when every upstream gauge has a value for that day. Otherwise, and for every station without upstream gauges, set `upstream_flow` to `0.0` *in scaled space* and `upstream_observed` to 0.
 
@@ -190,16 +203,18 @@ Both embedding layers reserve index `0` for unknown. If the user picks a site no
 
 The export parity tests in `tests/test_export_parity.py` generate synthetic inputs, run them through Keras / CoreML / TFLite, and assert they agree within `1e-3`. They're the executable spec of this document — when in doubt, read that file.
 
-## Publishing the first release
+## Training and publishing a model
 
-The weekly cron at `.github/workflows/ml_training.yml` produces a Release tagged `model-YYYY.MM.DD` whenever it runs on `main`. To create the first release before the next Monday cron fires, after this branch is merged:
+1. **Train.** `.github/workflows/ml_training.yml` runs:
+   - every Monday on `dev`, and on demand (`gh workflow run ml_training.yml --ref <branch>`);
+   - on any push to a `train/**` branch (`git push origin HEAD:train/<name>`).
 
-```bash
-gh workflow run ml_training.yml --ref main
-gh run watch                  # follow until done
-```
+   It uploads the model, the mobile exports and `quality_report.*` as the `lstm_model_keras_release` artifact. The run goes red if the quality gate or the mobile export failed.
+2. **Release.** `.github/workflows/release_model.yml` publishes that artifact:
+   - automatically after a successful run on `dev` or `main`;
+   - for any other run on demand: `gh workflow run release_model.yml -f run_id=<training run ID>`, with `-f prerelease=true` for a test release that does not become "latest". The Flow Forecast workflow ignores pre-releases.
 
-Verify the release appeared with all expected files (8 if int8 shipped, 7 otherwise) and a valid manifest:
+Verify a release has every expected file and a valid manifest:
 
 ```bash
 gh release view "model-$(date -u +%Y.%m.%d)" --json assets,name

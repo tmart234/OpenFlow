@@ -176,3 +176,13 @@ def test_anchored_routing_needs_the_anchor_series():
 def test_taos_box_is_anchored_at_lobatos():
     cfg = get_upstream.upstream_config('USGS:08276500')
     assert cfg['anchor']['site_id'] == 'DWR:RIOLOBCO' and cfg['anchor']['lag_days'] == 1
+
+
+def test_passed_change_diverts_small_rises_and_passes_floods():
+    pc = get_upstream.passed_change
+    assert pc(200.0, 0.2) == pytest.approx(40.0)                     # within ditch capacity
+    assert pc(-1000.0, 0.2) == pytest.approx(-200.0)                 # falls at the ratio
+    assert pc(2500.0, 0.2) == pytest.approx(0.2 * 500 + 0.5 * 2000)  # flood beyond capacity
+    assert pc(2500.0, 0.9) == pytest.approx(0.9 * 2500)              # winter: ratio already high
+    assert pc(2500.0, 0.2, {'divert_capacity_cfs': 1000, 'flood_pass_through': 1.0}) == \
+        pytest.approx(0.2 * 1000 + 1500)
