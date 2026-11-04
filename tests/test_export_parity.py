@@ -95,38 +95,54 @@ def test_export_round_trips_with_parity(tmp_path):
     # Both formats made it to disk.
     assert result['mlpackage_zip'] and os.path.exists(result['mlpackage_zip'])
     assert result['tflite'] and os.path.exists(result['tflite'])
+    _assert_mobile_parity(result, base_path, net)
 
-    # Keras reference predictions.
+
+def _assert_mobile_parity(result, base_path, net):
+    """
+    Both exports answer to the names the mobile apps use and match Keras:
+      - Android runs the TFLite SignatureRunner and reads the output key
+        'persistence_plus_delta' (OpenFlowAndroid ml/ModelBundle.kt)
+      - iOS reads featureValue(for: "persistence_plus_delta")
+        (OpenFlowiOS/ModelBundle.swift)
+    """
+    import sys
+    import tensorflow as tf
     keras_inputs = _sample_inputs(n=4)
     keras_pred = net.predict(keras_inputs, verbose=0)
 
-    # TFLite parity (one sample at a time -- fixed batch=1 in input specs).
-    import tensorflow as tf
-    interp = tf.lite.Interpreter(model_path=result['tflite'])
-    interp.allocate_tensors()
-    in_details = {d['name'].split(':')[0]: d for d in interp.get_input_details()}
-    out_details = interp.get_output_details()
+    runner = tf.lite.Interpreter(model_path=result['tflite']).get_signature_runner()
     for i in range(keras_pred.shape[0]):
-        for name in ('encoder_input', 'decoder_input', 'persistence_input',
-                     'station_input', 'basin_input'):
-            # Names may carry serving prefixes ("serving_default_encoder_input")
-            # depending on TF version; match by suffix.
-            matched = next((v for k, v in in_details.items() if k.endswith(name)), None)
-            assert matched is not None, f"TFLite input {name} not found in {list(in_details)}"
-            interp.set_tensor(matched['index'], keras_inputs[name][i:i+1])
-        interp.invoke()
-        tflite_pred = interp.get_tensor(out_details[0]['index'])
-        assert np.max(np.abs(tflite_pred - keras_pred[i:i+1])) < 1e-3
+        out = runner(**{name: keras_inputs[name][i:i+1] for name in keras_inputs})
+        assert list(out) == [export_mobile.OUTPUT_NAME]
+        assert np.max(np.abs(out[export_mobile.OUTPUT_NAME] - keras_pred[i:i+1])) < 1e-3
 
-    # CoreML parity.
     import coremltools as ct
     ct_model = ct.models.MLModel(os.path.join(base_path, export_mobile.MLPACKAGE_NAME))
+    spec = ct_model.get_spec()
+    assert [o.name for o in spec.description.output] == [export_mobile.OUTPUT_NAME]
+    assert sorted(i.name for i in spec.description.input) == sorted(keras_inputs)
+    if sys.platform != 'darwin':
+        return   # CoreML can only run predictions on macOS
     for i in range(keras_pred.shape[0]):
-        ct_inputs = {name: keras_inputs[name][i:i+1] for name in keras_inputs}
-        ct_out = ct_model.predict(ct_inputs)
-        # CoreML names the output after the Add layer; pick the single output.
-        coreml_pred = next(iter(ct_out.values()))
-        assert np.max(np.abs(np.asarray(coreml_pred) - keras_pred[i:i+1])) < 1e-3
+        ct_out = ct_model.predict({name: keras_inputs[name][i:i+1] for name in keras_inputs})
+        coreml_pred = np.asarray(ct_out[export_mobile.OUTPUT_NAME])
+        assert np.max(np.abs(coreml_pred - keras_pred[i:i+1])) < 1e-3
+
+
+def test_ensemble_export_round_trips_with_parity(tmp_path):
+    """What CI ships: an averaged ensemble of members (model.average_ensemble)."""
+    base_path = str(tmp_path)
+    net = model_mod.average_ensemble([_build_tiny_model(), _build_tiny_model()])
+    net.save(os.path.join(base_path, 'lstm_model.h5'))
+    _write_training_config(base_path)
+    _seed_index_files(base_path)
+
+    result = export_mobile.export_all(base_path)
+
+    assert result['mlpackage_zip'] and os.path.exists(result['mlpackage_zip'])
+    assert result['tflite'] and os.path.exists(result['tflite'])
+    _assert_mobile_parity(result, base_path, net)
 
 
 def test_manifest_records_correct_sha256s(tmp_path):

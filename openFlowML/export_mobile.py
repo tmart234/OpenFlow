@@ -42,6 +42,9 @@ MLPACKAGE_NAME = 'lstm_model.mlpackage'
 MLPACKAGE_ZIP_NAME = 'lstm_model.mlpackage.zip'
 TFLITE_NAME = 'lstm_model.tflite'
 TFLITE_INT8_NAME = 'lstm_model_int8.tflite'
+# Output name both mobile apps read (iOS featureValue(for:), Android
+# SignatureRunner output key); see docs/INFERENCE.md.
+OUTPUT_NAME = 'persistence_plus_delta'
 MANIFEST_NAME = 'manifest.json'
 TRAINING_CONFIG_NAME = 'training_config.json'
 UPSTREAM_REGISTRY_NAME = 'upstream_gauges.json'
@@ -78,20 +81,49 @@ def _input_specs_from_config(config):
 
 
 def _make_serving_fn(net):
-    """Wrap the dict-input Keras model in a positional tf.function for converter consumption."""
+    """
+    Wrap the dict-input Keras model in a positional tf.function for converter
+    consumption. It returns a dict so the TFLite signature output is named
+    OUTPUT_NAME, the key the Android app's SignatureRunner asks for (a bare
+    tensor would be exported as 'output_0').
+    """
     import tensorflow as tf
 
     @tf.function
     def serving_fn(encoder_input, decoder_input, persistence_input, station_input, basin_input):
-        return net({
+        return {OUTPUT_NAME: net({
             'encoder_input': encoder_input,
             'decoder_input': decoder_input,
             'persistence_input': persistence_input,
             'station_input': station_input,
             'basin_input': basin_input,
-        }, training=False)
+        }, training=False)}
 
     return serving_fn
+
+
+def _patch_layer_configs(config, class_name, overrides):
+    """Set `overrides` on every `class_name` layer config, recursing into nested models."""
+    for layer in config.get('layers', []):
+        if layer.get('class_name') == class_name:
+            layer['config'].update(overrides)
+        if isinstance(layer.get('config'), dict) and 'layers' in layer['config']:
+            _patch_layer_configs(layer['config'], class_name, overrides)
+    return config
+
+
+def _clone_with(net, class_name, **overrides):
+    """
+    Copy of `net` (a member or an averaged ensemble) with `overrides` applied to
+    every `class_name` layer and the same weights. Only for overrides that leave
+    the weights' shapes and the math unchanged (unroll, mask_zero).
+    """
+    import tensorflow as tf
+    import model as model_mod
+    config = _patch_layer_configs(net.get_config(), class_name, overrides)
+    clone = tf.keras.Model.from_config(config, custom_objects={'StationDropout': model_mod.StationDropout})
+    clone.set_weights(net.get_weights())
+    return clone
 
 
 def export_coreml(h5_path, out_dir):
@@ -106,7 +138,12 @@ def export_coreml(h5_path, out_dir):
         logger.error("coremltools not installed; skipping CoreML export")
         return None
 
-    net = _load_keras_model(h5_path)
+    # coremltools 7.x cannot rewrite the TF while-loop Keras builds for an
+    # LSTM over time ("'NoneType' object has no attribute 'input'"), which
+    # left releases without an .mlpackage. The windows are fixed-length
+    # (60 + 14 days), so convert an unrolled copy: same weights, same math,
+    # no loop.
+    net = _clone_with(_load_keras_model(h5_path), 'LSTM', unroll=True)
     try:
         ml_model = ct.convert(
             net,
@@ -114,6 +151,13 @@ def export_coreml(h5_path, out_dir):
             convert_to='mlprogram',
             minimum_deployment_target=ct.target.iOS15,
         )
+        # The converter names the output after the TF graph node ('Identity');
+        # the iOS app reads featureValue(for: OUTPUT_NAME).
+        spec = ml_model.get_spec()
+        current = spec.description.output[0].name
+        if current != OUTPUT_NAME:
+            ct.utils.rename_feature(spec, current, OUTPUT_NAME)
+            ml_model = ct.models.MLModel(spec, weights_dir=ml_model.weights_dir)
     except Exception as e:
         logger.error("CoreML conversion failed: %s", e)
         return None
@@ -130,39 +174,15 @@ def export_coreml(h5_path, out_dir):
     return zip_path
 
 
-def _rebuild_without_mask_zero(net, config):
+def _rebuild_without_mask_zero(net, config=None):
     """
-    Build a fresh model with mask_zero=False and copy weights from `net`. An
-    averaged ensemble (model.average_ensemble) is rebuilt member by member.
+    Copy of `net` with mask_zero=False on the embeddings (TFLite fallback for
+    models trained before mask_zero was dropped). Works for a single member or
+    an averaged ensemble and for any hyperparameters, because it patches the
+    saved layer configs rather than rebuilding with defaults. `config` is
+    unused and kept for callers.
     """
-    import tensorflow as tf
-    import model as model_mod
-    members = [layer for layer in net.layers if isinstance(layer, tf.keras.Model)]
-    if members:
-        return model_mod.average_ensemble([_rebuild_member_without_mask_zero(m, config) for m in members])
-    return _rebuild_member_without_mask_zero(net, config)
-
-
-def _rebuild_member_without_mask_zero(net, config):
-    import model as model_mod
-    rebuilt = model_mod.build_encoder_decoder(
-        num_stations=config['num_stations'],
-        num_basins=config['num_basins'],
-        encoder_features=len(config['encoder_features']),
-        decoder_features=len(config['decoder_features']),
-        target_features=len(config['target_features']),
-        encoder_days=config['encoder_days'],
-        decoder_days=config['decoder_days'],
-    )
-    # Swap the two Embedding layers for mask_zero=False replicas, then copy
-    # all weights layer-by-layer. The Keras builder is deterministic in layer
-    # naming, so set_weights by name aligns the two graphs cleanly.
-    import tensorflow as tf
-    for layer in rebuilt.layers:
-        if isinstance(layer, tf.keras.layers.Embedding) and layer.mask_zero:
-            layer.mask_zero = False
-    rebuilt.set_weights(net.get_weights())
-    return rebuilt
+    return _clone_with(net, 'Embedding', mask_zero=False)
 
 
 def _random_sample_inputs(config, n=8, seed=0):
