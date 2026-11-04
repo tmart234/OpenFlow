@@ -295,3 +295,37 @@ def test_fit_recovers_a_flow_dependent_travel_time():
     np.testing.assert_allclose(fits[0].predict([x]), target, atol=1.0)
     fixed = routing.fit(target, [x], lag_grid=range(0, 21), k_grid=(1, 3))
     assert fixed[0].rmse > 5 * max(fits[0].rmse, 1e-6)
+
+
+def test_recession_after_a_storm_slows_toward_the_pre_storm_base():
+    hist = np.r_[np.full(240, 400.0), np.linspace(400, 3000, 24), np.linspace(3000, 1500, 48)]
+    last = len(hist) - 1
+    base = routing.pre_event_base(hist, last)
+    assert base == 400.0
+    out = routing.extend_recession(np.r_[hist, np.full(120, np.nan)], last, base)[len(hist):]
+    drops = -np.diff(out[::24])
+    assert (drops > 0).all() and (np.diff(drops) < 0).all()      # falling ever more slowly
+    assert out.min() > 400.0
+    # The old rule (the last 24 h's exponential rate all the way) is far lower by day 5.
+    old_rate = np.log((1500 - 400) / (hist[-25] - 400)) / 24
+    assert out[-1] > 400 + 1100 * np.exp(old_rate * 120) + 200
+
+
+def test_extend_recession_never_jumps_up_to_a_floor_above_the_last_value():
+    v = np.r_[np.linspace(900, 300, 48), np.full(24, np.nan)]
+    out = routing.extend_recession(v, 47, floor=400.0)
+    assert out[48:].max() <= 300.0
+
+
+def test_build_input_recedes_below_a_stale_pre_event_base():
+    # Two floods: the second's "pre-event" window is the first one's recession,
+    # and the RFC forecast already ends below it.
+    grid = pd.date_range('2026-10-01T00:00Z', periods=24 * 40, freq='1h')
+    q = np.r_[np.full(240, 300.0), np.linspace(300, 3000, 24), np.linspace(3000, 900, 200),
+              np.linspace(900, 3500, 24), np.linspace(3500, 1500, 72)]
+    obs = pd.Series(q, index=grid[:len(q)])
+    fc = pd.Series(np.linspace(1500, 700, 48), index=grid[len(q):len(q) + 48])
+    values, _ = routing.build_input(grid, obs, fc)
+    tail = values[len(q) + 48:]
+    assert tail[0] < 700.0 and tail[-1] < tail[0] - 50.0       # keeps falling, toward ~300
+    assert tail.min() > 300.0

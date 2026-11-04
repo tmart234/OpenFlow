@@ -215,13 +215,10 @@ def _rain_panel(rain: dict, tz: str, start, end) -> dict:
 def _target_only_forecast(target: dict, grid: pd.DatetimeIndex, use_official: bool):
     """
     Forecast from the target gauge alone: its observations, then the NWS RFC
-    forecast when one is current (use_official), then an exponential
-    recession toward the recent minimum flow. Returns (values, info).
+    forecast when one is current (use_official), then a recession toward the
+    flow before the latest rise (routing.extend_recession). Returns (values, info).
     """
-    obs = target['obs'].dropna()
-    floor = float(obs.iloc[-30 * 24:].min())
-    return routing.build_input(grid, target['obs'], target['fc'] if use_official else None,
-                               floor=floor)
+    return routing.build_input(grid, target['obs'], target['fc'] if use_official else None)
 
 
 # Calibration search around the registry priors. 2-h lag steps (6-h steps

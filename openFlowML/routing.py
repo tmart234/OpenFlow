@@ -26,7 +26,7 @@ times to be identifiable, the caller falls back to registry defaults
 (`default_fit`).
 
 Forecast: upstream inputs are observations up to "now", then the official
-NWS/RFC forecast for each upstream gauge, then an exponential recession past
+NWS/RFC forecast for each upstream gauge, then a recession (extend_recession) past
 the end of that forecast. The best few parameter sets form an ensemble; the
 forecast is bias-corrected to the latest target observation (correction
 decays with lead time) and the band is the ensemble spread widened by the
@@ -49,8 +49,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_LAG_GRID = tuple(range(0, 97, 6))          # hours
 DEFAULT_K_GRID = (1, 6, 12, 24, 48, 72, 96, 120)   # hours
 WARMUP_HOURS = 72
-# Recession past the end of an upstream forecast decays at least this fast
-# (e-folding time, hours) toward the recent minimum flow.
+# Recession past the end of observations / an RFC forecast (extend_recession):
+# a falling series follows -d(Q - base)/dt = a (Q - base) ** RECESSION_EXPONENT
+# (a nonlinear reservoir: fast just after a crest, slowing toward base flow),
+# with `a` set by the last 24 h and `base` the flow before the latest rise
+# (pre_event_base). On 1,703 post-flood forecasts at 11 gauges (2015-2026)
+# this cut the 5-day error from 37% (exponential at the last 24 h's rate
+# toward the 30-day minimum: 30% too low) to 28% (6% too low).
+RECESSION_EXPONENT = 2.0
+PRE_EVENT_DAYS = 10
+# Only a real fall takes the nonlinear branch: Q - base down at least this
+# share over the last 24 h. A flat or diurnal series (snowmelt) decays as
+# below instead of being frozen at its last value.
+RECESSION_MIN_FALL = 0.1
+# A series that is flat or still rising at its end decays at least this fast
+# (e-folding time, hours).
 MAX_RECESSION_TAU_HOURS = 120.0
 # Minimum relative variability ((p95 - p5) / median) an upstream series needs
 # in the calibration window for travel times to be identifiable.
@@ -435,25 +448,46 @@ def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
 # Building forecast inputs
 # --------------------------------------------------------------------------
 
-def extend_recession(values: np.ndarray, last_idx: int, floor: float,
-                     max_tau_hours: float = MAX_RECESSION_TAU_HOURS) -> np.ndarray:
+def pre_event_base(values: np.ndarray, last_idx: int, days: int = PRE_EVENT_DAYS) -> float:
     """
-    Fill values[last_idx+1:] with an exponential recession toward `floor`,
-    using the decay rate of the 24 h before last_idx (forced to decay at
-    least as fast as e-folding time max_tau_hours, so a series that is still
-    rising at the end of its forecast does not run away).
+    The flow before the latest rise: the minimum over the `days` before the
+    highest flow of the last `days` up to last_idx.
+    """
+    v = np.asarray(values, dtype=float)[:last_idx + 1]
+    w = int(days * 24)
+    lo = max(0, len(v) - w)
+    i_peak = lo + int(np.nanargmax(v[lo:]))
+    return float(np.nanmin(v[max(0, i_peak - w):i_peak + 1]))
+
+
+def extend_recession(values: np.ndarray, last_idx: int, floor: float,
+                     max_tau_hours: float = MAX_RECESSION_TAU_HOURS,
+                     exponent: float = RECESSION_EXPONENT) -> np.ndarray:
+    """
+    Fill values[last_idx+1:] with a recession toward `floor`. Falling over
+    the 24 h before last_idx (by RECESSION_MIN_FALL or more): the nonlinear reservoir
+    -dq/dt = a q ** exponent, q = Q - floor, with `a` from those 24 h (a
+    storm's quick early fall slows as it drains toward base flow). Flat or
+    rising: an exponential decay with e-folding time max_tau_hours, so a
+    series still rising at the end of its forecast does not run away.
     """
     out = np.asarray(values, dtype=float).copy()
     n = len(out)
     if last_idx >= n - 1:
         return out
     last = out[last_idx]
+    floor = min(float(floor), float(last) - 1.0)     # never recede upward
     prev = out[max(last_idx - 24, 0)]
     span = max(last_idx - max(last_idx - 24, 0), 1)
-    a, b = max(last - floor, 1.0), max(prev - floor, 1.0)
-    rate = np.log(a / b) / span
-    rate = min(rate, -1.0 / max_tau_hours)
+    q1, q0 = max(last - floor, 1.0), max(prev - floor, 1.0)
     steps = np.arange(1, n - last_idx)
+    if exponent > 1.0 and q1 < (1.0 - RECESSION_MIN_FALL) * q0:
+        e = 1.0 - float(exponent)
+        a = (q1 ** e - q0 ** e) / (-e * span)
+        out[last_idx + 1:] = floor + (q1 ** e - e * a * steps) ** (1.0 / e)
+        return out
+    rate = np.log(q1 / q0) / span
+    rate = min(rate, -1.0 / max_tau_hours)
     out[last_idx + 1:] = floor + (last - floor) * np.exp(rate * steps)
     return out
 
@@ -463,8 +497,9 @@ def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
                 floor: Optional[float] = None) -> np.ndarray:
     """
     Assemble one upstream gauge's hourly input on `grid` (UTC): observations
-    up to the last observed hour, then the RFC forecast (if any), then an
-    exponential recession. Interior gaps are interpolated; leading hours
+    up to the last observed hour, then the RFC forecast (if any), then a
+    recession toward the flow before the latest rise (extend_recession).
+    Interior gaps are interpolated; leading hours
     before the first observation take the first observed value.
 
     Returns (values, info) where info records the last observed time and the
@@ -494,7 +529,13 @@ def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
     first, last = finite.min(), finite.max()
     values[:first] = values[first]
     if floor is None:
-        floor = float(np.nanmin(obs.to_numpy()))
+        ov = obs.to_numpy(dtype=float)
+        floor = pre_event_base(ov, len(ov) - 1)
+        if floor >= values[last]:
+            # Already below the flow before the latest rise (that window
+            # caught an earlier flood's recession): recede toward the lowest
+            # observed flow instead.
+            floor = float(np.nanmin(ov))
     values = extend_recession(values, last, floor)
     return values, {'last_observed': last_obs_t, 'forecast_end': fc_end}
 

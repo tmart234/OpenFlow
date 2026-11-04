@@ -47,7 +47,7 @@ The naive forecast "it crests now" has a timing error equal to the lead time. Th
 |---|---|---|---|---|---|---|
 | Royal Gorge (35) | 7 h | 7 h | 7.5 h | — | 43% | 0.75–0.82 |
 | Dolores, Gateway–Dewey (60) | 6 h | 8.5 h | 8 h | — | 52% | 0.86–0.91 |
-| Lower Taos Box (54) | 5.5 h | 13 h | 25 h | 40 h* | 54% | 0.88–0.98 |
+| Lower Taos Box (54) | 6.5 h | 12.5 h | 25.5 h | 40 h* | 50% | 0.88–0.98 |
 
 \* Not gated. At 72 h ahead about 40% of Taos forecasts, in every version tried, put their highest flow at the very start or end of the window, i.e. they do not see that crest coming. Many of these are winter ice spikes and storms that have not formed yet, so the median mostly measures noise. CI gates every river at 12, 24 and 48 h.
 
@@ -57,7 +57,7 @@ By crest type:
 |---|---|---|
 | Royal Gorge | 24 crests: 5.5 / 5.5 / 6 h, 0.83–0.85 | 11 crests: 11 / 17 / 21 h, 0.72–0.75 |
 | Dolores | 37 crests: 7 / 9 / 9 h, late, 0.79–0.86 | 23 crests: 6 / 6 / 6 h, 0.92–0.94 |
-| Lower Taos Box | 11 crests: 6 / 22 / 37 h, 0.63–0.65 | 43 crests: 5 / 11 / 24 h, 0.92–0.99 |
+| Lower Taos Box | 11 crests: 8 / 23 / 40 h, 0.63–0.65 | 43 crests: 5 / 11 / 24 h, 0.93–0.99 |
 
 The forecast charts quote these numbers (from `openFlowML/data/routing_skill.json`). When 10 mm or more of rain falls on the ungauged area around the forecast time, they quote the rain-driven ones and point to the NWS forecast where one is shown.
 
@@ -70,6 +70,7 @@ The first backtest exposed three problems, now fixed.
 | Linear-reservoir K capped at 12 h, lags searched in 2-h steps, bias toward the latest reading decays over 24 h (was 48 h). The wider grid let the 28-day calibration pick slow reservoirs that put crests late. | Dolores 12 h ahead 11 → 6 h, 24 h ahead 11 → 8.5 h; Taos 48 h ahead 31 → 25.5 h; Royal Gorge unchanged (7 h) |
 | Taos routed from the Rio Grande near Cerro, NM (NWS CERN5, USGS 08263500) instead of Lobatos, plus the Rio Pueblo de Taos and Red River gauges (see below). | Taos 12 h ahead 11 → 8 h (within ±6 h: 28% → 41%), 24 h ahead 21.5 → 14 h (13% → 28%), crest ratio 0.91 → 1.00. 48 h ahead unchanged (25.5 h). Worse at 72 h (32.5 → 41 h, crest ratio 0.79 → 0.69) and on rain-driven crest height (0.76 → 0.65): the tributaries' storm runoff after their latest reading is not forecast. |
 | Flow-dependent travel time (kinematic wave) for Cerro → Taos and Lobatos → Cerro: the lag at flow q is lag_ref · (q / 1,000 cfs)^−b, with b = 0.3 and 0.4 fitted on 2015–2026 crests (`routing.variable_shift`). A fixed lag fitted on the 3,500-cfs Oct 2026 flood ran the Nov 3 rise ~6 h early. | Taos 12 h ahead 8 → 5.5 h (within ±6 h: 41% → 54%), floods ≥ 1,000 cfs 8 → 4 h; 72 h crest ratio 0.69 → 0.75. Hindcast of the Nov 3 rise (issued 5 PM Mon): 10 cfs mean error to 9 AM vs 34. |
+| Recession after an upstream gauge's last reading or RFC forecast: a nonlinear reservoir (−dq/dt = a·q², fast just after a crest, slowing toward base flow) toward the flow before the latest rise, instead of the last 24 h's exponential rate toward the 30-day minimum (`routing.extend_recession`). The old rule took Dolores to ~250 cfs by Nov 8 2026, below its ~600 cfs pre-storm flow. | On 1,703 post-flood forecasts at 11 gauges (2015–2026), 5-day error 37% → 29%, bias −30% → −9%. Taos 12 h crest timing 5.5 → 6.5 h: 8 crests, mostly local storms the forecast did not see, now put the forecast high point later; crest heights unchanged. |
 | Colorado DWR hourly timestamps read as local clock time (MST/MDT), not MST. | Removes a 1-h error for half the year at every DWR gauge |
 
 Tried and not adopted: weighting crest timing in the calibration score (no gain at 24 h+); fitting travel times on each river's past floods instead of the last 28 days (worse out of sample); a faster rain response (Royal Gorge no change; Dolores storm crests 3 h better but spring crests 1 h worse).
