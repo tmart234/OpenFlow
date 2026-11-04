@@ -77,12 +77,37 @@ Recent releases could not run on either app:
 
 The exporter now converts an unrolled copy for CoreML and names the outputs for both formats. Parity tests drive the exports the way the apps do: by name, on the ensemble CI ships.
 
+## Round 2: inputs and data (2026-11-04)
+
+The network settings were not the limit, so round 2 tested the *inputs*. The harness and data were the same as round 1. The snow question was settled with leave-years-out cross-validation: water years 2012–2026 in five blocks of three, each held out once. That gives 33,258 forecasts over 15 snow seasons, where the default test split covers only about two.
+
+| Change | Result | Verdict |
+|---|---|---|
+| **Basin-wide snowpack.** SWE averaged over every SNOTEL site in the river's contributing area, instead of the sites in the gauge's own HUC8. Royal Gorge and the Dolores had SWE = 0 on every day; the Taos Box saw only New Mexico sites, not its Colorado headwaters. | 5-fold CV: 8.60% vs 8.44% mean 14-day error, worse in 4 of 5 folds. No help in April–July either (day 7: 11.08% vs 10.98%). | not adopted |
+| **Stronger event weighting** (`EVENT_WEIGHT` 4 and 8 vs 2) | 4: no change (8.62% vs 8.60%); 8: worse (8.92%). Peak ratio 0.80 → 0.81 at most. | not adopted |
+| **11 more training rivers.** Neighbouring snowmelt gauges, training-only, with windows ending before the evaluated rivers' validation years. | 8.54% vs 8.63% (same-snow baseline), inside the seed spread; median-river KGE lower. Training costs 2.5×. | not adopted |
+| **Upstream gauges for the Colorado at the state line** (Colorado near Cameo + Gunnison near Grand Junction). 1-day lag, 99% of the flow. | That river: day 1 3.17% → 2.31%, day 7 8.37% → 7.69%. The Taos Box got worse (day 7 4.2% → 4.8%), so the pooled score is flat. The linear skip from `upstream_change` has one coefficient shared by every river, and rivers where upstream carries 99% vs a fraction of the flow pull it in opposite directions. | promising: make the skip river-specific, cross-validate, then add upstream gauges to the three rivers that have none |
+
+**Diagnostics** (held-out windows, current model):
+- The point forecast is calibrated. In every bin of predicted change, the river came in above the forecast 37–59% of the time, usually 45–55%. For the largest forecast rises (day 7), the median predicted change was +0.51 in log flow and the median observed change +0.57.
+- The "flattened peaks" are what a median forecast looks like when event timing and size are uncertain, so loss weighting cannot fix them.
+- Error is concentrated where information is missing:
+  - August–October rain-driven rises are the largest single source (21% of all day-7 error), although the model is given the observed rain.
+  - Winter (day 7: 5.7%) is easy; the snowmelt and monsoon seasons (≈ 11%) are hard.
+  - No river has a systematic bias (within ±2% at day 7).
+
+**Data fixes and gaps found:**
+- The CO DWR archive's −999 missing code entered the data as flow (5 days at Royal Gorge's upstream gauge); now dropped.
+- `.github/reservoir_mapping.txt` has no entries, so the two reservoir inputs are 0 for every river. USBR RISE carries Platoro (Conejos; daily release and storage since 2016) and lists McPhee, Blue Mesa, Crystal and Ruedi. For the Dolores, the upstream Bedrock gauge already carries McPhee's releases; what is missing is the planned release schedule.
+
 ## Next steps, by expected value
 
-1. **Train the decoder on archived forecasts, not observed weather.** Training and the held-out report use the observed weather, basin rain/snow and upstream flow as a "perfect forecast". The model therefore learns to trust forecasts more than it should, and the held-out skill and range are optimistic beyond about day 3. Operational systems train the forecast LSTM on archived forecast products. Until then, `score_archive.py` scores the live forecasts and live range coverage.
-2. **More rivers.** An LSTM learns hydrology from the variety of basins it sees (Kratzert et al. 2024). Seven gauges is small. Adding Colorado/New Mexico gauges, even ones the app does not show, should help every station.
-3. **Static catchment attributes** (area, elevation, snow fraction, aridity) alongside or instead of the station embedding. This is what makes predictions at unseen gauges work.
-4. **Flood peaks.** The point forecast still under-calls rising-event peaks (median peak ratio ≈ 0.80, at the gate's limit). Options worth testing: regime-aware calibration of the range (e.g. separate factors when upstream is rising or rain is forecast), and an upper-quantile alert in the app.
+1. **Upstream gauges where they are missing, with a river-specific skip.** The Colorado at Dotsero, the Colorado at the state line and the Gunnison have no upstream inputs. The upstream experiment above is the only input change in this review with a clear per-river gain.
+2. **Train the decoder on archived forecasts, not observed weather.** Training and the held-out report use the observed weather, basin rain/snow and upstream flow as a "perfect forecast". The model therefore learns to trust forecasts more than it should, and the held-out skill and range are optimistic beyond about day 3. Operational systems train the forecast LSTM on archived forecast products; candidate sources are NOAA's GEFS reforecasts and Open-Meteo's archived runs, whose coverage could not be checked here (rate limited). Until then, `score_archive.py` scores the live forecasts and live range coverage.
+3. **Better rain for summer storms.** Monsoon rises are the largest error source. Hourly radar precipitation (NOAA MRMS) at ~1 km would show convective storm intensity that daily 4 km gridMET averages smooth away.
+4. **Reservoir operations** for the managed rivers (Conejos/Platoro, Dolores/McPhee): fill `reservoir_mapping.txt` from RISE, and if possible add planned releases.
+5. **Decide with cross-validation.** The default test split holds about two snow seasons, which cannot resolve changes under ~1%. Model changes should be judged on leave-years-out folds, as in round 2.
+6. **More rivers / static attributes:** revisit when expanding to new or ungauged rivers. On the current seven, 11 extra training rivers did not measurably help.
 
 ## References
 
