@@ -64,3 +64,18 @@ def test_invalid_records_are_skipped(mock_dwr_response):
     })
     result = get_historical_data("ARKCANCO", datetime(2022, 5, 1), datetime(2022, 5, 2))
     assert result.empty
+
+
+def test_missing_value_sentinels_are_dropped(mock_dwr_response):
+    """DWR marks missing days with -999; they must not enter the data as flow."""
+    mock_dwr_response.get(dwr_base_url, json={
+        "PageCount": 1,
+        "ResultList": [
+            {"measDate": "2022-05-01T00:00:00-06:00", "value": -999.0},
+            {"measDate": "2022-05-02T00:00:00-06:00", "value": 0.0},
+            {"measDate": "2022-05-03T00:00:00-06:00", "value": 15.0},
+        ],
+    })
+    result = get_historical_data("ARKCANCO", datetime(2022, 5, 1), datetime(2022, 5, 3))
+    assert list(result['Date']) == ["2022-05-02", "2022-05-03"]
+    assert (result['Min Flow'] >= 0).all()
