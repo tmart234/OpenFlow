@@ -74,13 +74,22 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
                                                         'basin_precip_known']
     assert config['event_weight'] == train.EVENT_WEIGHT and config['linear_skip'] is True
     assert config['ensemble_size'] == 2 and isinstance(config['final_refit'], bool)
+    assert config['outputs'] == ['persistence_plus_delta', 'flow_quantiles']
+    assert config['quantiles'] == list(train.QUANTILES)
+    assert np.asarray(config['band_calibration']).shape == (14, 2, 2)
     with open(os.path.join(base, 'quality_report.json')) as f:
         report = json.load(f)
     assert set(report['stations']) == {'USGS:08276500', 'USGS:09114500'}
     assert 'passed' in report['gate']
+    assert len(report['all']['band']['coverage_90']) == 14
+    assert 'forecast range holds observations' in {c['check'] for c in report['gate']['checks']}
     import ml_inference
     art = ml_inference.load_artifacts(base, with_model=True)
     assert art['model'].get_layer('ensemble_mean') is not None
+    import model as model_mod
+    assert model_mod.has_band(art['model'])
+    np.testing.assert_allclose(model_mod.band_layers(art['model'])[0].gap_scale.numpy(),
+                               config['band_calibration'], atol=1e-4)
     assert config['upstream_known_days'] == {'USGS:08276500': 7, 'USGS:09114500': 0}
     assert config['upstream_registry'] == 'upstream_gauges.json'
     assert config['basin_precip_known_days'] == 7

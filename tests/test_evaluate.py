@@ -92,3 +92,45 @@ def test_report_files_and_gate_cli(tmp_path):
     rep['gate']['passed'] = False
     evaluate.write_report(rep, str(tmp_path))
     assert evaluate.main(['--base-path', str(tmp_path), '--gate']) == 1
+
+
+def _band(samples, spread):
+    """(N, H, T, 5) quantiles: the observed target +/- spread * [2, 1, 0, 1, 2]."""
+    y = np.stack([s.target_Y for s in samples])
+    offsets = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+    return y[..., None] + spread * offsets
+
+
+def test_band_scores_and_gate_check():
+    samples = _windows()
+    q = (0.05, 0.25, 0.5, 0.75, 0.95)
+    pred = _pred(samples, 'perfect')
+    rep = evaluate.build_report(evaluate.forecasts(samples, pred, SCALERS, band=_band(samples, 5.0), quantiles=q))
+    band = rep['all']['band']
+    assert band['levels'] == [0.05, 0.95] and band['inner_levels'] == [0.25, 0.75]
+    assert band['coverage_90'] == [1.0] * 14 and band['coverage_50'] == [1.0] * 14
+    assert band['rise_peak_in_90'] == 1.0
+    assert band['width_90_pct'][0] == pytest.approx(20 / 110 * 100, abs=0.1)   # (y+10 - (y-10)) / y
+    assert 'band' in rep['stations']['A']
+    assert any(c['check'] == 'forecast range holds observations' and c['passed'] for c in rep['gate']['checks'])
+    assert 'Forecast range' in evaluate.to_markdown(rep)
+
+    # A band shifted off the observations covers nothing and fails the gate.
+    off = _band(samples, 1.0) + 50.0
+    bad = evaluate.build_report(evaluate.forecasts(samples, pred, SCALERS, band=off, quantiles=q))
+    assert bad['all']['band']['coverage_90'] == [0.0] * 14
+    failed = {c['check'] for c in bad['gate']['checks'] if not c['passed']}
+    assert failed == {'forecast range holds observations'}
+
+
+def test_forecasts_accept_a_two_output_prediction_dict():
+    samples = _windows()
+    q = (0.05, 0.25, 0.5, 0.75, 0.95)
+    pred = {'persistence_plus_delta': _pred(samples, 'perfect'), 'flow_quantiles': _band(samples, 5.0)}
+    fc = evaluate.forecasts(samples, pred, SCALERS, quantiles=q)
+    np.testing.assert_allclose(fc['model'], fc['obs'])
+    assert fc['band'].shape == (3, 14, 5)
+    # Point-only reports are unchanged: no band section, no band gate check.
+    plain = evaluate.build_report(evaluate.forecasts(samples, pred['persistence_plus_delta'], SCALERS))
+    assert 'band' not in plain['all']
+    assert all(c['check'] != 'forecast range holds observations' for c in plain['gate']['checks'])

@@ -111,23 +111,28 @@ def _assert_mobile_parity(result, base_path, net):
     keras_inputs = _sample_inputs(n=4)
     keras_pred = net.predict(keras_inputs, verbose=0)
 
+    if not isinstance(keras_pred, dict):
+        keras_pred = {export_mobile.OUTPUT_NAME: keras_pred}
+    n = keras_inputs['encoder_input'].shape[0]
+
     runner = tf.lite.Interpreter(model_path=result['tflite']).get_signature_runner()
-    for i in range(keras_pred.shape[0]):
+    for i in range(n):
         out = runner(**{name: keras_inputs[name][i:i+1] for name in keras_inputs})
-        assert list(out) == [export_mobile.OUTPUT_NAME]
-        assert np.max(np.abs(out[export_mobile.OUTPUT_NAME] - keras_pred[i:i+1])) < 1e-3
+        assert sorted(out) == sorted(keras_pred)
+        for name, want in keras_pred.items():
+            assert np.max(np.abs(out[name] - want[i:i+1])) < 1e-3, name
 
     import coremltools as ct
     ct_model = ct.models.MLModel(os.path.join(base_path, export_mobile.MLPACKAGE_NAME))
     spec = ct_model.get_spec()
-    assert [o.name for o in spec.description.output] == [export_mobile.OUTPUT_NAME]
+    assert sorted(o.name for o in spec.description.output) == sorted(keras_pred)
     assert sorted(i.name for i in spec.description.input) == sorted(keras_inputs)
     if sys.platform != 'darwin':
         return   # CoreML can only run predictions on macOS
-    for i in range(keras_pred.shape[0]):
+    for i in range(n):
         ct_out = ct_model.predict({name: keras_inputs[name][i:i+1] for name in keras_inputs})
-        coreml_pred = np.asarray(ct_out[export_mobile.OUTPUT_NAME])
-        assert np.max(np.abs(coreml_pred - keras_pred[i:i+1])) < 1e-3
+        for name, want in keras_pred.items():
+            assert np.max(np.abs(np.asarray(ct_out[name]) - want[i:i+1])) < 1e-3, name
 
 
 def test_ensemble_export_round_trips_with_parity(tmp_path):
@@ -186,3 +191,26 @@ def test_manifest_schema_matches_training_config(tmp_path):
                 'decoder_features', 'target_features',
                 'num_stations', 'num_basins'):
         assert manifest['schema'][key] == config[key]
+
+
+def test_band_model_exports_both_outputs(tmp_path):
+    """A calibrated two-output ensemble: point forecast + flow_quantiles in both formats."""
+    base_path = str(tmp_path)
+    def member():
+        return model_mod.build_encoder_decoder(
+            num_stations=3, num_basins=2, encoder_features=len(windowing.ENCODER_FEATURES),
+            decoder_features=len(windowing.DECODER_FEATURES),
+            target_features=len(windowing.TARGET_FEATURES), encoder_days=windowing.ENCODER_DAYS,
+            decoder_days=windowing.DECODER_DAYS, lstm_units=8, embedding_dim=4,
+            station_dropout=0.0, dropout=0.0, recurrent_dropout=0.0,
+            quantiles=model_mod.DEFAULT_QUANTILES)
+    net = model_mod.average_ensemble([member(), member()])
+    model_mod.set_band_scale(net, np.full((windowing.DECODER_DAYS, 2, 2), 1.5, 'float32'))
+    net.save(os.path.join(base_path, 'lstm_model.h5'))
+    _write_training_config(base_path)
+    _seed_index_files(base_path)
+
+    result = export_mobile.export_all(base_path)
+
+    assert result['mlpackage_zip'] and result['tflite']
+    _assert_mobile_parity(result, base_path, net)

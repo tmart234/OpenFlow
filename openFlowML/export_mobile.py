@@ -15,13 +15,14 @@ train.py calls this as a best-effort post-save step; a failed export must NOT
 lose the trained .h5, so the workflow runs this with continue-on-error and
 the release step is gated on its success.
 
-The single highest-risk piece is TFLite conversion of the dual
-Embedding(mask_zero=True) + LSTM-with-initial_state graph. We try three paths
-in order and log which one wins:
-  1. Strict TFLITE_BUILTINS.
+TFLite conversion of the Embedding + LSTM-with-initial_state graph tries
+three paths in order and logs which one wins:
+  1. Strict TFLITE_BUILTINS (current models: no masking, so this succeeds).
   2. TFLITE_BUILTINS + SELECT_TF_OPS (Flex delegate; needs select-tf-ops AAR).
-  3. Rebuild the model with mask_zero=False and copy weights; mask is unused
-     at inference because unseen-station fallback maps to index 0 explicitly.
+  3. For .h5 files from before mask_zero was dropped: clone with
+     mask_zero=False (the mask never reached the LSTMs) and retry builtins.
+
+CoreML conversion runs on an unrolled copy of the LSTMs (see export_coreml).
 """
 
 import argparse
@@ -43,8 +44,10 @@ MLPACKAGE_ZIP_NAME = 'lstm_model.mlpackage.zip'
 TFLITE_NAME = 'lstm_model.tflite'
 TFLITE_INT8_NAME = 'lstm_model_int8.tflite'
 # Output name both mobile apps read (iOS featureValue(for:), Android
-# SignatureRunner output key); see docs/INFERENCE.md.
+# SignatureRunner output key); see docs/INFERENCE.md. Models with the
+# probabilistic band also export BAND_OUTPUT_NAME (N, H, T, Q).
 OUTPUT_NAME = 'persistence_plus_delta'
+BAND_OUTPUT_NAME = 'flow_quantiles'
 MANIFEST_NAME = 'manifest.json'
 TRAINING_CONFIG_NAME = 'training_config.json'
 UPSTREAM_REGISTRY_NAME = 'upstream_gauges.json'
@@ -61,8 +64,7 @@ TFLITE_INT8_MAX_ABS_DIFF = 0.05
 def _load_keras_model(h5_path):
     import tensorflow as tf
     import model as model_mod
-    return tf.keras.models.load_model(
-        h5_path, custom_objects={'StationDropout': model_mod.StationDropout})
+    return tf.keras.models.load_model(h5_path, custom_objects=model_mod.CUSTOM_OBJECTS, compile=False)
 
 
 def _input_specs_from_config(config):
@@ -83,21 +85,25 @@ def _input_specs_from_config(config):
 def _make_serving_fn(net):
     """
     Wrap the dict-input Keras model in a positional tf.function for converter
-    consumption. It returns a dict so the TFLite signature output is named
-    OUTPUT_NAME, the key the Android app's SignatureRunner asks for (a bare
-    tensor would be exported as 'output_0').
+    consumption. It returns a dict so the TFLite signature outputs are named
+    OUTPUT_NAME (the key the Android app's SignatureRunner asks for; a bare
+    tensor would be exported as 'output_0') and, with the band,
+    BAND_OUTPUT_NAME.
     """
     import tensorflow as tf
 
     @tf.function
     def serving_fn(encoder_input, decoder_input, persistence_input, station_input, basin_input):
-        return {OUTPUT_NAME: net({
+        out = net({
             'encoder_input': encoder_input,
             'decoder_input': decoder_input,
             'persistence_input': persistence_input,
             'station_input': station_input,
             'basin_input': basin_input,
-        }, training=False)}
+        }, training=False)
+        if isinstance(out, dict):
+            return {OUTPUT_NAME: out[OUTPUT_NAME], BAND_OUTPUT_NAME: out[BAND_OUTPUT_NAME]}
+        return {OUTPUT_NAME: out}
 
     return serving_fn
 
@@ -121,7 +127,7 @@ def _clone_with(net, class_name, **overrides):
     import tensorflow as tf
     import model as model_mod
     config = _patch_layer_configs(net.get_config(), class_name, overrides)
-    clone = tf.keras.Model.from_config(config, custom_objects={'StationDropout': model_mod.StationDropout})
+    clone = tf.keras.Model.from_config(config, custom_objects=model_mod.CUSTOM_OBJECTS)
     clone.set_weights(net.get_weights())
     return clone
 
@@ -143,20 +149,36 @@ def export_coreml(h5_path, out_dir):
     # left releases without an .mlpackage. The windows are fixed-length
     # (60 + 14 days), so convert an unrolled copy: same weights, same math,
     # no loop.
+    import numpy as np
+    import tensorflow as tf
     net = _clone_with(_load_keras_model(h5_path), 'LSTM', unroll=True)
+    # Batch-1 input shapes, as the apps pass them (and as the TFLite export
+    # fixes them); this also gives every output a static shape.
+    inputs = [ct.TensorType(name=name, shape=(1,) + tuple(t.shape[1:]),
+                            dtype=np.int32 if t.dtype == tf.int32 else np.float32)
+              for name, t in net.input.items()]
     try:
         ml_model = ct.convert(
             net,
             source='tensorflow',
             convert_to='mlprogram',
             minimum_deployment_target=ct.target.iOS15,
+            inputs=inputs,
         )
-        # The converter names the output after the TF graph node ('Identity');
-        # the iOS app reads featureValue(for: OUTPUT_NAME).
+        # The converter names outputs after TF graph nodes ('Identity', ...,
+        # in no contract order); the iOS app reads featureValue(for:
+        # OUTPUT_NAME). Tell the point forecast (rank 3: 1 x H x T) from the
+        # band (rank 4: 1 x H x T x Q) by rank.
         spec = ml_model.get_spec()
-        current = spec.description.output[0].name
-        if current != OUTPUT_NAME:
-            ct.utils.rename_feature(spec, current, OUTPUT_NAME)
+        rank_names = {3: OUTPUT_NAME, 4: BAND_OUTPUT_NAME}
+        renames = {out.name: rank_names.get(len(out.type.multiArrayType.shape))
+                   for out in spec.description.output}
+        if None in renames.values() or len(set(renames.values())) != len(renames):
+            raise ValueError(f"cannot map CoreML outputs {renames} to the contract names")
+        if any(old != new for old, new in renames.items()):
+            for old, new in renames.items():
+                if old != new:
+                    ct.utils.rename_feature(spec, old, new)
             ml_model = ct.models.MLModel(spec, weights_dir=ml_model.weights_dir)
     except Exception as e:
         logger.error("CoreML conversion failed: %s", e)
@@ -225,8 +247,8 @@ def export_tflite_int8(h5_path, out_path, config):
     concrete = serving_fn.get_concrete_function(*input_specs)
     converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete], net)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    # Same Flex-fallback policy as the float32 path -- mask_zero=True
-    # embeddings sometimes need it.
+    # Same Flex-fallback policy as the float32 path (older mask_zero=True
+    # models sometimes need it).
     converter.target_spec.supported_ops = [
         tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
     try:
@@ -243,24 +265,19 @@ def export_tflite_int8(h5_path, out_path, config):
     # drops the int8 file and ships only float32.
     keras_inputs = _random_sample_inputs(config, n=8)
     keras_pred = net.predict(keras_inputs, verbose=0)
+    if not isinstance(keras_pred, dict):
+        keras_pred = {OUTPUT_NAME: keras_pred}
 
-    interp = tf.lite.Interpreter(model_path=out_path)
-    interp.allocate_tensors()
-    in_details = {d['name'].split(':')[0]: d for d in interp.get_input_details()}
-    out_details = interp.get_output_details()
+    runner = tf.lite.Interpreter(model_path=out_path).get_signature_runner()
     max_diff = 0.0
-    for i in range(keras_pred.shape[0]):
-        for name in ('encoder_input', 'decoder_input', 'persistence_input',
-                     'station_input', 'basin_input'):
-            matched = next((v for k, v in in_details.items() if k.endswith(name)), None)
-            if matched is None:
-                logger.warning("Int8 TFLite missing input %s; skipping parity", name)
+    n = next(iter(keras_inputs.values())).shape[0]
+    for i in range(n):
+        got = runner(**{name: v[i:i+1] for name, v in keras_inputs.items()})
+        for name, want in keras_pred.items():
+            if name not in got:
+                logger.warning("Int8 TFLite missing output %s; skipping parity", name)
                 return out_path, None
-            interp.set_tensor(matched['index'], keras_inputs[name][i:i+1])
-        interp.invoke()
-        int8_pred = interp.get_tensor(out_details[0]['index'])
-        diff = float(np.max(np.abs(int8_pred - keras_pred[i:i+1])))
-        max_diff = max(max_diff, diff)
+            max_diff = max(max_diff, float(np.max(np.abs(got[name] - want[i:i+1]))))
     logger.info("TFLite int8 parity: max abs diff vs Keras = %.6f", max_diff)
     return out_path, max_diff
 
@@ -361,6 +378,10 @@ def write_manifest(base_path, config, artifact_files, tflite_mode,
             'window_built_decoder_features': config.get('window_built_decoder_features', []),
             'upstream_known_days': config.get('upstream_known_days', {}),
             'basin_precip_known_days': config.get('basin_precip_known_days'),
+            # Output names and, with the probabilistic band, its quantile
+            # levels (last axis of BAND_OUTPUT_NAME). Older models: point only.
+            'outputs': config.get('outputs', [OUTPUT_NAME]),
+            'quantiles': config.get('quantiles'),
         },
         'files': files,
     }

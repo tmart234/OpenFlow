@@ -145,3 +145,77 @@ def test_export_rebuild_without_mask_handles_an_ensemble():
     x['station_input'][:] = 1
     x['basin_input'][:] = 1
     np.testing.assert_allclose(rebuilt.predict(x, verbose=0), ens.predict(x, verbose=0), atol=1e-6)
+
+
+def _build_band_model():
+    return model.build_encoder_decoder(
+        num_stations=4, num_basins=3,
+        encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES),
+        target_features=len(windowing.TARGET_FEATURES),
+        encoder_days=windowing.ENCODER_DAYS, decoder_days=windowing.DECODER_DAYS,
+        lstm_units=8, embedding_dim=4, quantiles=model.DEFAULT_QUANTILES)
+
+
+def test_band_quantiles_are_ordered_and_centred_on_the_point_forecast():
+    net = _build_band_model()
+    assert model.has_band(net) and not model.has_band(_build_smoke_model())
+    rng = np.random.default_rng(3)
+    y = rng.standard_normal((8, windowing.DECODER_DAYS, 2)).astype('float32')
+    x = _smoke_inputs(n=8)
+    targets, weights = model.fit_targets(net, y, np.ones((8, windowing.DECODER_DAYS), 'float32'))
+    hist = net.fit(x, targets, sample_weight=weights, epochs=1, batch_size=4, verbose=0)
+    assert np.isfinite(hist.history['loss'][-1])
+    pred = net.predict(x, verbose=0)
+    point, band = model.point_forecast(pred), model.band_forecast(pred)
+    assert band.shape == (8, windowing.DECODER_DAYS, 2, len(model.DEFAULT_QUANTILES))
+    np.testing.assert_allclose(band[..., model.DEFAULT_QUANTILES.index(0.5)], point, atol=1e-6)
+    assert (np.diff(band, axis=-1) >= 0).all()
+
+
+def test_band_loss_cannot_move_the_point_forecast():
+    """The band reads the decoder through a stop-gradient: zero gradient into the point path."""
+    import tensorflow as tf
+    net = _build_band_model()
+    x = _smoke_inputs(n=4)
+    y = np.zeros((4, windowing.DECODER_DAYS, 2), 'float32')
+    with tf.GradientTape() as tape:
+        out = net(x, training=True)
+        loss = model.PinballLoss(model.DEFAULT_QUANTILES)(y, out[model.QUANTILE_OUTPUT])
+    band_vars = {v.ref() for name in ('band_hidden', 'band_gaps')
+                 for v in net.get_layer(name).trainable_variables}
+    grads = tape.gradient(loss, net.trainable_variables)
+    for var, grad in zip(net.trainable_variables, grads):
+        if var.ref() in band_vars:
+            assert grad is not None
+        else:
+            assert grad is None or float(tf.reduce_max(tf.abs(tf.convert_to_tensor(grad)))) == 0.0, var.name
+
+
+def test_band_calibration_hits_the_nominal_levels_on_its_own_windows():
+    rng = np.random.default_rng(4)
+    m = np.zeros((4000, 3, 1))
+    y = rng.normal(0.0, 2.0, m.shape)                      # truth spreads 2x the raw band
+    raw = m[..., None] + np.array([-1.645, -0.674, 0.0, 0.674, 1.645])  # N(0, 1) quantiles
+    scale = model.band_calibration(raw, m, y, model.DEFAULT_QUANTILES)
+    assert scale.shape == (3, 1, 2)
+    np.testing.assert_allclose(scale, 2.0, rtol=0.1)
+
+
+def test_calibrated_band_ensemble_round_trips_through_h5(tmp_path):
+    import tensorflow as tf
+    ens = model.average_ensemble([_build_band_model(), _build_band_model()])
+    x = _smoke_inputs(n=6)
+    y = np.random.default_rng(5).standard_normal((6, windowing.DECODER_DAYS, 2)).astype('float32')
+    scale = model.calibrate_band(ens, x, y, model.DEFAULT_QUANTILES)
+    assert len(model.band_layers(ens)) == 2
+    want = ens.predict(x, verbose=0)
+    assert ens.get_layer('ensemble_mean') is not None
+    np.testing.assert_allclose(want[model.QUANTILE_OUTPUT][..., 2], want[model.POINT_OUTPUT], atol=1e-6)
+    path = str(tmp_path / 'band.h5')
+    ens.save(path)
+    loaded = tf.keras.models.load_model(path, custom_objects=model.CUSTOM_OBJECTS, compile=False)
+    got = loaded.predict(x, verbose=0)
+    for key in (model.POINT_OUTPUT, model.QUANTILE_OUTPUT):
+        np.testing.assert_allclose(got[key], want[key], rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(model.band_layers(loaded)[0].gap_scale.numpy(), scale)
