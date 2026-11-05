@@ -131,3 +131,17 @@ def test_get_reservoir_sums_multiple_reservoirs(mock_api, tmp_path):
     assert len(df) == 1
     assert df.iloc[0]['reservoir_storage'] == 1500.0  # 1000 + 500
     assert df.iloc[0]['reservoir_release'] == 75.0    # 50 + 25
+
+
+def test_fetch_rise_series_stops_after_a_short_page(mock_api):
+    """RISE advertises a next link even on the last page; following it fails."""
+    mock_api.get(
+        get_reservoir.RISE_RESULT_URL,
+        json={
+            'data': [{'attributes': {'dateTime': '2024-01-01T00:00:00Z', 'result': 5.0}}],
+            'links': {'next': get_reservoir.RISE_RESULT_URL + '?page=2'},
+        },
+    )
+    df = get_reservoir.fetch_rise_series('6126', '2024-01-01', '2024-01-01')
+    assert list(df['value']) == [5.0]
+    assert mock_api.call_count == 1

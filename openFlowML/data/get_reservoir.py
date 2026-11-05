@@ -120,7 +120,8 @@ def fetch_rise_series(item_id, start_date, end_date) -> pd.DataFrame:
             payload = response.json()
         except ValueError:
             break
-        for item in (payload.get('data') or []):
+        page = payload.get('data') or []
+        for item in page:
             attrs = item.get('attributes') or {}
             ts = attrs.get('dateTime') or attrs.get('resultDateTime')
             val = attrs.get('result')
@@ -134,7 +135,10 @@ def fetch_rise_series(item_id, start_date, end_date) -> pd.DataFrame:
         # query string baked in; once we follow it we drop params.
         links = payload.get('links') or {}
         nxt = links.get('next')
-        if not nxt or nxt == url:
+        # A short page is the last one. RISE still advertises a next link
+        # there, and requesting it fails (retried, then abandoned), which cost
+        # ~10 s and an error log per series on every training run.
+        if not nxt or nxt == url or len(page) < int(params['itemsPerPage']):
             break
         url = nxt
         next_params = None
