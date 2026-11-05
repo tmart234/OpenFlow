@@ -287,7 +287,10 @@ def _mirror_disabled_sources(cfg_tc: dict) -> None:
 
 def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None) -> dict:
     """
-    Build the five model inputs for `site_id` as of `today` (local date).
+    Build the five model inputs for `site_id` with data through `today`
+    (a local date). A time of day means "issued now": the data then end on
+    the last complete local day before it, and the forecast's first day is
+    the issue day itself.
     Returns {'inputs', 'anchor', 'dates', 'info'}; no TensorFlow needed.
     """
     cfg_tc = art['training_config']
@@ -296,7 +299,16 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     reg = art['registry'].get(site_id)
     tz = tz or (reg or {}).get('timezone', 'America/Denver')
     now = pd.Timestamp.now(tz=tz) if today is None else pd.Timestamp(today)
-    today = (now.tz_convert(tz).tz_localize(None) if now.tzinfo else now).normalize()
+    local_now = now.tz_convert(tz).tz_localize(None) if now.tzinfo else now
+    # The encoder ends on a complete day, as every training window does. A day
+    # still in progress has a Min/Max Flow from only its first hours -- the
+    # scheduled forecast runs at ~6 AM -- and on a rising river that reads as
+    # a much lower day than it will be: issued 8 AM Nov 5 2026 with the Taos
+    # Box at 3,263 cfs and climbing toward ~4,500, the model saw a 3,290 cfs
+    # "high" for the day and forecast 3,280-3,697 cfs for the next.
+    today = local_now.normalize()
+    if local_now > today:
+        today -= pd.Timedelta(days=1)
     start = today - pd.Timedelta(days=enc_days + HISTORY_PAD_DAYS)
     prefix, sid = site_id.split(':', 1)
     coords = _coords(site_id)
@@ -348,7 +360,9 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     # The most recent contiguous encoder window.
     tail = merged.iloc[-enc_days:]
     if len(tail) < enc_days or (tail['Date'].diff().dropna() != pd.Timedelta(days=1)).any():
-        raise InferenceError(f"{site_id}: last {enc_days} days are not contiguous after gap handling")
+        have = int(merged['Date'].ge(today - pd.Timedelta(days=enc_days - 1)).sum())
+        raise InferenceError(f"{site_id}: only {have} of the last {enc_days} days have complete inputs "
+                             "(a data source, usually the flow archive, failed to download)")
     anchor = tail['Date'].iloc[-1]
     # Latest basin precip (gridMET lags; Stage IV fills) for encoder rows.
     tail = tail.copy()

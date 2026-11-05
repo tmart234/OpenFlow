@@ -54,7 +54,9 @@ def _fetch_iv_records(flow_site_id, start_date, end_date):
         }
         logger.info("Fetching USGS IV flow for %s %s..%s",
                     flow_site_id, params['startDT'], params['endDT'])
-        response = data_utils.request_with_retry(USGS_IV_URL, params=params)
+        # NWIS IV returns intermittent 503s; a missing chunk leaves a hole the
+        # model cannot window across, so retry longer (1+2+4+8 s) than the default.
+        response = data_utils.request_with_retry(USGS_IV_URL, params=params, retries=5)
         if response is None:
             logger.error("Failed to fetch USGS flow chunk %s..%s for %s",
                          params['startDT'], params['endDT'], flow_site_id)

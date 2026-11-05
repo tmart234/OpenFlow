@@ -463,7 +463,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         out_dir: str = '.', make_chart: bool = True, registry=None,
         bias_tau_hours: float = DEFAULT_BIAS_TAU_HOURS, use_rain: bool = True,
         zones=None, rain_panel: bool = False, model_dir: Optional[str] = None,
-        model_artifacts: Optional[dict] = None) -> dict:
+        model_artifacts: Optional[dict] = None, flood_levels: bool = False) -> dict:
     """
     Forecast one station. The mode depends on what exists for it:
       routing    upstream gauges in the registry -> upstream routing (+ rain term)
@@ -744,14 +744,21 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                          f"{u['past_7_days']:.0f} mm fell on the {br['ungauged_area_km2']:,.0f} km² ungauged area "
                          f"in the last 7 days; NWS forecasts {u['forecast']:.0f} mm more.")
         ml_kw = {}
+        # The chart draws the ML band from the latest observation on, so the
+        # issue day itself (data end the day before, ml_inference) is left out:
+        # its daily low-high was forecast without this morning's readings and
+        # can sit below the river's current level.
+        issue_day = pd.Timestamp(now).tz_convert(tz).tz_localize(None).normalize()
+        if ml_daily is not None:
+            ml_daily = ml_daily[pd.to_datetime(ml_daily['Date']) > issue_day]
         if ml_daily is not None and len(ml_daily):
             m = summary['ml']
             has_range = {'min_q05_cfs', 'max_q95_cfs'} <= set(ml_daily.columns)
-            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily low–high drawn as a smooth band, "
-                         f"from data through {m['anchor']}"
-                         f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}."
-                         + ("\nLighter green band: the ML model's 90% forecast range (5th percentile of the daily low "
-                            "to 95th of the daily high), assuming the weather forecast is right." if has_range else ''))
+            footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''} (data through {m['anchor']}"
+                         f"{'' if m['trained_station'] else '; station not in training set: basin fallback'}): "
+                         "green band = daily low–high"
+                         + ("; lighter band = 90% range (5th pct of the daily low to 95th of the high), "
+                            "if the weather forecast is right." if has_range else '.'))
             v = m.get('verified')
             if v:
                 footnote += ("\nML verified on " + f"{v['windows']} held-out forecasts"
@@ -772,7 +779,9 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             base + '.png', title=title, subtitle=subtitle, footnote=footnote,
             obs_times=grid[start_out:inow + 1], obs_values=tgt[start_out:inow + 1],
             fc_times=grid[inow:], fc_central=ef.central[inow:], fc_label=fc_label,
-            now=now, tz=tz, thresholds=thresholds,
+            # Flood-category lines only on request: they stretch the axis and
+            # pull the eye from the peak (summary JSON keeps the values).
+            now=now, tz=tz, thresholds=thresholds if flood_levels else None,
             obs_label=f"Observed (USGS {usgs_id})",
             rain=(_rain_panel(rain, tz, grid[start_out].tz_convert(tz).tz_localize(None),
                               end.tz_convert(tz).tz_localize(None))
@@ -864,6 +873,8 @@ def main(argv=None) -> int:
                         help='Trained model directory / downloaded release: overlay the ML forecast')
     parser.add_argument('--rain-panel', action='store_true',
                         help='Add the daily basin-rain-by-zone panel under the hydrograph (off by default)')
+    parser.add_argument('--flood-levels', action='store_true',
+                        help='Draw the NWS flood-category lines on the chart (off by default)')
     parser.add_argument('-q', '--quiet', action='store_true')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO,
@@ -872,7 +883,8 @@ def main(argv=None) -> int:
         summary = run(args.site, days=args.days, calib_days=args.calib_days,
                       out_dir=args.out_dir, make_chart=not args.no_chart,
                       bias_tau_hours=args.bias_tau_hours, use_rain=not args.no_rain,
-                      rain_panel=args.rain_panel, model_dir=args.model_dir)
+                      rain_panel=args.rain_panel, model_dir=args.model_dir,
+                      flood_levels=args.flood_levels)
     except (ForecastError, KeyError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

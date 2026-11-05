@@ -46,6 +46,7 @@ for entry in manifest["files"]:
 
 `openFlowML/ml_inference.py` runs a trained model for a station as of today. It is the executable version of this document:
 - **Encoder (last 60 days):** built with the same code as training (`combine_data`). Gaps are bridged as described below.
+- **Last encoder day = the last complete local day.** Training windows always end on a full day. A day still in progress has a daily min/max from only its first hours, so a run during the day uses data through yesterday, and the forecast's first day is today. Mobile clients must do the same. On Nov 5 2026 the model was fed the partial day at 8 AM: the Taos Box was at 3,263 cfs and climbing toward ~4,500, the model saw a 3,290 cfs high, and it forecast 3,280–3,697 cfs for the next day.
 - **Decoder (next 14 days):** forecast weather, routed upstream flow and basin rain/snow, using the hold and mask rules from `windowing`.
 - **Output:** daily min/max cfs, inverted with `scalers.json`.
 

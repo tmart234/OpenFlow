@@ -427,3 +427,38 @@ def test_cli_takes_upstream_observations_from_usgs_when_nwps_has_only_the_foreca
     assert mog['latest_cfs'] == pytest.approx(float(mogc2_obs.dropna().iloc[-1]))
     assert mog['forecast_peak_cfs'] is not None                   # the NWPS forecast is kept
     assert s['routing']['mode'] == 'calibrated'
+
+
+def test_chart_leaves_out_flood_lines_unless_asked(tmp_path, fake_nwps, monkeypatch):
+    payloads, _ = _scenario()
+    fake_nwps(payloads)
+    seen = []
+    real = flow_forecast.charts.plot_forecast
+    monkeypatch.setattr(flow_forecast.charts, 'plot_forecast',
+                        lambda *a, **kw: seen.append(kw.get('thresholds')) or real(*a, **kw))
+    s = flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path))
+    assert seen[-1] is None                                          # clean chart by default
+    assert s['flood_thresholds_cfs'] == {'action': 7750.0, 'minor': 9800.0}   # still in the data
+    flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path), flood_levels=True)
+    assert seen[-1] == {'action': 7750.0, 'minor': 9800.0}
+
+
+def test_ml_overlay_skips_the_issue_day(tmp_path, fake_nwps, monkeypatch):
+    # ml_inference forecasts from the last complete day, so its first day is
+    # the issue day: drawn at noon it can sit below the river right now.
+    payloads, _ = _scenario()
+    fake_nwps(payloads)
+    seen = {}
+    issue_day = pd.Timestamp(NOW).tz_convert('America/Denver').tz_localize(None).normalize()
+    days = pd.date_range(issue_day, periods=14)
+    monkeypatch.setattr(flow_forecast.ml_inference, 'forecast', lambda site_id, model_dir, art=None: {
+        'daily': pd.DataFrame({'Date': days, 'min_cfs': 100.0, 'max_cfs': 200.0}),
+        'version': 'm', 'info': {'anchor': str((issue_day - pd.Timedelta(days=1)).date()),
+                                 'trained_station': True}})
+    real = flow_forecast.charts.plot_forecast
+    monkeypatch.setattr(flow_forecast.charts, 'plot_forecast',
+                        lambda *a, **kw: seen.update(kw) or real(*a, **kw))
+    s = flow_forecast.run('taos-box', days=5, out_dir=str(tmp_path), model_dir='x')
+    drawn = pd.to_datetime(pd.Series(seen['ml']['dates']))
+    assert s['ml']['daily'][0]['date'] == str(issue_day.date())    # the summary keeps the issue day
+    assert drawn.min() == issue_day + pd.Timedelta(days=1)          # the chart starts the day after

@@ -243,3 +243,17 @@ def test_continue_recession_extends_a_gauge_without_an_rfc_forecast():
     assert capped['2026-11-03'] == pytest.approx(500.0)                    # floor = 30-day min
     done = ml_inference.continue_recession(falling, '2026-11-03')
     assert done.equals(falling)                                            # nothing to extend
+
+
+def test_issued_mid_day_uses_data_through_the_last_complete_day(fake_sources):
+    # Training windows end on complete days; a day still in progress has a
+    # min/max from only its first hours, so a run at 8 AM must not use it.
+    prep = ml_inference.prepare_inputs(SITE, _artifacts(), today=TODAY + pd.Timedelta(hours=8))
+    assert prep['anchor'] == TODAY - pd.Timedelta(days=1)
+    assert prep['dates'][0] == TODAY                     # the forecast starts on the issue day
+    flow = fake_sources['flow'].set_index('Date')
+    expect = np.log1p(flow.loc[TODAY - pd.Timedelta(days=1), 'Max Flow'])
+    t = windowing.ENCODER_FEATURES.index('Max Flow')
+    assert prep['inputs']['encoder_input'][0, -1, t] == pytest.approx((expect - 1.0) / 2.0, rel=1e-5)
+    # A bare date keeps its meaning: data through that date.
+    assert ml_inference.prepare_inputs(SITE, _artifacts(), today=TODAY)['anchor'] == TODAY

@@ -51,7 +51,7 @@ def _nice_ceiling(v: float) -> float:
     if not np.isfinite(v) or v <= 0:
         return 1.0
     mag = 10 ** np.floor(np.log10(v))
-    for step in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+    for step in (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10):
         if step * mag >= v:
             return step * mag
     return 10 * mag
@@ -245,7 +245,7 @@ def plot_forecast(out_path: str, *,
         ax.scatter([pt], [pv], s=40, color=FORECAST, zorder=5, edgecolor=SURFACE, linewidth=2)
         peak_info = {'peak_time': pt, 'peak_value': pv, 'callout': 'peak' if rising else 'end'}
 
-    top = _nice_ceiling(ymax * 1.25)
+    top = _nice_ceiling(ymax * 1.15)
     for name, value in sorted((thresholds or {}).items(), key=lambda kv: kv[1]):
         # Only draw categories the forecast is getting near; far-away flood
         # lines would squash the hydrograph.
