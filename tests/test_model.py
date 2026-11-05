@@ -219,3 +219,41 @@ def test_calibrated_band_ensemble_round_trips_through_h5(tmp_path):
     for key in (model.POINT_OUTPUT, model.QUANTILE_OUTPUT):
         np.testing.assert_allclose(got[key], want[key], rtol=1e-5, atol=1e-6)
     np.testing.assert_allclose(model.band_layers(loaded)[0].gap_scale.numpy(), scale)
+
+
+def test_river_specific_upstream_gain_starts_at_zero_and_is_per_station():
+    import tensorflow as tf
+    idx = windowing.DECODER_FEATURES.index('upstream_change')
+    net = model.build_encoder_decoder(
+        num_stations=4, num_basins=3, encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES), target_features=len(windowing.TARGET_FEATURES),
+        encoder_days=windowing.ENCODER_DAYS, decoder_days=windowing.DECODER_DAYS,
+        lstm_units=8, embedding_dim=4, upstream_change_index=idx)
+    table = net.get_layer('station_upstream_gain_table')
+    assert (table.get_weights()[0] == 0).all()               # starts as the shared-skip model
+    gains = np.arange(10, dtype='float32').reshape(5, 2)      # rows: station 0 (unknown) .. 4
+    table.set_weights([gains])
+    x = _smoke_inputs(n=5, station_ids=[0, 1, 2, 3, 4])
+    bumped = {k: v.copy() for k, v in x.items()}
+    bumped['decoder_input'][..., idx] += 1.0
+    response = net(bumped, training=False).numpy() - net(x, training=False).numpy()
+    # +1 upstream_change moves each river by its own gain (plus the LSTM's own small response)
+    np.testing.assert_allclose(response[:, 0, :], gains, atol=0.25)
+
+
+def test_river_specific_gain_round_trips_through_h5(tmp_path):
+    import tensorflow as tf
+    idx = windowing.DECODER_FEATURES.index('upstream_change')
+    net = model.build_encoder_decoder(
+        num_stations=4, num_basins=3, encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES), target_features=len(windowing.TARGET_FEATURES),
+        encoder_days=windowing.ENCODER_DAYS, decoder_days=windowing.DECODER_DAYS,
+        lstm_units=8, embedding_dim=4, upstream_change_index=idx, quantiles=model.DEFAULT_QUANTILES)
+    net.get_layer('station_upstream_gain_table').set_weights([np.ones((5, 2), 'float32')])
+    path = str(tmp_path / 'gain.h5')
+    net.save(path)
+    loaded = tf.keras.models.load_model(path, custom_objects=model.CUSTOM_OBJECTS, compile=False)
+    x = _smoke_inputs(n=3)
+    want, got = net.predict(x, verbose=0), loaded.predict(x, verbose=0)
+    for key in want:
+        np.testing.assert_allclose(got[key], want[key], rtol=1e-5, atol=1e-6)

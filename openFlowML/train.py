@@ -61,6 +61,13 @@ SEED = 20261103
 # on the validation split. OPENFLOW_BAND=0 trains the point model only.
 QUANTILES = (model_mod.DEFAULT_QUANTILES
              if os.getenv('OPENFLOW_BAND', '1').strip() not in ('0', 'false', 'False') else ())
+# Per-river gain on the decoder's upstream_change (model.StationUpstreamGain),
+# on top of the shared linear skip. Rivers whose upstream gauges carry almost
+# all of their flow and rivers where they carry a fraction otherwise fight
+# over one coefficient. Leave-years-out CV with upstream gauges on three more
+# rivers (docs/MODEL_DESIGN.md): day-1 error better in every fold, 14-day
+# mean unchanged. OPENFLOW_RIVER_SKIP=0 switches it off.
+RIVER_SKIP = os.getenv('OPENFLOW_RIVER_SKIP', '1').strip() not in ('0', 'false', 'False')
 # After the held-out evaluation, retrain every member on ALL windows (train +
 # val + test) for the epochs and learning-rate schedule early stopping chose,
 # so the published model has also learned from the most recent years (the
@@ -135,6 +142,8 @@ def _build_member(num_stations, num_basins):
         decoder_days=DECODER_DAYS,
         huber_delta=HUBER_DELTA,
         quantiles=QUANTILES or None,
+        upstream_change_index=(windowing.DECODER_FEATURES.index('upstream_change')
+                               if RIVER_SKIP else None),
     )
 
 
@@ -405,6 +414,7 @@ def main():
         'lead_weight_power': LEAD_WEIGHT_POWER,
         'huber_delta': HUBER_DELTA,
         'linear_skip': True,
+        'river_upstream_gain': RIVER_SKIP,
         # Model outputs: the point forecast and, with the band, the forecast
         # quantiles at these levels (last axis of flow_quantiles) and the
         # per-lead calibration factors applied to the band (H, T, [low, high]).

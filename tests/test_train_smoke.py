@@ -75,6 +75,7 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
     assert config['event_weight'] == train.EVENT_WEIGHT and config['linear_skip'] is True
     assert config['ensemble_size'] == 2 and isinstance(config['final_refit'], bool)
     assert config['outputs'] == ['persistence_plus_delta', 'flow_quantiles']
+    assert config['river_upstream_gain'] is True
     assert config['quantiles'] == list(train.QUANTILES)
     assert np.asarray(config['band_calibration']).shape == (14, 2, 2)
     with open(os.path.join(base, 'quality_report.json')) as f:
@@ -88,6 +89,7 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
     assert art['model'].get_layer('ensemble_mean') is not None
     import model as model_mod
     assert model_mod.has_band(art['model'])
+    assert art['model'].get_layer('member_0').get_layer('station_upstream_gain') is not None
     np.testing.assert_allclose(model_mod.band_layers(art['model'])[0].gap_scale.numpy(),
                                config['band_calibration'], atol=1e-4)
     assert config['upstream_known_days'] == {'USGS:08276500': 7, 'USGS:09114500': 0}

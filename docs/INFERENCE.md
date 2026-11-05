@@ -95,6 +95,12 @@ Indicator columns (`sm_observed`, `reservoir_observed`) are 0/1 and are **not** 
 
 Stations listed in `upstream_gauges.json` (e.g. `USGS:08276500`, the Rio Grande below Taos Junction Bridge / Lower Taos Box) get two extra encoder columns and two extra decoder columns. They let the model see water that is already in the river upstream: a flood wave in Colorado that will reach the Taos Box days later, which local weather and the station's own history cannot show.
 
+Registered stations:
+- Taos Box, Royal Gorge, Conejos and Dolores (since the upstream inputs were added).
+- Since 2026-11: the Colorado near Dotsero (Kremmling + Eagle), the Gunnison near Gunnison (Taylor + East at Almont) and the Colorado near the state line (Cameo + Gunnison near Grand Junction). All three use CBRFC forecasts at the upstream gauges (`forecast_days` 5).
+
+An app that does not yet build the upstream inputs must still send the placeholders described below for every registered station.
+
 **`upstream_flow` (encoder and decoder)** is the routed daily inflow:
 
 ```
@@ -132,7 +138,7 @@ The routing CLI (`flow_forecast.py`) uses the same anchor, hourly (`routing.anch
 - `d < K` and the routed value exists: use it, `upstream_known = 1`.
 - otherwise: **hold** the last known value (starting from the last encoder day's `upstream_flow`) and set `upstream_known = 0`.
 
-**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`).
+**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`). The skip has a shared coefficient plus a learned per-station gain (`training_config.river_upstream_gain`). Rivers whose upstream gauges carry almost all of their flow and rivers where they carry a fraction can respond differently. Clients need do nothing: the gain is looked up inside the model from `station_input`.
 
 `windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
 

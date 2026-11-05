@@ -20,6 +20,10 @@ on:
         description: 'Point forecast only (OPENFLOW_BAND=0)'
         type: boolean
         default: false
+      disable_river_skip:
+        description: 'Shared upstream skip only (OPENFLOW_RIVER_SKIP=0)'
+        type: boolean
+        default: false
       disable_upstream:
         description: 'Skip upstream-gauge inputs (ablation)'
         type: boolean
@@ -61,6 +65,7 @@ jobs:
         OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
         OPENFLOW_DISABLE_BASIN_PRECIP: ${{ inputs.disable_basin_precip && '1' || '' }}
         OPENFLOW_BAND: ${{ inputs.disable_band && '0' || '1' }}
+        OPENFLOW_RIVER_SKIP: ${{ inputs.disable_river_skip && '0' || '1' }}
       working-directory: openFlowML
       run: |
         python crossval.py --fetch --base-path "$GITHUB_WORKSPACE" \

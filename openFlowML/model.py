@@ -149,8 +149,35 @@ class PinballLoss(tf.keras.losses.Loss):
         return config
 
 
+class StationUpstreamGain(layers.Layer):
+    """
+    Per-river response to a change in routed upstream flow.
+
+    Inputs [decoder_input (N, H, F), gain (N, T)]: returns the decoder's
+    `column` (upstream_change) times the river's gain, (N, H, T). The gain
+    comes from a zero-initialised per-station embedding, so a river whose
+    upstream gauges carry nearly all of its flow (Colorado at the state line)
+    and one where they carry a fraction (Taos Box below the San Luis Valley)
+    each get their own coefficient instead of fighting over the shared one.
+    """
+
+    def __init__(self, column: int, **kwargs):
+        super().__init__(**kwargs)
+        self.column = int(column)
+
+    def call(self, inputs):
+        decoder, gain = inputs
+        return decoder[..., self.column:self.column + 1] * gain[:, None, :]
+
+    def get_config(self):
+        config = super().get_config()
+        config['column'] = self.column
+        return config
+
+
 # Everything tf.keras.models.load_model needs for an OpenFlow .h5.
 CUSTOM_OBJECTS = {'StationDropout': StationDropout, 'StopGradient': StopGradient,
+                  'StationUpstreamGain': StationUpstreamGain,
                   'QuantileBand': QuantileBand, 'PinballLoss': PinballLoss}
 
 
@@ -172,6 +199,7 @@ def build_encoder_decoder(
     clipnorm: float = 1.0,
     huber_delta: float = 1.0,
     linear_skip: bool = True,
+    upstream_change_index=None,
     quantiles=None,
     band_units: int = 32,
 ) -> Model:
@@ -181,6 +209,10 @@ def build_encoder_decoder(
     num_stations / num_basins are the SIZES of the vocabularies (not the max
     index). Index 0 is reserved for unknown, so the Embedding input_dim is
     set to num_*+1.
+
+    With `upstream_change_index` (the decoder column of upstream_change) the
+    linear skip also gets a per-river gain on that column
+    (StationUpstreamGain), zero at the start of training.
 
     With `quantiles` (ascending, including 0.5; e.g. DEFAULT_QUANTILES) the
     model has two outputs, {POINT_OUTPUT: (N, H, T), QUANTILE_OUTPUT:
@@ -218,7 +250,8 @@ def build_encoder_decoder(
     # The decoder also sees the persistence anchor at every step -- explicit
     # access to "where flow just was" lets it learn near-zero deltas at short
     # horizons and grow corrections at longer horizons.
-    dec_input_full = layers.Concatenate(axis=-1)([decoder_input, persistence_broadcast, dec_context])
+    decoder_seen = decoder_input
+    dec_input_full = layers.Concatenate(axis=-1)([decoder_seen, persistence_broadcast, dec_context])
 
     # Encoder: read the history, return final cell + hidden state.
     _, enc_state_h, enc_state_c = layers.LSTM(
@@ -256,8 +289,16 @@ def build_encoder_decoder(
         skip = layers.TimeDistributed(
             layers.Dense(target_features, use_bias=False, kernel_initializer='zeros'),
             name='linear_skip',
-        )(decoder_input)
+        )(decoder_seen)
         delta = layers.Add(name='delta_plus_skip')([delta, skip])
+    if upstream_change_index is not None:
+        gain = layers.Embedding(
+            input_dim=num_stations + 1, output_dim=target_features,
+            embeddings_initializer='zeros', name='station_upstream_gain_table',
+        )(station_input_masked)
+        station_skip = StationUpstreamGain(upstream_change_index, name='station_upstream_gain')(
+            [decoder_seen, gain])
+        delta = layers.Add(name='delta_plus_station_skip')([delta, station_skip])
 
     # Final output = persistence + delta. Worst-case (delta = 0) reproduces the
     # persistence baseline; any nonzero output is an improvement over it.

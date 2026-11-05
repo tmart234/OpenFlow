@@ -194,7 +194,7 @@ def test_manifest_schema_matches_training_config(tmp_path):
 
 
 def test_band_model_exports_both_outputs(tmp_path):
-    """A calibrated two-output ensemble: point forecast + flow_quantiles in both formats."""
+    """What train.py ships: a calibrated two-output ensemble with the river-specific gain."""
     base_path = str(tmp_path)
     def member():
         return model_mod.build_encoder_decoder(
@@ -203,7 +203,8 @@ def test_band_model_exports_both_outputs(tmp_path):
             target_features=len(windowing.TARGET_FEATURES), encoder_days=windowing.ENCODER_DAYS,
             decoder_days=windowing.DECODER_DAYS, lstm_units=8, embedding_dim=4,
             station_dropout=0.0, dropout=0.0, recurrent_dropout=0.0,
-            quantiles=model_mod.DEFAULT_QUANTILES)
+            quantiles=model_mod.DEFAULT_QUANTILES,
+            upstream_change_index=windowing.DECODER_FEATURES.index('upstream_change'))
     net = model_mod.average_ensemble([member(), member()])
     model_mod.set_band_scale(net, np.full((windowing.DECODER_DAYS, 2, 2), 1.5, 'float32'))
     net.save(os.path.join(base_path, 'lstm_model.h5'))
