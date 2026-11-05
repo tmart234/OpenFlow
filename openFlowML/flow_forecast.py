@@ -506,7 +506,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         s = _gauge_series_for(g, grid)
         if s['obs'].dropna().empty:
             raise ForecastError(f"No recent observations at upstream gauge {_gauge_label(g)}")
-        values, info = routing.build_input(grid, s['obs'], s['fc'])
+        values, info = routing.build_input(grid, s['obs'], s['fc'],
+                                           blend_tau_hours=routing.FORECAST_BLEND_TAU_HOURS)
         inputs.append(values)
         st = _status(g['nws_lid'], s, g.get('name', g['nws_lid']))
         st['forecast_end_utc'] = info['forecast_end'].isoformat() if info['forecast_end'] is not None else None
@@ -541,7 +542,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             vals = []
             for g in rc['tributaries']:
                 s = _gauge_series_for(g, grid)
-                values, _ = routing.build_input(grid, s['obs'], s['fc'])
+                values, _ = routing.build_input(grid, s['obs'], s['fc'],
+                                                blend_tau_hours=routing.FORECAST_BLEND_TAU_HOURS)
                 vals.append(values)
                 trib_status.append(_status(_gauge_label(g), s, g.get('name', _gauge_label(g))))
             trib_inputs = vals

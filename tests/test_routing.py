@@ -295,3 +295,30 @@ def test_fit_recovers_a_flow_dependent_travel_time():
     np.testing.assert_allclose(fits[0].predict([x]), target, atol=1.0)
     fixed = routing.fit(target, [x], lag_grid=range(0, 21), k_grid=(1, 3))
     assert fixed[0].rmse > 5 * max(fits[0].rmse, 1e-6)
+
+
+def test_blend_forecast_shifts_a_stale_rfc_onto_the_latest_reading():
+    # Alamosa, Nov 5 2026: read 2,409 cfs at 8 AM while the RFC issued the
+    # evening before still had ~2,815 for that hour.
+    t = pd.date_range('2026-11-05T05:00Z', periods=4, freq='6h')
+    fc = pd.Series([2960.0, 2670.0, 2450.0, 2170.0], index=t)
+    obs = pd.Series([2512.0, 2409.0], index=pd.DatetimeIndex(['2026-11-05T13:00Z', '2026-11-05T15:00Z']))
+    out = routing.blend_forecast(obs, fc, tau_hours=24.0)
+    at_obs = np.interp(obs.index[-1].value, out.index.asi8, out.to_numpy())
+    assert at_obs == pytest.approx(2409.0, abs=60)                 # starts at the reading, not 2,815
+    off = out - fc
+    assert off.iloc[-1] < 0 and abs(off.iloc[-1]) < abs(off.iloc[1])   # the shift fades
+    # A forecast issued after the last reading is left alone.
+    later = pd.Series([2000.0, 1900.0], index=pd.date_range('2026-11-05T18:00Z', periods=2, freq='6h'))
+    pd.testing.assert_series_equal(routing.blend_forecast(obs, later), later)
+
+
+def test_build_input_without_blend_keeps_the_rfc_level():
+    grid = pd.date_range('2026-11-05T00:00Z', periods=24, freq='1h')
+    obs = pd.Series(2400.0, index=grid[:10])
+    fc = pd.Series([2800.0, 2700.0, 2600.0], index=pd.DatetimeIndex(['2026-11-05T06:00Z', '2026-11-05T12:00Z',
+                                                                    '2026-11-05T18:00Z']))
+    plain, _ = routing.build_input(grid, obs, fc)
+    blended, _ = routing.build_input(grid, obs, fc, blend_tau_hours=24.0)
+    assert plain[12] == pytest.approx(2700.0)
+    assert blended[12] < 2500.0

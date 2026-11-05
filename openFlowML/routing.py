@@ -458,14 +458,48 @@ def extend_recession(values: np.ndarray, last_idx: int, floor: float,
     return out
 
 
+# An RFC forecast is hours old by the time it is used; where it disagrees with
+# the gauge's latest reading, it is shifted onto that reading and the shift
+# decays with this time constant (blend_forecast).
+FORECAST_BLEND_TAU_HOURS = 24.0
+
+
+def blend_forecast(observed: pd.Series, forecast: pd.Series,
+                   tau_hours: float = FORECAST_BLEND_TAU_HOURS) -> pd.Series:
+    """
+    Shift an RFC forecast onto the gauge's latest observation: offset =
+    observed - forecast at the last observed time (the forecast interpolated
+    there), applied as offset * exp(-hours since then / tau_hours), floored
+    at 0. Only when the forecast spans the last observation; a forecast that
+    starts after it is returned unchanged.
+
+    Nov 5 2026, 8 AM: Rio Grande at Alamosa read 2,409 cfs and was falling
+    ~50 cfs/h; the RFC forecast issued 14 h earlier still had 2,670 cfs for
+    11 AM and stayed ~400 cfs high. Taken as is, the handoff stepped the input
+    up 260 cfs and the extra water routed into a higher, flatter Taos Box crest.
+    """
+    obs, fc = observed.dropna(), forecast.dropna()
+    if obs.empty or fc.empty or not tau_hours:
+        return forecast
+    t0 = obs.index.max()
+    if not (fc.index.min() <= t0 <= fc.index.max()):
+        return forecast
+    at = float(np.interp(t0.value, fc.index.asi8, fc.to_numpy(dtype=float)))
+    hours = np.clip((fc.index - t0) / pd.Timedelta(hours=1), 0.0, None)
+    return (fc + (float(obs.iloc[-1]) - at) * np.exp(-np.asarray(hours) / tau_hours)).clip(lower=0.0)
+
+
 def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
                 forecast: Optional[pd.Series] = None,
-                floor: Optional[float] = None) -> np.ndarray:
+                floor: Optional[float] = None,
+                blend_tau_hours: Optional[float] = None) -> np.ndarray:
     """
     Assemble one upstream gauge's hourly input on `grid` (UTC): observations
     up to the last observed hour, then the RFC forecast (if any), then an
     exponential recession. Interior gaps are interpolated; leading hours
     before the first observation take the first observed value.
+    blend_tau_hours: shift the forecast onto the last observation first
+    (blend_forecast).
 
     Returns (values, info) where info records the last observed time and the
     last forecast time actually used.
@@ -478,6 +512,8 @@ def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
     fc_end = None
     if forecast is not None and not forecast.dropna().empty:
         fc = forecast.dropna()
+        if blend_tau_hours:
+            fc = blend_forecast(obs, fc, blend_tau_hours)
         fc = fc[fc.index > last_obs_t]
         if not fc.empty:
             # Join the forecast onto the last observation so the handoff hour

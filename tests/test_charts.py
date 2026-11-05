@@ -44,7 +44,8 @@ def test_plot_forecast_without_forecast_has_no_peak(tmp_path):
     t = _hourly('2026-11-01T00:00Z', 48)
     info = charts.plot_forecast(str(tmp_path / 'o.png'), title='Obs only',
                                 obs_times=t, obs_values=np.full(48, 500.0))
-    assert info == {'peak_time': None, 'peak_value': None, 'callout': None}
+    assert {k: info[k] for k in ('peak_time', 'peak_value', 'callout')} == \
+        {'peak_time': None, 'peak_value': None, 'callout': None}
 
 
 def test_plot_hindcast_writes_png(tmp_path):
@@ -129,3 +130,14 @@ def test_ml_forecast_range_is_drawn_around_the_daily_band(tmp_path):
                                    obs_values=np.linspace(1500, 2500, len(obs_t)), now=obs_t[-1],
                                    tz='America/Denver', ml={k: ml[k] for k in ('dates', 'min', 'max')})
     assert 'ml_range' not in without
+
+
+def test_axis_leaves_room_for_the_peak_callout(tmp_path):
+    # Nov 5 2026: a 5,800 cfs crest put the callout into the subtitle on a 7,000 axis.
+    t = pd.date_range('2026-11-05', periods=96, freq='h', tz='UTC')
+    fc = 3300 + 2500 * np.exp(-0.5 * ((np.arange(96) - 32) / 12.0) ** 2)
+    info = charts.plot_forecast(str(tmp_path / 'c.png'), title='t', subtitle='s', footnote='f',
+                                obs_times=t[:1], obs_values=fc[:1], fc_times=t, fc_central=fc,
+                                now=t[0], tz='UTC')
+    label_y = info['peak_value'] + 0.15 * fc.max()
+    assert info['y_top'] >= label_y * 1.15

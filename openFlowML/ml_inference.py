@@ -37,6 +37,7 @@ import pandas as pd
 
 import combine_data
 import normalize_data
+import routing
 import windowing
 from data import get_basin_precip, get_CODWR_flow, get_flow, get_upstream, nwps
 from data.utils.get_coordinates import get_dwr_coordinates, get_usgs_coordinates
@@ -247,9 +248,13 @@ def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
     for g in cfg['upstream'] + ([cfg['anchor']] if cfg.get('anchor') else []):
         hist = get_upstream.fetch_daily_mean(g['site_id'], history_start, days[-1])
         payload = nwps.get_stageflow(g['nws_lid']) if g.get('nws_lid') else None
-        nwps_daily = []
+        nwps_daily, hourly = [], {}
         for kind in ('observed', 'forecast'):
             h = nwps.hourly(nwps.parse_series(payload, kind)) if payload else pd.Series(dtype=float)
+            if kind == 'forecast' and len(h) and len(hourly.get('observed', [])):
+                # Onto the latest reading, as the hourly routing does.
+                h = routing.blend_forecast(hourly['observed'], h)
+            hourly[kind] = h
             if len(h):
                 d = h.tz_convert(cfg.get('timezone', 'UTC'))
                 d = d.groupby(d.index.date).mean()

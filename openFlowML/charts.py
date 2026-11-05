@@ -239,13 +239,17 @@ def plot_forecast(out_path: str, *,
             # A forecast ending at local midnight ends the previous day.
             day = pt - pd.Timedelta(minutes=1) if (pt.hour, pt.minute) == (0, 0) else pt
             label = f"{verb} ≈ {_round_cfs(pv):,.0f} {units}\nby {day.strftime('%a %b %-d')}"
-        ax.annotate(label, xy=(pt, pv), xytext=(text_x, pv + 0.15 * max(ymax, 1.0)),
+        label_y = pv + 0.15 * max(ymax, 1.0)
+        ax.annotate(label, xy=(pt, pv), xytext=(text_x, label_y),
                     fontsize=10, color=INK,
                     arrowprops=dict(arrowstyle='-', color=INK_2, lw=1))
         ax.scatter([pt], [pv], s=40, color=FORECAST, zorder=5, edgecolor=SURFACE, linewidth=2)
         peak_info = {'peak_time': pt, 'peak_value': pv, 'callout': 'peak' if rising else 'end'}
 
     top = _nice_ceiling(ymax * 1.15)
+    if peak_info['peak_value'] is not None:
+        # Room for the two-line callout above the peak.
+        top = max(top, _nice_ceiling(label_y * 1.15))
     for name, value in sorted((thresholds or {}).items(), key=lambda kv: kv[1]):
         # Only draw categories the forecast is getting near; far-away flood
         # lines would squash the hydrograph.
@@ -267,6 +271,7 @@ def plot_forecast(out_path: str, *,
         ax.text(nt, top * 0.98, f" Now  {label}", color=INK_2, fontsize=9.5, va='top')
 
     ax.set_ylim(0, top)
+    peak_info['y_top'] = top
     if xlim is not None:
         ax.set_xlim(*[_local_naive([x], tz)[0] for x in xlim])
     elif tmin and tmax:
