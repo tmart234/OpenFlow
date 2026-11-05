@@ -746,9 +746,12 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         ml_kw = {}
         if ml_daily is not None and len(ml_daily):
             m = summary['ml']
+            has_range = {'min_q05_cfs', 'max_q95_cfs'} <= set(ml_daily.columns)
             footnote += (f"\nOpenFlow ML model{(' ' + m['version']) if m.get('version') else ''}: daily low–high drawn as a smooth band, "
                          f"from data through {m['anchor']}"
-                         f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}.")
+                         f"{'' if m['trained_station'] else ' (station not in training set: basin fallback)'}."
+                         + ("\nLighter green band: the ML model's 90% forecast range (5th percentile of the daily low "
+                            "to 95th of the daily high), assuming the weather forecast is right." if has_range else ''))
             v = m.get('verified')
             if v:
                 footnote += ("\nML verified on " + f"{v['windows']} held-out forecasts"
@@ -758,6 +761,10 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
             ml_kw = {'ml': {'dates': ml_daily['Date'], 'min': ml_daily['min_cfs'].to_numpy(),
                             'max': ml_daily['max_cfs'].to_numpy(),
                             'label': 'OpenFlow ML model', 'band_label': 'ML range (daily low–high)'}}
+            if has_range:
+                ml_kw['ml'].update(range_low=ml_daily['min_q05_cfs'].to_numpy(),
+                                   range_high=ml_daily['max_q95_cfs'].to_numpy(),
+                                   range_label='ML 90% forecast range')
         title = f"{short}: flow forecast {pd.Timestamp(first):%b %-d}–{pd.Timestamp(last):%b %-d, %Y}"
         where = f"{cfg['reach']} · {name}" if cfg.get('reach') else name
         subtitle = f"{where} · USGS {usgs_id} / NWS {cfg['nws_lid']} · times {tz_abbr}"

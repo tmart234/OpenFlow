@@ -133,6 +133,7 @@ def plot_forecast(out_path: str, *,
     A separate panel, never a second y-axis.
 
     Returns {'peak_time', 'peak_value', 'callout'} for the called-out point
+    (plus 'ml_range': (low, high) cfs when the ML forecast range was drawn)
     (local, naive): the forecast peak when it rises meaningfully above where
     the forecast starts ('peak'), otherwise the forecast's end value on a
     falling / steady river ('end'). Nones when there is no forecast.
@@ -157,6 +158,7 @@ def plot_forecast(out_path: str, *,
     ymax = 0.0
     tmin, tmax = [], []
     peak_info = {'peak_time': None, 'peak_value': None, 'callout': None}
+    info_ml_range = None
 
     if fc_times is not None and fc_central is not None and len(fc_times):
         ft = _local_naive(fc_times, tz)
@@ -187,6 +189,16 @@ def plot_forecast(out_path: str, *,
             ov = np.asarray(obs_values, dtype=float)
             start_v = float(ov[np.isfinite(ov)][-1])
         bt, blo, bhi = ml_band(ml['dates'], ml['min'], ml['max'], start_t, start_v)
+        if ml.get('range_low') is not None and ml.get('range_high') is not None:
+            # The model's forecast range (e.g. 5th percentile of the daily low
+            # to 95th of the daily high): a lighter band around the daily one.
+            rt, rlo, rhi = ml_band(ml['dates'], ml['range_low'], ml['range_high'], start_t, start_v)
+            ax.fill_between(rt, rlo, rhi, color=ML, alpha=0.09, lw=0, zorder=1.5,
+                            label=ml.get('range_label', 'ML 90% forecast range'))
+            for edge in (rlo, rhi):
+                ax.plot(rt, edge, color=ML, lw=0.8, alpha=0.45, ls=':', zorder=1.6)
+            ymax = max(ymax, np.nanmax(rhi))
+            info_ml_range = (float(np.nanmin(rlo)), float(np.nanmax(rhi)))
         ax.fill_between(bt, blo, bhi, color=ML, alpha=0.20, lw=0, zorder=2,
                         label=ml.get('band_label', 'ML range (daily low–high)'))
         ax.plot(bt, (blo + bhi) / 2, color=ML, lw=2.0, zorder=4,
@@ -287,7 +299,11 @@ def plot_forecast(out_path: str, *,
     fig.suptitle(title, x=0.06, ha='left', fontsize=13.5, color=INK, weight='bold')
     if subtitle:
         ax.set_title(subtitle, loc='left', fontsize=10, color=INK_2)
-    ax.legend(loc='upper left', frameon=False, fontsize=10, labelcolor=INK_2)
+    # On the chart's own background, so a flood-threshold line running behind
+    # the legend (it grows to six rows with the ML overlays) does not strike
+    # through its labels.
+    ax.legend(loc='upper left', frameon=True, facecolor=SURFACE, edgecolor='none',
+              framealpha=0.92, fontsize=10, labelcolor=INK_2).set_zorder(10)
     if rax is not None:
         _rain_bars(rax, rain)
     bottom = 0.0
@@ -297,6 +313,8 @@ def plot_forecast(out_path: str, *,
     fig.tight_layout(rect=(0, bottom + 0.02, 1, 0.97), h_pad=0.4)
     fig.savefig(out_path, facecolor=SURFACE)
     plt.close(fig)
+    if info_ml_range is not None:
+        peak_info['ml_range'] = info_ml_range
     return peak_info
 
 

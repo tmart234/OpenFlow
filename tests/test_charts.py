@@ -112,3 +112,20 @@ def test_ml_band_is_smooth_starts_at_the_observation_and_spans_the_days():
     assert lo.min() >= 1330 and hi.max() <= 3400                                     # PCHIP: no overshoot
     t1, lo1, hi1 = charts.ml_band(dates[:1], [5.0], [3.0])
     assert (lo1 == 3.0).all() and (hi1 == 5.0).all()
+
+
+def test_ml_forecast_range_is_drawn_around_the_daily_band(tmp_path):
+    obs_t = _hourly('2026-11-01T00:00Z', 96)
+    days = pd.date_range('2026-11-05', periods=4, freq='D')
+    ml = {'dates': days, 'min': [2200, 3400, 4200, 4100], 'max': [2950, 4500, 5500, 5100],
+          'range_low': [2000, 2900, 3500, 3300], 'range_high': [3200, 5100, 6600, 6400]}
+    info = charts.plot_forecast(str(tmp_path / 'ml.png'), title='ML range', obs_times=obs_t,
+                                obs_values=np.linspace(1500, 2500, len(obs_t)), now=obs_t[-1],
+                                tz='America/Denver', ml=ml)
+    low, high = info['ml_range']
+    assert high == pytest.approx(6600, rel=0.02)     # reaches the day's 95th-percentile high
+    assert low <= 2500                               # starts at the latest observation
+    without = charts.plot_forecast(str(tmp_path / 'ml2.png'), title='ML', obs_times=obs_t,
+                                   obs_values=np.linspace(1500, 2500, len(obs_t)), now=obs_t[-1],
+                                   tz='America/Denver', ml={k: ml[k] for k in ('dates', 'min', 'max')})
+    assert 'ml_range' not in without
