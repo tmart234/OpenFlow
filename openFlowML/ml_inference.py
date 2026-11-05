@@ -199,6 +199,42 @@ def splice_on_training_scale(archive: pd.Series, nwps_daily: pd.Series) -> pd.Se
     return pd.concat([archive, tail]).sort_index()
 
 
+# Continuing an upstream gauge past its last value (see continue_recession).
+RECESSION_FLOOR_DAYS = 30
+RECESSION_MAX_DAILY_FALL = 0.5
+
+
+def continue_recession(series: pd.Series, until) -> pd.Series:
+    """
+    Extend a gauge's daily series past its last value to `until` with an
+    exponential recession at its latest daily rate of fall: at most 50% a
+    day, no lower than its 30-day minimum, held flat if it was rising.
+
+    NWPS has no RFC forecast for some upstream gauges (San Miguel at Uravan),
+    which cut the routed upstream sum -- and with it the decoder's known
+    upstream days -- short. Training always had the station's full known
+    window (observed flow standing in for the RFC forecast), so a short one
+    is out of distribution: when the known days ended, the forecast for the
+    Dolores in a falling flood jumped back up toward the issue-day maximum
+    (Nov 2026). routing.build_input continues such gauges with a recession
+    too.
+    """
+    s = series.dropna().sort_index()
+    until = pd.Timestamp(until)
+    if s.empty or s.index.max() >= until:
+        return series
+    last_day, last = s.index.max(), float(s.iloc[-1])
+    prev = float(s.iloc[-2]) if len(s) > 1 else last
+    rate = 0.0
+    if prev > 0 and 0 < last < prev:
+        rate = min(np.log(prev / last), -np.log(1 - RECESSION_MAX_DAILY_FALL))
+    floor = float(s[s.index > last_day - pd.Timedelta(days=RECESSION_FLOOR_DAYS)].min())
+    ahead = pd.date_range(last_day + pd.Timedelta(days=1), until, freq='D')
+    n = np.arange(1, len(ahead) + 1)
+    tail = pd.Series(np.maximum(last * np.exp(-rate * n), min(floor, last)), index=ahead)
+    return pd.concat([s, tail])
+
+
 def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
                      history_start) -> pd.DataFrame:
     """Routed upstream_flow + observed flag for `days` from observed daily means + RFC forecasts."""
@@ -221,7 +257,11 @@ def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
                 nwps_daily.append(d)
         nw = pd.concat(nwps_daily) if nwps_daily else pd.Series(dtype=float)
         nw = nw[~nw.index.duplicated(keep='last')].sort_index()
-        series[g['site_id']] = splice_on_training_scale(hist, nw)
+        spliced = splice_on_training_scale(hist, nw)
+        # The anchor keeps its own continuation (get_upstream.anchored_daily
+        # passes the upstream gauges' changes through the diversions).
+        is_anchor = cfg.get('anchor') is not None and g is cfg['anchor']
+        series[g['site_id']] = spliced if is_anchor else continue_recession(spliced, days[-1])
     routed = get_upstream.routed_daily(series, cfg)
     out['upstream_flow'] = routed.reindex(days)
     return out

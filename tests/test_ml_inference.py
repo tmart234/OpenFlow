@@ -91,13 +91,16 @@ def test_prepare_inputs_builds_model_ready_windows(fake_sources):
     assert prep['dates'][0] == TODAY + pd.Timedelta(days=1)
     assert prep['info']['bridged_weather_days'] == ['2026-10-31', '2026-11-01', '2026-11-02']
     dec = x['decoder_input'][0]
-    # Upstream: lag 1 day -> only tomorrow's routed value is known (no RFC forecast).
+    # Upstream: lag 1 day + no RFC forecast. The gauge is continued with a
+    # recession (continue_recession), so the station keeps the 3 known days
+    # it trained with instead of dropping to the 1 observed day.
     up_known = dec[:, windowing.DECODER_FEATURES.index('upstream_known')]
-    np.testing.assert_array_equal(up_known, [1] + [0] * 13)
+    np.testing.assert_array_equal(up_known, [1] * 3 + [0] * 11)
     up = dec[:, windowing.DECODER_FEATURES.index('upstream_flow')]
     last_up = x['encoder_input'][0, -1, windowing.ENCODER_FEATURES.index('upstream_flow')]
     chg = dec[:, windowing.DECODER_FEATURES.index('upstream_change')]
-    assert chg[0] == pytest.approx(up[0] - last_up, rel=1e-4) and (chg[1:] == 0).all()
+    np.testing.assert_allclose(chg[:3], up[:3] - last_up, rtol=1e-4, atol=1e-6)
+    assert (chg[3:] == 0).all()
     # Basin precip: NWS QPF covers through today + 7 -> 7 known decoder days.
     bp_known = dec[:, windowing.DECODER_FEATURES.index('basin_precip_known')]
     np.testing.assert_array_equal(bp_known, [1] * 7 + [0] * 7)
@@ -218,3 +221,25 @@ def test_splice_keeps_the_training_scale_and_rescales_nwps_days():
     assert out[days[15]] == pytest.approx(50.0)                  # NWPS rescaled by 0.5
     assert out[days[-1]] == pytest.approx(150.0)                 # the forecast rise keeps its shape
     assert ml_inference.splice_on_training_scale(pd.Series(dtype=float), nwps_days).equals(nwps_days)
+
+
+def test_continue_recession_extends_a_gauge_without_an_rfc_forecast():
+    base = pd.Series(300.0, index=pd.date_range('2026-10-08', '2026-10-31', freq='D'))   # baseflow
+    days = pd.date_range('2026-11-01', periods=4, freq='D')
+    falling = pd.concat([base, pd.Series([2000.0, 1600.0, 1200.0, 1000.0], index=days)])
+    out = ml_inference.continue_recession(falling, '2026-11-08')
+    assert out.index[-1] == pd.Timestamp('2026-11-08') and len(out) == len(falling) + 4
+    tail = out['2026-11-05':].to_numpy()
+    assert (np.diff(np.concatenate([[1000.0], tail])) < 0).all()          # keeps falling
+    assert tail[0] == pytest.approx(1000.0 * 1000.0 / 1200.0)             # at the latest daily rate
+    assert tail.min() >= 300.0                                             # never below baseflow
+    at_low = ml_inference.continue_recession(pd.Series([2000.0, 1600.0, 1200.0, 1000.0], index=days), '2026-11-06')
+    assert (at_low['2026-11-05':] == 1000.0).all()                        # already at its 30-day low
+    rising = pd.Series([800.0, 900.0, 1000.0], index=days[:3])
+    held = ml_inference.continue_recession(rising, '2026-11-05')
+    assert (held['2026-11-04':] == 1000.0).all()                           # rising -> held
+    crash = pd.Series([4000.0, 500.0], index=days[:2])
+    capped = ml_inference.continue_recession(crash, '2026-11-03')
+    assert capped['2026-11-03'] == pytest.approx(500.0)                    # floor = 30-day min
+    done = ml_inference.continue_recession(falling, '2026-11-03')
+    assert done.equals(falling)                                            # nothing to extend

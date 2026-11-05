@@ -411,3 +411,19 @@ def test_storm_test_looks_at_the_72_hours_before_the_crest():
     assert flow_forecast.storm_mm(rate, 150) == pytest.approx(16.0)
     assert flow_forecast.storm_mm(rate, 200) == 0.0           # > 72 h before this crest
     assert flow_forecast.storm_mm(rate, 101) == pytest.approx(8.0)
+
+
+def test_cli_takes_upstream_observations_from_usgs_when_nwps_has_only_the_forecast(tmp_path, fake_nwps, monkeypatch):
+    """NWPS publishes only the RFC forecast for some gauges (e.g. ALTC2); USGS IV has the readings."""
+    payloads, truth = _scenario()
+    mogc2_obs = nwps.hourly(nwps.parse_series(payloads['MOGC2'], 'observed'))
+    payloads['MOGC2'] = dict(payloads['MOGC2'], observed={'data': []})
+    fake_nwps(payloads)
+    import backtest_routing
+    monkeypatch.setattr(backtest_routing, 'usgs_hourly',
+                        lambda site, a, b: mogc2_obs if site == '08246500' else pd.Series(dtype=float))
+    s = flow_forecast.run('taos-box', days=7, out_dir=str(tmp_path), make_chart=False)
+    mog = next(u for u in s['upstream'] if u['nws_lid'] == 'MOGC2')
+    assert mog['latest_cfs'] == pytest.approx(float(mogc2_obs.dropna().iloc[-1]))
+    assert mog['forecast_peak_cfs'] is not None                   # the NWPS forecast is kept
+    assert s['routing']['mode'] == 'calibrated'

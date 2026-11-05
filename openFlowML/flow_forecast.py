@@ -107,15 +107,25 @@ def _gauge_series(lid: str) -> dict:
 
 
 def _gauge_series_for(g: dict, grid: pd.DatetimeIndex) -> dict:
-    """_gauge_series for a registry gauge; USGS IV when NWS does not carry it (no nws_lid)."""
-    if g.get('nws_lid'):
-        return _gauge_series(g['nws_lid'])
+    """
+    _gauge_series for a registry gauge. Observations come from USGS IV when NWS
+    does not carry the gauge (no nws_lid) or carries it without observations:
+    NWPS publishes only the RFC forecast for some gauges (e.g. Taylor River at
+    Almont, ALTC2), and that forecast is kept.
+    """
+    s = _gauge_series(g['nws_lid']) if g.get('nws_lid') else None
+    if s is not None and (not s['obs'].dropna().empty or not g.get('usgs_id')):
+        return s
     from backtest_routing import usgs_hourly
     obs = usgs_hourly(g['usgs_id'], grid[0].tz_convert(None) - pd.Timedelta(days=1),
                       pd.Timestamp.now(tz='UTC').tz_convert(None) + pd.Timedelta(days=1))
     if obs.dropna().empty:
-        raise ForecastError(f"No recent observations at USGS {g['usgs_id']}")
-    return {'obs': obs, 'fc': pd.Series(dtype=float), 'issued': None, 'stage': pd.Series(dtype=float)}
+        raise ForecastError(f"No recent observations at USGS {g['usgs_id']}"
+                            + (f" or NWS {g['nws_lid']}" if g.get('nws_lid') else ''))
+    if s is None:
+        return {'obs': obs, 'fc': pd.Series(dtype=float), 'issued': None, 'stage': pd.Series(dtype=float)}
+    logger.info("%s: NWPS has no observations; using USGS %s", g['nws_lid'], g['usgs_id'])
+    return {**s, 'obs': obs}
 
 
 def _gauge_label(g: dict) -> str:
@@ -493,9 +503,9 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
 
     inputs, upstream_status = [], []
     for g in cfg.get('upstream', []):
-        s = _gauge_series(g['nws_lid'])
+        s = _gauge_series_for(g, grid)
         if s['obs'].dropna().empty:
-            raise ForecastError(f"No recent observations at upstream gauge {g['nws_lid']}")
+            raise ForecastError(f"No recent observations at upstream gauge {_gauge_label(g)}")
         values, info = routing.build_input(grid, s['obs'], s['fc'])
         inputs.append(values)
         st = _status(g['nws_lid'], s, g.get('name', g['nws_lid']))
