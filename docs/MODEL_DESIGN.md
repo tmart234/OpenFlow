@@ -100,14 +100,62 @@ The network settings were not the limit, so round 2 tested the *inputs*. The har
 - The CO DWR archive's −999 missing code entered the data as flow (5 days at Royal Gorge's upstream gauge); now dropped.
 - `.github/reservoir_mapping.txt` has no entries, so the two reservoir inputs are 0 for every river. USBR RISE carries Platoro (Conejos; daily release and storage since 2016) and lists McPhee, Blue Mesa, Crystal and Ruedi. For the Dolores, the upstream Bedrock gauge already carries McPhee's releases; what is missing is the planned release schedule.
 
+## Round 3: acting on the next steps (2026-11-05)
+
+All five steps from round 2 were attempted. Decisions use the cross-validation tool (`openFlowML/crossval.py`, below) or two seeds on the default split.
+
+**1. Upstream gauges for the three rivers without them: adopted.** Three rivers gained two upstream gauges each, all with CBRFC forecasts (`forecast_days` 5):
+
+| River | Upstream gauges | Lag | Mass balance |
+|---|---|---|---|
+| Colorado near Dotsero | Kremmling + Eagle | 1 day | 81% |
+| Gunnison near Gunnison | Taylor + East at Almont | same day | 94% |
+| Colorado near the state line | Cameo + Gunnison near Grand Junction | 1 day | 101% |
+
+The linear skip got a per-river gain (`model.StationUpstreamGain`); the shared coefficient had made the Taos Box worse. The test counted upstream days as known only from observations, with no RFC days, so it is a lower bound. Leave-years-out CV (33,322 forecasts):
+
+| Lead day | Before | After |
+|---|---|---|
+| 1 | 3.28% | 2.95% (−10%, better in every fold) |
+| 2 | 4.83% | 4.73% |
+| 3 | 5.74% | 5.67% |
+| 14 | 12.25% | 12.30% |
+| Mean | 8.44% | 8.39% |
+
+By river at day 7: Royal Gorge 9.2 → 8.8, Gunnison 7.0 → 6.9; the state line (7.2 → 7.4) and the Dolores (12.4 → 12.8) slipped.
+
+**2. Real forecasts instead of perfect forcing: measured; training on forecast-like noise not adopted.** Open-Meteo's Previous Runs API keeps GFS forecasts by lead day (precipitation from 2024). The archive was downloaded for every gauge and one point per rain zone.
+
+The real forecasts' correlation with what training uses as observed, before the test period:
+
+| Input | Day 1 | Day 7 |
+|---|---|---|
+| Temperature | 0.94 | 0.92 |
+| Point precipitation | 0.48 | 0.29 |
+| Zone rain | 0.62 | 0.32 |
+| Zone snow | 0.73 | 0.41–0.50 |
+
+Training treats all of these as perfect (r = 1).
+
+Scored with the real forecasts on 4,659 held-out windows (2024–26), the current model's error over days 1–7 is 8.21%, against 6.88% with observed weather and 9.94% for persistence: about 19% worse than the quality report says (25% at day 7), still better than "no change" at every lead. `openFlowML/live_forcing.py` now does this scoring; train.py adds it to quality_report with `OPENFLOW_LIVE_FORCING=1`.
+
+Training-time degradation of the weather inputs to the measured skill (r·x + √(1−r²)·noise per lead day) did not help. It was worse on real forecasts (8.35% vs 8.21%) and on observed weather (7.32% vs 6.88%), two seeds each. Independent noise is not how forecasts err: their errors are correlated across days, biased, and coherent across inputs. Learning from real forecast error needs years of archived forecasts. The API's archive starts in 2024, inside the test years; NOAA's GEFS reforecasts (2000–2019) are the source for that.
+
+**3. Summer-storm rain: blocked on data.** MRMS hourly radar (AWS) starts October 2020 and the Stage IV daily files (water.noaa.gov) start in 2021, so they cover only 4–6 of the 15 training years. NLDAS-2 hourly precipitation (1979 on, ~12 km, NASA Earthdata) covers them all. CI already has Earthdata credentials for SMAP; this session does not, so it was not tested.
+
+**4. Reservoirs: not adopted.** USBR RISE has daily storage and release for Platoro, McPhee, Crystal, Blue Mesa, Ruedi, Taylor Park, Twin Lakes and Turquoise. Enabled, they made held-out error worse (8.80% vs 8.60%, both seeds; Conejos day 7 15.7% vs 14.9%). The ids are kept, commented out, in `.github/reservoir_mapping.txt`.
+
+**5. Cross-validation tool: added.** `windowing.water_year_folds`, `openFlowML/crossval.py` (production recipe per fold, pooled `cv_report`, `--compare A B`) and the manual **Cross-validate Model** workflow.
+
+Fixes found along the way: the CO DWR −999 missing code (now dropped), and RISE pagination that retried a failing request for every series.
+
 ## Next steps, by expected value
 
-1. **Upstream gauges where they are missing, with a river-specific skip.** The Colorado at Dotsero, the Colorado at the state line and the Gunnison have no upstream inputs. The upstream experiment above is the only input change in this review with a clear per-river gain.
-2. **Train the decoder on archived forecasts, not observed weather.** Training and the held-out report use the observed weather, basin rain/snow and upstream flow as a "perfect forecast". The model therefore learns to trust forecasts more than it should, and the held-out skill and range are optimistic beyond about day 3. Operational systems train the forecast LSTM on archived forecast products; candidate sources are NOAA's GEFS reforecasts and Open-Meteo's archived runs, whose coverage could not be checked here (rate limited). Until then, `score_archive.py` scores the live forecasts and live range coverage.
-3. **Better rain for summer storms.** Monsoon rises are the largest error source. Hourly radar precipitation (NOAA MRMS) at ~1 km would show convective storm intensity that daily 4 km gridMET averages smooth away.
-4. **Reservoir operations** for the managed rivers (Conejos/Platoro, Dolores/McPhee): fill `reservoir_mapping.txt` from RISE, and if possible add planned releases.
-5. **Decide with cross-validation.** The default test split holds about two snow seasons, which cannot resolve changes under ~1%. Model changes should be judged on leave-years-out folds, as in round 2.
-6. **More rivers / static attributes:** revisit when expanding to new or ungauged rivers. On the current seven, 11 extra training rivers did not measurably help.
+1. **Train the decoder on real archived forecasts** (NOAA GEFS reforecasts, 2000–2019, then the Open-Meteo archive from 2024). Live error is ~19% above the quality report over days 1–7. Synthetic noise did not close that gap, but real forecast error might. Measure with `live_forcing.py`.
+2. **App input pipeline.** The iOS/Android apps build neither the upstream inputs nor the basin rain/snow zones, so on-device forecasts for every registered river run on placeholders. Port `windowing.upstream_decoder_window`, `get_upstream` and `get_basin_precip.inference_daily`, or serve the inputs from a backend.
+3. **Hourly rain for summer storms** from NLDAS-2 (see round 3, item 3): a sub-daily intensity feature for the zones.
+4. **Planned reservoir releases** (not RISE history) for the Dolores and Conejos, if an operator publishes them.
+5. **More rivers / static attributes** when expanding to new or ungauged rivers.
 
 ## References
 
