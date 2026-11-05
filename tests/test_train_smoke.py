@@ -123,3 +123,38 @@ def test_lead_weights_and_sample_weight_shapes():
     assert lw.shape == (14,) and lw.mean() == pytest.approx(1.0) and lw[0] > lw[-1]
     assert train.sample_weights(inputs, targets, lead_power=0).shape == (4,)
     assert train.sample_weights(inputs, targets, lead_power=1.0).shape == (4, 14)
+
+
+def test_train_main_adds_the_live_forcing_score_when_enabled(tmp_path, monkeypatch):
+    import live_forcing
+    base = str(tmp_path)
+    frame = pd.concat([_station('USGS:08276500', '13020101', True, seed=1),
+                       _station('USGS:09114500', '14020002', False, seed=2)], ignore_index=True)
+
+    def fake_table(sites, start, end, cache=None):      # forecasts that say 1 mm and 10 deg C every day
+        dates = pd.date_range(pd.Timestamp(start) - pd.Timedelta(days=1), end, freq='D')
+        rows = [{'site': s, 'kind': kind, 'date': d, 'lead': k, 'tmin_c': 5.0, 'tmax_c': 15.0,
+                 'tmean_c': 10.0, 'precip_mm': 1.0}
+                for s in sites for kind in ('station', 'local', 'mid', 'far') for d in dates for k in range(1, 8)]
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(combine_data, 'get_base_path', lambda: base)
+    monkeypatch.setattr(combine_data, 'main', lambda: normalize_data.normalize_data(frame, artifacts_dir=base))
+    monkeypatch.setattr(train, 'EPOCHS', 1)
+    monkeypatch.setattr(train, 'ENSEMBLE_SIZE', 1)
+    monkeypatch.setattr(train, 'FINAL_REFIT', False)
+    monkeypatch.setattr(train, 'LIVE_FORCING', True)
+    monkeypatch.setattr(live_forcing, 'fetch_table', fake_table)
+    for mod in ('get_cbrfc', 'get_s2f'):
+        try:
+            m = __import__(f'data.{mod}', fromlist=[mod])
+            monkeypatch.setattr(m, 'baseline_predictions', lambda samples: None)
+        except Exception:
+            pass
+
+    train.main()
+
+    with open(os.path.join(base, 'quality_report.json')) as f:
+        live = json.load(f)['live_forcing']
+    assert live['windows'] > 0 and len(live['error_pct']['live']) == 7
+    assert '**Live forcing**' in open(os.path.join(base, 'quality_report.md')).read()

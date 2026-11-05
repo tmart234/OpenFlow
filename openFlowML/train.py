@@ -18,6 +18,7 @@ import os
 import shutil
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 
 import combine_data
@@ -68,6 +69,11 @@ QUANTILES = (model_mod.DEFAULT_QUANTILES
 # rivers (docs/MODEL_DESIGN.md): day-1 error better in every fold, 14-day
 # mean unchanged. OPENFLOW_RIVER_SKIP=0 switches it off.
 RIVER_SKIP = os.getenv('OPENFLOW_RIVER_SKIP', '1').strip() not in ('0', 'false', 'False')
+# Also score the held-out ensemble with the weather forecasts actually issued
+# (live_forcing.py; Open-Meteo archive, 2024 on) instead of the observed
+# weather, and add that to quality_report. Off by default: it downloads the
+# archive (~70 requests) and the free API can rate-limit.
+LIVE_FORCING = os.getenv('OPENFLOW_LIVE_FORCING', '').strip() in ('1', 'true', 'True')
 # After the held-out evaluation, retrain every member on ALL windows (train +
 # val + test) for the epochs and learning-rate schedule early stopping chose,
 # so the published model has also learned from the most recent years (the
@@ -217,7 +223,6 @@ def main():
     # wrote instead of re-fetching every source (model iteration; not for CI).
     cached = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
     if os.getenv('OPENFLOW_REUSE_COMBINED', '').strip() in ('1', 'true', 'True') and os.path.exists(cached):
-        import pandas as pd
         logger.info("Reusing %s (OPENFLOW_REUSE_COMBINED)", cached)
         data = normalize_data.normalize_data(pd.read_csv(cached), artifacts_dir=base_path)
     else:
@@ -341,6 +346,16 @@ def main():
                 evaluate.forecasts(splits.test, model_pred, scalers,
                                    band=band_pred, quantiles=QUANTILES),
                 os.environ.get('OPENFLOW_MODEL_VERSION'))
+            if LIVE_FORCING:
+                try:
+                    import live_forcing
+                    issue = [s.anchor_date + pd.Timedelta(days=ENCODER_DAYS - 1) for s in splits.test]
+                    table = live_forcing.fetch_table(
+                        sorted({s.site_id for s in splits.test}), min(issue) + pd.Timedelta(days=1),
+                        max(issue) + pd.Timedelta(days=7), os.path.join(base_path, 'live_forcing_cache'))
+                    report['live_forcing'] = live_forcing.score(net, splits.test, scalers, table)
+                except Exception as e:
+                    logger.warning("Live-forcing score skipped: %s", e)
             evaluate.write_report(report, base_path, names)
             logger.info("Forecast quality (test split):\n%s", evaluate.to_markdown(report, names))
         except Exception as e:

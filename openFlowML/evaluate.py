@@ -267,6 +267,9 @@ def to_markdown(report: dict, names: Optional[Dict[str, str]] = None) -> str:
         if 'rise_peak_in_90' in band:
             lines += ['', f"Rising events: {band['rise_peak_in_90']:.0%} of observed 7-day peaks fell inside "
                       'the forecast 90% range of the peak.']
+    if report.get('live_forcing'):
+        import live_forcing
+        lines += ['', live_forcing.to_markdown(report['live_forcing'], names).rstrip()]
     gate = report.get('gate', {})
     lines += ['', f"**Quality gate: {'PASSED' if gate.get('passed') else 'FAILED'}**", '']
     lines += [f"- {'✅' if c['passed'] else '❌'} {c['check']}: {c['detail']}" for c in gate.get('checks', [])]
