@@ -1,0 +1,78 @@
+name: Cross-validate Model
+
+# Leave-water-years-out cross-validation of the training recipe
+# (openFlowML/crossval.py): every water year is held out once and all
+# held-out forecasts are pooled into one report. Use it to decide a model or
+# input change -- the default test split behind quality_report holds only
+# about two snow seasons. Run it once per setting and compare the two
+# cv_report.json artifacts with `python openFlowML/crossval.py --compare a b`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      folds:
+        description: 'Number of water-year blocks'
+        default: '5'
+      members:
+        description: 'Networks per fold (train.py ships 3)'
+        default: '1'
+      disable_band:
+        description: 'Point forecast only (OPENFLOW_BAND=0)'
+        type: boolean
+        default: false
+      disable_upstream:
+        description: 'Skip upstream-gauge inputs (ablation)'
+        type: boolean
+        default: false
+      disable_basin_precip:
+        description: 'Skip basin zone rain/snow inputs (ablation)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: crossval-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  crossval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r openFlowML/requirements.txt -c openFlowML/constraints-train.txt
+        pip install earthaccess h5py shapely -c openFlowML/constraints-train.txt
+
+    - name: Cross-validate
+      env:
+        EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+        EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        OPENFLOW_DISABLE_SMAP: ${{ secrets.EARTHDATA_USERNAME == '' && '1' || '' }}
+        OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
+        OPENFLOW_DISABLE_BASIN_PRECIP: ${{ inputs.disable_basin_precip && '1' || '' }}
+        OPENFLOW_BAND: ${{ inputs.disable_band && '0' || '1' }}
+      working-directory: openFlowML
+      run: |
+        python crossval.py --fetch --base-path "$GITHUB_WORKSPACE" \
+          --folds "${{ inputs.folds }}" --members "${{ inputs.members }}"
+        cat "$GITHUB_WORKSPACE/cv_report.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cv_report
+        path: |
+          ./cv_report.json
+          ./cv_report.md
+        if-no-files-found: warn
