@@ -1,0 +1,449 @@
+{
+  "site_id": "DWR:ARKCANCO",
+  "name": "Arkansas River at Ca\u00f1on City, CO (state gauge ARKCANCO, year-round)",
+  "reach": "Royal Gorge of the Arkansas (Parkdale to Ca\u00f1on City)",
+  "nws_lid": "CNCC2",
+  "usgs_id": "07096000",
+  "timezone": "America/Denver",
+  "mode": "routing",
+  "generated_utc": "2026-11-05T20:44:11Z",
+  "latest_observation": {
+    "time_utc": "2026-11-05T19:00:00+00:00",
+    "time_local": "2026-11-05T12:00:00-07:00",
+    "cfs": 774.0
+  },
+  "peak": {
+    "time_utc": "2026-11-05T20:00:00+00:00",
+    "time_local": "2026-11-05T13:00:00-07:00",
+    "cfs": 765,
+    "ahead": false,
+    "end_cfs": 395,
+    "band_low_cfs": 755,
+    "band_high_cfs": 774
+  },
+  "daily": [
+    {
+      "date": "2026-11-05",
+      "min_cfs": 690,
+      "mean_cfs": 730,
+      "max_cfs": 774,
+      "band_low_cfs": 601,
+      "band_high_cfs": 774
+    },
+    {
+      "date": "2026-11-06",
+      "min_cfs": 557,
+      "mean_cfs": 614,
+      "max_cfs": 682,
+      "band_low_cfs": 398,
+      "band_high_cfs": 761
+    },
+    {
+      "date": "2026-11-07",
+      "min_cfs": 489,
+      "mean_cfs": 518,
+      "max_cfs": 554,
+      "band_low_cfs": 337,
+      "band_high_cfs": 713
+    },
+    {
+      "date": "2026-11-08",
+      "min_cfs": 451,
+      "mean_cfs": 468,
+      "max_cfs": 487,
+      "band_low_cfs": 302,
+      "band_high_cfs": 644
+    },
+    {
+      "date": "2026-11-09",
+      "min_cfs": 426,
+      "mean_cfs": 437,
+      "max_cfs": 450,
+      "band_low_cfs": 277,
+      "band_high_cfs": 600
+    },
+    {
+      "date": "2026-11-10",
+      "min_cfs": 409,
+      "mean_cfs": 417,
+      "max_cfs": 426,
+      "band_low_cfs": 258,
+      "band_high_cfs": 571
+    },
+    {
+      "date": "2026-11-11",
+      "min_cfs": 396,
+      "mean_cfs": 402,
+      "max_cfs": 408,
+      "band_low_cfs": 244,
+      "band_high_cfs": 556
+    }
+  ],
+  "routing": {
+    "mode": "registry-default",
+    "calibration_days": 28,
+    "fits": [
+      {
+        "lags_hours": [
+          12,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          1.0,
+          0.03
+        ],
+        "intercept": 118.86051256364276,
+        "rmse": 134.23516430986538,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          12,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          0.8,
+          0.03
+        ],
+        "intercept": 182.16326782763554,
+        "rmse": 144.0455211601852,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          12,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          1.2,
+          0.03
+        ],
+        "intercept": 55.557757299650014,
+        "rmse": 124.65823165472285,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          0,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          1.0,
+          0.03
+        ],
+        "intercept": 116.24339967257389,
+        "rmse": 134.3407870222852,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          0,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          0.8,
+          0.03
+        ],
+        "intercept": 180.06957751478046,
+        "rmse": 144.13320452112472,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          0,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          1.2,
+          0.03
+        ],
+        "intercept": 52.41722183036735,
+        "rmse": 124.77922314865995,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          24,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          1.0,
+          0.03
+        ],
+        "intercept": 121.01163786641777,
+        "rmse": 137.24568204447766,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          24,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          0.8,
+          0.03
+        ],
+        "intercept": 183.88416806985555,
+        "rmse": 146.2722753899335,
+        "source": "default",
+        "timing_mae_hours": null
+      },
+      {
+        "lags_hours": [
+          24,
+          6
+        ],
+        "k_hours": [
+          12.0,
+          24.0
+        ],
+        "coefs": [
+          1.2,
+          0.03
+        ],
+        "intercept": 58.13910766298,
+        "rmse": 128.574842458629,
+        "source": "default",
+        "timing_mae_hours": null
+      }
+    ],
+    "routed_from": "upstream"
+  },
+  "anchor": null,
+  "routing_anchor": null,
+  "tributaries": [],
+  "nws_forecast_end_utc": null,
+  "upstream": [
+    {
+      "name": "Arkansas River near Wellsville, CO",
+      "nws_lid": "WSVC2",
+      "latest_time_utc": "2026-11-05T20:00:00+00:00",
+      "latest_cfs": 388.0,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 3.39,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null,
+      "forecast_end_utc": null
+    }
+  ],
+  "context_gauges": [
+    {
+      "name": "Arkansas River at Parkdale, CO (Royal Gorge put-in; seasonal)",
+      "nws_lid": "PDLC2",
+      "latest_time_utc": null,
+      "latest_cfs": null,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 3.11,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    },
+    {
+      "name": "Arkansas River at Salida, CO",
+      "nws_lid": "SALC2",
+      "latest_time_utc": "2026-11-05T20:00:00+00:00",
+      "latest_cfs": 228.0,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 2.85,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    }
+  ],
+  "nws_official_forecast_issued_utc": null,
+  "flood_thresholds_cfs": {},
+  "basin_rain": {
+    "zone_totals_mm": {
+      "past": {
+        "rain_local": 23.3,
+        "rain_mid": 9.0,
+        "rain_far": 0.0,
+        "snow_local": 4.0,
+        "snow_mid": 26.3,
+        "snow_far": 0.0
+      },
+      "next": {
+        "rain_local": 0.0,
+        "rain_mid": 0.0,
+        "rain_far": 0.0,
+        "snow_local": 0.0,
+        "snow_mid": 0.1,
+        "snow_far": 0.0
+      },
+      "past_through": "2026-11-04"
+    },
+    "ungauged_area_km2": 4144.5,
+    "ungauged_rain_mm": {
+      "calibration_window": 71.9,
+      "past_7_days": 22.4,
+      "forecast": 0.0
+    },
+    "sources": [
+      "gridmet",
+      "stage4",
+      "nws"
+    ],
+    "missing_hours": 12,
+    "rain_term": "default",
+    "runoff_ratio": 0.03
+  },
+  "ml": {
+    "version": "model-215",
+    "anchor": "2026-11-05",
+    "today": "2026-11-05",
+    "station_idx": 1,
+    "basin_idx": 1,
+    "trained_station": true,
+    "bridged_weather_days": [
+      "2026-11-04",
+      "2026-11-05"
+    ],
+    "weather_forecast_days": 14,
+    "upstream_known_days": 1,
+    "verified": {
+      "windows": 784,
+      "issued": [
+        "2024-08-28",
+        "2026-10-20"
+      ],
+      "leads": [
+        1,
+        3,
+        7
+      ],
+      "model_error_pct": [
+        1.77,
+        5.59,
+        9.07
+      ],
+      "persistence_error_pct": [
+        3.36,
+        7.01,
+        10.58
+      ],
+      "rise_peak_ratio": 0.794
+    },
+    "daily": [
+      {
+        "date": "2026-11-06",
+        "min_cfs": 766,
+        "max_cfs": 768,
+        "min_q05_cfs": 664,
+        "min_q25_cfs": 736,
+        "min_q75_cfs": 799,
+        "min_q95_cfs": 873,
+        "max_q05_cfs": 660,
+        "max_q25_cfs": 733,
+        "max_q75_cfs": 796,
+        "max_q95_cfs": 870
+      },
+      {
+        "date": "2026-11-07",
+        "min_cfs": 687,
+        "max_cfs": 688,
+        "min_q05_cfs": 583,
+        "min_q25_cfs": 655,
+        "min_q75_cfs": 723,
+        "min_q95_cfs": 806,
+        "max_q05_cfs": 572,
+        "max_q25_cfs": 652,
+        "max_q75_cfs": 723,
+        "max_q95_cfs": 807
+      },
+      {
+        "date": "2026-11-08",
+        "min_cfs": 664,
+        "max_cfs": 668,
+        "min_q05_cfs": 562,
+        "min_q25_cfs": 634,
+        "min_q75_cfs": 705,
+        "min_q95_cfs": 791,
+        "max_q05_cfs": 551,
+        "max_q25_cfs": 628,
+        "max_q75_cfs": 700,
+        "max_q95_cfs": 781
+      },
+      {
+        "date": "2026-11-09",
+        "min_cfs": 648,
+        "max_cfs": 654,
+        "min_q05_cfs": 547,
+        "min_q25_cfs": 619,
+        "min_q75_cfs": 692,
+        "min_q95_cfs": 778,
+        "max_q05_cfs": 537,
+        "max_q25_cfs": 611,
+        "max_q75_cfs": 686,
+        "max_q95_cfs": 768
+      },
+      {
+        "date": "2026-11-10",
+        "min_cfs": 637,
+        "max_cfs": 643,
+        "min_q05_cfs": 535,
+        "min_q25_cfs": 607,
+        "min_q75_cfs": 683,
+        "min_q95_cfs": 773,
+        "max_q05_cfs": 521,
+        "max_q25_cfs": 598,
+        "max_q75_cfs": 678,
+        "max_q95_cfs": 763
+      },
+      {
+        "date": "2026-11-11",
+        "min_cfs": 631,
+        "max_cfs": 638,
+        "min_q05_cfs": 522,
+        "min_q25_cfs": 599,
+        "min_q75_cfs": 681,
+        "min_q95_cfs": 776,
+        "max_q05_cfs": 511,
+        "max_q25_cfs": 590,
+        "max_q75_cfs": 675,
+        "max_q95_cfs": 764
+      }
+    ]
+  },
+  "files": {
+    "csv": "forecast_out/royal-gorge_forecast.csv",
+    "json": "forecast_out/royal-gorge_forecast.json",
+    "png": "forecast_out/royal-gorge_forecast.png"
+  }
+}
