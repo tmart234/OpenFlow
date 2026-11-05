@@ -338,6 +338,56 @@ def chronological_split(samples: List[WindowedSample],
     return SplitWindows(train=train, val=val, test=test)
 
 
+def water_year(date) -> int:
+    """US water year: Oct 1 of year Y-1 through Sep 30 of year Y is water year Y."""
+    date = pd.Timestamp(date)
+    return date.year + (date.month >= 10)
+
+
+def water_year_folds(samples: List[WindowedSample],
+                     n_folds: int = 5,
+                     encoder_days: int = ENCODER_DAYS,
+                     decoder_days: int = DECODER_DAYS) -> List[SplitWindows]:
+    """
+    Leave-years-out cross-validation splits.
+
+    The water years the samples' issue dates cover are cut into `n_folds`
+    contiguous blocks. Fold k tests on block k and validates (early stopping,
+    band calibration) on the water year just before it -- just after it for
+    the first block. A window goes to test or val when its issue date and
+    its last forecast day both fall in those years; it goes to train only
+    when no day of it, from the first encoder day to the last forecast day,
+    touches them. So every water year is tested exactly once, no window
+    shares a day with the years it is scored on, and each fold scores
+    several snow seasons instead of the ~2 the chronological split holds.
+    """
+    def span(s):
+        issue = s.anchor_date + pd.Timedelta(days=encoder_days - 1)
+        return s.anchor_date, issue, issue + pd.Timedelta(days=decoder_days)
+
+    years = sorted({water_year(span(s)[1]) for s in samples})
+    if len(years) < n_folds + 1:
+        raise ValueError(f"{len(years)} water years cannot make {n_folds} folds plus a validation year")
+    blocks = [list(map(int, b)) for b in np.array_split(years, n_folds)]
+    folds = []
+    for k, block in enumerate(blocks):
+        test_years = set(block)
+        val_years = {min(block) - 1} if k > 0 else {max(block) + 1}
+        held = test_years | val_years
+        train, val, test = [], [], []
+        for s in samples:
+            start, issue, end = span(s)
+            wy_issue, wy_end = water_year(issue), water_year(end)
+            if wy_issue in test_years and wy_end in test_years:
+                test.append(s)
+            elif wy_issue in val_years and wy_end in val_years:
+                val.append(s)
+            elif water_year(start) not in held and wy_issue not in held and wy_end not in held:
+                train.append(s)
+        folds.append(SplitWindows(train=train, val=val, test=test))
+    return folds
+
+
 def stack(samples: List[WindowedSample]) -> Tuple[dict, np.ndarray]:
     """
     Stack a list of samples into the model-input dict + target tensor expected

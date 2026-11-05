@@ -114,7 +114,7 @@ def test_get_upstream_routes_fetched_series(monkeypatch):
 
 
 def test_get_upstream_empty_for_unregistered_station_or_failed_fetch(monkeypatch):
-    assert get_upstream.get_upstream('USGS:09114500', datetime(2022, 1, 1), datetime(2022, 1, 5)).empty
+    assert get_upstream.get_upstream('USGS:09999999', datetime(2022, 1, 1), datetime(2022, 1, 5)).empty
     monkeypatch.setattr(get_upstream, 'fetch_daily_mean', lambda *a: pd.Series(dtype=float))
     assert get_upstream.get_upstream(TAOS, datetime(2022, 1, 1), datetime(2022, 1, 5)).empty
 

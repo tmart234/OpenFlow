@@ -138,6 +138,29 @@ def test_predict_end_to_end_with_tiny_model(fake_sources):
     assert (daily['min_cfs'] > 0).all()
 
 
+def test_predict_adds_the_forecast_range_for_a_band_model(fake_sources):
+    pytest.importorskip('tensorflow')
+    import model as model_mod
+    art = _artifacts()
+    art['training_config'] = dict(art.get('training_config') or {}, quantiles=list(model_mod.DEFAULT_QUANTILES))
+    art['model'] = model_mod.build_encoder_decoder(
+        num_stations=1, num_basins=1, encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES),
+        target_features=len(windowing.TARGET_FEATURES), encoder_days=60, decoder_days=14,
+        lstm_units=4, embedding_dim=2, dropout=0.0, recurrent_dropout=0.0, station_dropout=0.0,
+        quantiles=model_mod.DEFAULT_QUANTILES)
+    prep = ml_inference.prepare_inputs(SITE, art, today=TODAY)
+    daily = ml_inference.predict(art, prep)
+    cols = ml_inference.band_columns(model_mod.DEFAULT_QUANTILES)
+    assert cols == ['min_q05_cfs', 'min_q25_cfs', 'min_q75_cfs', 'min_q95_cfs',
+                    'max_q05_cfs', 'max_q25_cfs', 'max_q75_cfs', 'max_q95_cfs']
+    assert list(daily.columns) == ['Date', 'min_cfs', 'max_cfs'] + cols
+    for side in ('min', 'max'):
+        q = daily[[c for c in cols if c.startswith(side)]].to_numpy()
+        assert (np.diff(q, axis=1) >= -1e-6).all()          # quantiles never cross
+        assert (q > 0).all()
+
+
 def test_flow_is_topped_up_with_nwps_days_after_the_archive(monkeypatch):
     from data import get_CODWR_flow
     archive = pd.DataFrame({'Date': ['2026-10-31', '2026-11-01'], 'Min Flow': [800.0, 850.0],

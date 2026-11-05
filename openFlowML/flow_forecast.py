@@ -645,8 +645,11 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                                 & (ml_daily['Date'] <= pd.Timestamp(daily.index[-1]))]
             summary['ml'] = {
                 'version': res['version'], **res['info'], 'verified': res.get('verified'),
-                'daily': [{'date': str(r.Date.date()), 'min_cfs': round(float(r.min_cfs)),
-                           'max_cfs': round(float(r.max_cfs))} for r in ml_daily.itertuples()],
+                # min_cfs / max_cfs, plus the forecast quantiles of each
+                # (e.g. max_q95_cfs) for models with the probabilistic band.
+                'daily': [{'date': str(pd.Timestamp(r['Date']).date()),
+                           **{k: round(float(v)) for k, v in r.items() if k.endswith('_cfs')}}
+                          for r in ml_daily.to_dict('records')],
             }
         except Exception as e:  # the ML overlay must never break the forecast
             logger.warning("ML forecast unavailable for %s: %s", site_id, e)

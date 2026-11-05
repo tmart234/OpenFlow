@@ -259,5 +259,83 @@
         "nws_lid": "SMPC2"
       }
     ]
+  },
+  "USGS:09070500": {
+    "name": "Colorado River near Dotsero, CO",
+    "short_name": "Colorado River (Dotsero)",
+    "reach": "Upper Colorado River, Kremmling to Dotsero (Gore Canyon, Pumphouse, State Bridge)",
+    "nws_lid": "EGLC2",
+    "timezone": "America/Denver",
+    "forecast_days": 5,
+    "upstream": [
+      {
+        "name": "Colorado River near Kremmling, CO",
+        "site_id": "USGS:09058000",
+        "usgs_id": "09058000",
+        "nws_lid": "KRMC2",
+        "lag_days": 1,
+        "weight": 1.0
+      },
+      {
+        "name": "Eagle River below Gypsum, CO",
+        "site_id": "USGS:09070000",
+        "usgs_id": "09070000",
+        "nws_lid": "GPSC2",
+        "lag_days": 1,
+        "weight": 1.0
+      }
+    ]
+  },
+  "USGS:09114500": {
+    "name": "Gunnison River near Gunnison, CO",
+    "short_name": "Gunnison River (Gunnison)",
+    "reach": "Gunnison River below the Taylor / East River confluence at Almont",
+    "nws_lid": "GUSC2",
+    "timezone": "America/Denver",
+    "forecast_days": 5,
+    "upstream": [
+      {
+        "name": "Taylor River at Almont, CO",
+        "site_id": "USGS:09110000",
+        "usgs_id": "09110000",
+        "nws_lid": "ALTC2",
+        "lag_days": 0,
+        "weight": 1.0
+      },
+      {
+        "name": "East River at Almont, CO",
+        "site_id": "USGS:09112500",
+        "usgs_id": "09112500",
+        "nws_lid": "ALEC2",
+        "lag_days": 0,
+        "weight": 1.0
+      }
+    ]
+  },
+  "USGS:09163500": {
+    "name": "Colorado River near Colorado-Utah State Line",
+    "short_name": "Colorado River (State Line)",
+    "reach": "Colorado River, Grand Junction to the Utah line (Ruby-Horsethief)",
+    "nws_lid": "CCUC2",
+    "timezone": "America/Denver",
+    "forecast_days": 5,
+    "upstream": [
+      {
+        "name": "Colorado River near Cameo, CO",
+        "site_id": "USGS:09095500",
+        "usgs_id": "09095500",
+        "nws_lid": "CAMC2",
+        "lag_days": 1,
+        "weight": 1.0
+      },
+      {
+        "name": "Gunnison River near Grand Junction, CO",
+        "site_id": "USGS:09152500",
+        "usgs_id": "09152500",
+        "nws_lid": "GJNC2",
+        "lag_days": 1,
+        "weight": 1.0
+      }
+    ]
   }
 }

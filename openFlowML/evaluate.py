@@ -19,6 +19,12 @@ What is scored (daily maximum flow, the number a paddler reads):
                peak timing error (days)
   recessions   windows falling at issue time (last 2 days down): median
                absolute % error on days 3 and 7
+band         models with the probabilistic band (model.QuantileBand): share
+               of observed daily max flows inside the 90% and 50% forecast
+               ranges by lead day (calibration; ideal 0.90 / 0.50), the
+               median 90% range width as % of the point forecast
+               (sharpness), and the share of rising-event peaks inside the
+               forecast 90% range of the peak
 
 quality_gate() turns the pooled report into pass/fail checks so CI can refuse
 to publish a model that is worse than "no change" or that flattens floods.
@@ -55,15 +61,25 @@ GATE = {
     'min_rise_peak_ratio': 0.80,
     # ...and the median peak timing error must be within this many days.
     'max_rise_timing_days': 1.0,
+    # Models with the band: its 90% range must hold at least this share of
+    # observations at every lead (catches a collapsed or broken band; the
+    # band is calibrated to 0.90 on the validation years).
+    'min_band90_coverage': 0.75,
 }
 
 
-def forecasts(samples: Sequence, model_pred: np.ndarray, scalers: dict) -> dict:
+def forecasts(samples: Sequence, model_pred, scalers: dict, band=None,
+              quantiles: Optional[Sequence[float]] = None) -> dict:
     """
     Unscaled (cfs) daily-max forecasts and observations for each window:
     obs, model, persistence, upstream as (n, H) arrays, plus q0 (flow at issue
     time), falling (bool, issue-time trend), site and issue date per window.
+    model_pred is the (n, H, T) point forecast or a model.predict() dict;
+    band (n, H, T, Q), at `quantiles`, adds 'band' (n, H, Q) in cfs.
     """
+    if isinstance(model_pred, dict):
+        band = model_pred.get('flow_quantiles') if band is None else band
+        model_pred = model_pred['persistence_plus_delta']
     x, y = windowing.stack(list(samples))
     t = windowing.TARGET_FEATURES.index('Max Flow')
     enc, dec = windowing.ENCODER_FEATURES, windowing.DECODER_FEATURES
@@ -85,7 +101,11 @@ def forecasts(samples: Sequence, model_pred: np.ndarray, scalers: dict) -> dict:
         step = pd.DataFrame(step.T).ffill().to_numpy().T          # hold the last known value
         upstream = np.where(np.isfinite(step), step, persistence)
 
+    extra = {}
+    if band is not None and quantiles:
+        extra = {'band': q(np.asarray(band)[..., t, :]), 'quantiles': [float(v) for v in quantiles]}
     return {
+        **extra,
         'obs': obs, 'model': model, 'persistence': persistence, 'upstream': upstream,
         'q0': q0, 'falling': enc_q[:, -1] < enc_q[:, -3],
         'site': np.array([s.site_id for s in samples]),
@@ -129,6 +149,34 @@ def _score(fc: dict, mask: np.ndarray, names=('model', 'persistence', 'upstream'
             rec[k] = {f'day{d}_error_pct': round(float(np.median(e[:, d - 1])) * 100, 2)
                       for d in (3, 7) if d <= horizon}
     out['recessions'] = rec
+    if 'band' in fc:
+        out['band'] = _band_scores(fc, mask, look, rise)
+    return out
+
+
+def _band_scores(fc: dict, mask: np.ndarray, look: int, rise: np.ndarray) -> dict:
+    """Calibration and sharpness of the forecast quantiles (see module docstring)."""
+    qs = fc['quantiles']
+    band, obs = fc['band'][mask], fc['obs'][mask]
+    lo90, hi90 = qs.index(min(qs)), qs.index(max(qs))
+    inner = [i for i, v in enumerate(qs) if 0.0 < v < 0.5]
+    lo50 = inner[-1] if inner else lo90
+    hi50 = len(qs) - 1 - lo50
+    med = qs.index(0.5)
+
+    def cover(lo, hi):
+        inside = (obs >= band[..., lo]) & (obs <= band[..., hi])
+        return [round(float(v), 3) for v in inside.mean(axis=0)]
+
+    width = (band[..., hi90] - band[..., lo90]) / np.maximum(band[..., med], 1e-6)
+    out = {'levels': [qs[lo90], qs[hi90]], 'inner_levels': [qs[lo50], qs[hi50]],
+           'coverage_90': cover(lo90, hi90), 'coverage_50': cover(lo50, hi50),
+           'width_90_pct': [round(float(v) * 100, 1) for v in np.median(width, axis=0)]}
+    if rise.any():
+        peak = obs[rise, :look].max(axis=1)
+        lo_pk = band[rise, :look, lo90].max(axis=1)
+        hi_pk = band[rise, :look, hi90].max(axis=1)
+        out['rise_peak_in_90'] = round(float(((peak >= lo_pk) & (peak <= hi_pk)).mean()), 3)
     return out
 
 
@@ -169,6 +217,11 @@ def quality_gate(report: dict, gate: Optional[dict] = None) -> dict:
               f'median peak ratio {ratio:.2f} (min {g["min_rise_peak_ratio"]})')
         check('rising-flow peak timing', timing <= g['max_rise_timing_days'],
               f'median timing error {timing:.1f} d (max {g["max_rise_timing_days"]})')
+    b = a.get('band')
+    if b:
+        worst = min(b['coverage_90'])
+        check('forecast range holds observations', worst >= g['min_band90_coverage'],
+              f'90% range covers {worst:.0%} at its worst lead day (min {g["min_band90_coverage"]:.0%})')
     return {'passed': all(c['passed'] for c in checks), 'checks': checks}
 
 
@@ -180,6 +233,10 @@ def to_markdown(report: dict, names: Optional[Dict[str, str]] = None) -> str:
              '',
              'Median absolute % error of the daily maximum flow on held-out test windows '
              '(model / persistence). Lower is better.', '',
+             '_Hindcast with perfect forcing: on these windows the model is given the observed '
+             'weather, basin rain/snow and upstream flow as its "forecast", so live skill is '
+             'lower, mostly beyond day 3 where weather forecasts lose skill. The daily forecast '
+             'archive (`score_archive.py`) scores the live forecasts._', '',
              '| Station | Windows | ' + ' | '.join(f'Day {d}' for d in leads) + ' | Rise peak ratio | Rise timing (d) |',
              '|---|---|' + '---|' * len(leads) + '---|---|']
 
@@ -196,6 +253,23 @@ def to_markdown(report: dict, names: Optional[Dict[str, str]] = None) -> str:
     for site, s in report['stations'].items():
         lines.append(row(names.get(site, site), s))
     lines.append(row('**All stations**', report['all']))
+    band = report['all'].get('band')
+    if band:
+        lo, hi = band['levels']
+        lines += ['', f'**Forecast range** (quantiles {lo:g}–{hi:g} of the daily max, all stations). '
+                  f'Coverage is the share of observed values inside the range: '
+                  f'ideally 90% / 50%. Width is the 90% range as % of the point forecast.', '',
+                  '| | ' + ' | '.join(f'Day {d}' for d in leads) + ' |',
+                  '|---|' + '---|' * len(leads),
+                  '| 90% range coverage | ' + ' | '.join(f"{band['coverage_90'][d - 1]:.0%}" for d in leads) + ' |',
+                  '| 50% range coverage | ' + ' | '.join(f"{band['coverage_50'][d - 1]:.0%}" for d in leads) + ' |',
+                  '| 90% range width | ' + ' | '.join(f"{band['width_90_pct'][d - 1]:.0f}%" for d in leads) + ' |']
+        if 'rise_peak_in_90' in band:
+            lines += ['', f"Rising events: {band['rise_peak_in_90']:.0%} of observed 7-day peaks fell inside "
+                      'the forecast 90% range of the peak.']
+    if report.get('live_forcing'):
+        import live_forcing
+        lines += ['', live_forcing.to_markdown(report['live_forcing'], names).rstrip()]
     gate = report.get('gate', {})
     lines += ['', f"**Quality gate: {'PASSED' if gate.get('passed') else 'FAILED'}**", '']
     lines += [f"- {'✅' if c['passed'] else '❌'} {c['check']}: {c['detail']}" for c in gate.get('checks', [])]
@@ -232,7 +306,9 @@ def main(argv=None):
                                           windowing.DECODER_DAYS)
     x, _ = windowing.stack(split.test)
     pred = art['model'].predict(x, verbose=0, batch_size=512)
-    report = build_report(forecasts(split.test, pred, art['scalers']), art.get('version'))
+    quantiles = art['training_config'].get('quantiles')
+    report = build_report(forecasts(split.test, pred, art['scalers'], quantiles=quantiles),
+                          art.get('version'))
     for p in write_report(report, args.base_path):
         print('wrote', p)
     print(to_markdown(report))

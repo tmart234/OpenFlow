@@ -41,8 +41,13 @@ def pick_peak_windows(samples: Sequence) -> Dict[str, int]:
 
 
 def hindcast_series(sample, prediction: np.ndarray, scalers: dict,
-                    history_days: int = HISTORY_DAYS) -> dict:
-    """Unscaled dates + flows for one sample: encoder history and the forecast window."""
+                    history_days: int = HISTORY_DAYS, band: Optional[np.ndarray] = None) -> dict:
+    """
+    Unscaled dates + flows for one sample: encoder history and the forecast
+    window. With `band` (H, T, Q) the series also carries the outer forecast
+    quantiles: range_low (lowest quantile of the daily min) and range_high
+    (highest quantile of the daily max).
+    """
     enc_days = sample.encoder_X.shape[0]
     dec_days = sample.target_Y.shape[0]
     dates = pd.date_range(sample.anchor_date, periods=enc_days + dec_days, freq='D')
@@ -61,20 +66,37 @@ def hindcast_series(sample, prediction: np.ndarray, scalers: dict,
         'observed_max': invert(sample.target_Y[:, t_max], scalers['Max Flow']),
         'predicted_min': invert(prediction[:, t_min], scalers['Min Flow']),
         'predicted_max': invert(prediction[:, t_max], scalers['Max Flow']),
+        **({} if band is None else {
+            'range_low': invert(band[:, t_min, 0], scalers['Min Flow']),
+            'range_high': invert(band[:, t_max, -1], scalers['Max Flow'])}),
     }
 
 
 def write_hindcast_charts(samples: Sequence, predictions: np.ndarray, scalers: dict,
                           out_dir: str, names: Optional[Dict[str, str]] = None,
-                          model_version: Optional[str] = None) -> List[str]:
-    """Write <out_dir>/<site>_hindcast.png per station; returns the paths written."""
+                          model_version: Optional[str] = None,
+                          band: Optional[np.ndarray] = None,
+                          quantiles: Optional[Sequence[float]] = None) -> List[str]:
+    """
+    Write <out_dir>/<site>_hindcast.png per station; returns the paths written.
+    With `band` (N, H, T, Q) at `quantiles` the shaded range is the model's
+    forecast range instead of its daily min-max.
+    """
     import charts
     os.makedirs(out_dir, exist_ok=True)
     names = names or {}
     paths = []
     for site, i in sorted(pick_peak_windows(samples).items()):
         s = samples[i]
-        series = hindcast_series(s, predictions[i], scalers)
+        series = hindcast_series(s, predictions[i], scalers,
+                                 band=None if band is None else band[i])
+        if band is not None and quantiles:
+            pct = round((max(quantiles) - min(quantiles)) * 100)
+            series['band_label'] = f'Model {pct}% forecast range'
+            range_note = (f"shaded: {pct}% forecast range (quantile {min(quantiles):g} of the daily min "
+                          f"to {max(quantiles):g} of the daily max)")
+        else:
+            range_note = "daily min–max flow"
         has_upstream = ('upstream_observed' in windowing.ENCODER_FEATURES and
                         s.encoder_X[-1, windowing.ENCODER_FEATURES.index('upstream_observed')] >= 0.5)
         issued = series['history_dates'][-1]
@@ -85,7 +107,7 @@ def write_hindcast_charts(samples: Sequence, predictions: np.ndarray, scalers: d
             subtitle=(f"{site} · held-out test window with the highest observed flow "
                       f"· upstream inputs {'on' if has_upstream else 'off'}"),
             footnote=(f"OpenFlow seq2seq LSTM{(' ' + model_version) if model_version else ''}; "
-                      f"daily min–max flow, not used in training or model selection."),
+                      f"{range_note}; window not used in training or model selection."),
             **series)
         paths.append(path)
         logger.info("Wrote hindcast chart %s", path)

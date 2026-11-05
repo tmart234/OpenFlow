@@ -22,6 +22,16 @@ From the `model-2026.11.03` quality report: median absolute % error of the daily
 
 The model beats "no change" at every station from day 2 on. On rising water it under-calls the peak by about 20% (rise peak ratio 0.74–0.80) and can be a day off on its timing. It is a daily model, so it cannot say what hour a crest arrives. Use it for the week's trend; use routing or NWS for the crest.
 
+**These numbers use perfect forcing.** The test windows give the model the *observed* weather as its forecast. Scored with the weather forecasts actually issued, live skill is lower (`openFlowML/live_forcing.py`; GFS archive from Open-Meteo, held-out windows issued Aug 2024 – Oct 2026, 4,659 windows, all 7 stations). Median absolute % error of the daily maximum:
+
+| | Day 1 | Day 2 | Day 3 | Day 5 | Day 7 | Days 1–7 |
+|---|---|---|---|---|---|---|
+| Observed weather (as in the table above) | 3.3 | 5.0 | 6.2 | 8.1 | 9.7 | 6.9 |
+| **Real forecasts** | **3.6** | **5.6** | **7.1** | **9.7** | **12.1** | **8.2** |
+| No change | 3.9 | 6.8 | 8.7 | 12.1 | 14.3 | 9.9 |
+
+On real forecasts the model still beats "no change" at every lead, keeping a bit over half of its advantage. The gap opens with lead time, as rain forecasts lose skill. A training run with `OPENFLOW_LIVE_FORCING=1` (**Weekly ML Training** input *live_forcing*) adds this table, per station, to its quality report.
+
 ## Routing crest backtest (hourly)
 
 For every sharp crest at a routed station since 2015, `crest_backtest.py` issues routing forecasts 12–72 h before the crest. Each is calibrated on the 28 days before it, like the live forecast. A sharp crest is at least 1.5× and 150 cfs above the 72-h minimum and falls back below 75% within 72 h. Upstream gauges get their observed future as a perfect RFC forecast. Anchor and tributary gauges have no RFC forecast and are known only up to the issue time. Rain is observed gridMET rain, a perfect rain forecast. The score is:

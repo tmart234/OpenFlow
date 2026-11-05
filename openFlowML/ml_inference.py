@@ -84,7 +84,7 @@ def load_artifacts(model_dir: str, with_model: bool = True) -> dict:
         import model as model_mod
         art['model'] = tf.keras.models.load_model(
             os.path.join(model_dir, 'lstm_model.h5'),
-            custom_objects={'StationDropout': model_mod.StationDropout}, compile=False)
+            custom_objects=model_mod.CUSTOM_OBJECTS, compile=False)
     return art
 
 
@@ -387,9 +387,24 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     return {'inputs': inputs, 'anchor': anchor, 'dates': dates, 'info': info}
 
 
+def band_columns(quantiles) -> list:
+    """Column names predict() adds for a model with the band, e.g. 'max_q05_cfs'."""
+    return [f'{side}_q{round(q * 100):02d}_cfs' for side in ('min', 'max')
+            for q in quantiles if q != 0.5]
+
+
 def predict(art: dict, prepared: dict) -> pd.DataFrame:
-    """Run the model; DataFrame[Date, min_cfs, max_cfs] for the decoder days."""
-    out = art['model'].predict(prepared['inputs'], verbose=0)[0]
+    """
+    Run the model; DataFrame[Date, min_cfs, max_cfs] for the decoder days.
+
+    A model with the probabilistic band (training_config.quantiles) adds the
+    forecast quantiles of the daily low and high, e.g. max_q05_cfs ..
+    max_q95_cfs (the 0.5 quantile is min_cfs / max_cfs themselves).
+    """
+    import model as model_mod
+    pred = art['model'].predict(prepared['inputs'], verbose=0)
+    out = model_mod.point_forecast(pred)[0]
+    band = model_mod.band_forecast(pred)
     tf_ = windowing.TARGET_FEATURES
     sc = art['scalers']
 
@@ -399,8 +414,16 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
         return np.expm1(x) if p.get('transform') == 'log1p' else x
     lo = inv(out[:, tf_.index('Min Flow')], 'Min Flow')
     hi = inv(out[:, tf_.index('Max Flow')], 'Max Flow')
-    return pd.DataFrame({'Date': prepared['dates'], 'min_cfs': np.minimum(lo, hi),
-                         'max_cfs': np.maximum(lo, hi)})
+    frame = pd.DataFrame({'Date': prepared['dates'], 'min_cfs': np.minimum(lo, hi),
+                          'max_cfs': np.maximum(lo, hi)})
+    quantiles = (art.get('training_config') or {}).get('quantiles')
+    if band is not None and quantiles:
+        for side, col in (('min', 'Min Flow'), ('max', 'Max Flow')):
+            values = inv(band[0][:, tf_.index(col), :], col)
+            for i, q in enumerate(quantiles):
+                if q != 0.5:
+                    frame[f'{side}_q{round(q * 100):02d}_cfs'] = values[:, i]
+    return frame
 
 
 def verified_skill(art: dict, site_id: str, leads=(1, 3, 7)) -> Optional[dict]:

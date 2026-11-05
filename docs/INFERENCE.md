@@ -95,6 +95,12 @@ Indicator columns (`sm_observed`, `reservoir_observed`) are 0/1 and are **not** 
 
 Stations listed in `upstream_gauges.json` (e.g. `USGS:08276500`, the Rio Grande below Taos Junction Bridge / Lower Taos Box) get two extra encoder columns and two extra decoder columns. They let the model see water that is already in the river upstream: a flood wave in Colorado that will reach the Taos Box days later, which local weather and the station's own history cannot show.
 
+Registered stations:
+- Taos Box, Royal Gorge, Conejos and Dolores (since the upstream inputs were added).
+- Since 2026-11: the Colorado near Dotsero (Kremmling + Eagle), the Gunnison near Gunnison (Taylor + East at Almont) and the Colorado near the state line (Cameo + Gunnison near Grand Junction). All three use CBRFC forecasts at the upstream gauges (`forecast_days` 5).
+
+An app that does not yet build the upstream inputs must still send the placeholders described below for every registered station.
+
 **`upstream_flow` (encoder and decoder)** is the routed daily inflow:
 
 ```
@@ -132,7 +138,7 @@ The routing CLI (`flow_forecast.py`) uses the same anchor, hourly (`routing.anch
 - `d < K` and the routed value exists: use it, `upstream_known = 1`.
 - otherwise: **hold** the last known value (starting from the last encoder day's `upstream_flow`) and set `upstream_known = 0`.
 
-**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`).
+**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`). The skip has a shared coefficient plus a learned per-station gain (`training_config.river_upstream_gain`). Rivers whose upstream gauges carry almost all of their flow and rivers where they carry a fraction can respond differently. Clients need do nothing: the gain is looked up inside the model from `station_input`.
 
 `windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
 
@@ -170,11 +176,17 @@ The model gets one rain and one snow column per zone:
 
 `windowing.basin_precip_decoder_window` implements this rule. `data/get_basin_precip.inference_daily` is the reference for assembling the daily values. The point `precipitation` column (nearest rain gauge plus point forecast) is unchanged and still required.
 
-## Output tensor
+## Output tensors
 
-One output, name `persistence_plus_delta`, shape `[1, 14, len(target_features)]` (= `[1, 14, 2]`), dtype `float32`. The two target columns are `Min Flow`, `Max Flow` in that order — same as `training_config.target_features`.
+**`persistence_plus_delta`** is the point forecast: shape `[1, 14, len(target_features)]` (= `[1, 14, 2]`), dtype `float32`. The two target columns are `Min Flow`, `Max Flow` in that order — same as `training_config.target_features`. Every release has it.
 
-The output is in **scaled** space. To get cfs, invert per column:
+**`flow_quantiles`** is the forecast range: shape `[1, 14, len(target_features), len(quantiles)]` (= `[1, 14, 2, 5]`), dtype `float32`.
+- Present when `training_config.quantiles` is set (also `manifest.schema.quantiles`; `outputs` lists both names). Older releases do not have it.
+- The last axis follows `training_config.quantiles`, `[0.05, 0.25, 0.5, 0.75, 0.95]`. Example: `[0, d, 1, 4]` is the 95th-percentile daily maximum on decoder day `d`.
+- The 0.5 slot equals `persistence_plus_delta`.
+- Quantiles never cross: each is at least the one before it.
+
+Both outputs are in **scaled** space. To get cfs, invert per column; the transform is monotonic, so quantiles stay quantiles:
 
 ```python
 def invert(z, params):
@@ -182,17 +194,37 @@ def invert(z, params):
     return math.expm1(x) if params["transform"] == "log1p" else x
 ```
 
+### Reading the forecast range
+
+The 5–95% pair is a 90% range and the 25–75% pair a 50% range. On the held-out years they contain about 90% and 50% of what the river did.
+- The spread is set per lead day on the validation years (split-conformal, `training_config.band_calibration`) and stored in the model.
+- `quality_report` shows the coverage achieved on the test years.
+
+**Caveat.** As with the skill scores, training and calibration used the *observed* weather and upstream flow as the "forecast". The range therefore covers the hydrologic uncertainty (how this river responds, snowmelt, initial state) but not a wrong weather forecast. Expect live ranges to be too narrow when a storm forecast misses, mostly beyond day 3. The daily forecast archive (`score_archive.py`) is where live coverage can be checked.
+
+`ml_inference.predict` returns the range as `min_q05_cfs` … `max_q95_cfs` columns, and `flow_forecast.py` JSON as the same keys per day.
+
 ## Residual structure
 
-The model is a residual forecaster: `output = persistence_input + delta`, where `delta` is what the network actually learns. If the network outputs zero, predictions equal the persistence baseline — that's the worst case, not a failure mode. There's no special-casing for this in the consumer; just decode the output as above.
+The model is a residual forecaster: `persistence_plus_delta = persistence_input + delta`, where `delta` is what the network actually learns. If the network outputs zero, predictions equal the persistence baseline — that's the worst case, not a failure mode. There's no special-casing for this in the consumer; just decode the output as above.
+
+## Mobile model files
+
+Both mobile files keep the input names above and name their output `persistence_plus_delta`:
+- **TFLite:** it is the signature output key, so run it with `interpreter.getSignatureRunner("serving_default")`.
+- **CoreML:** read it with `featureValue(for: "persistence_plus_delta")`.
+
+Releases before this contract was enforced exposed `output_0` (TFLite) and shipped no CoreML file.
+
+The CoreML file is converted from a copy of the model with its LSTMs unrolled over the fixed 60 + 14 days. The weights and outputs are identical. Unrolling is needed because coremltools cannot convert the Keras LSTM's while-loop.
 
 ## TFLite Flex delegate
 
-The graph contains two `Embedding(mask_zero=True)` layers and an LSTM with `initial_state`. The exporter tries three TFLite conversion paths and records which one was used in `manifest.json.tflite_mode`:
+The graph contains two embedding lookups and an LSTM with `initial_state`. The exporter tries three TFLite conversion paths and records which one was used in `manifest.json.tflite_mode`:
 
-- `builtins` — strict TFLITE_BUILTINS. No Flex needed on the consumer side.
+- `builtins` — strict TFLITE_BUILTINS. No Flex needed on the consumer side. Current models always take this path.
 - `select_tf_ops` — needed the Flex delegate. Android consumers must add `org.tensorflow:tensorflow-lite-select-tf-ops` to their `app/build.gradle`. iOS uses CoreML, not TFLite.
-- `rebuilt_no_mask` — exporter rebuilt the model with `mask_zero=False` and copied weights. Functionally identical at inference (the mask only affected training-time padding behavior, which the model doesn't use). No Flex needed.
+- `rebuilt_no_mask` — only for models trained before the embeddings dropped `mask_zero=True`. The exporter cloned the model with `mask_zero=False`, which is functionally identical because the mask never reached the LSTMs. No Flex needed.
 
 Check `manifest.tflite_mode` on download and warn the user if the Flex delegate isn't bundled.
 

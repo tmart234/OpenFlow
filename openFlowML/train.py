@@ -18,6 +18,7 @@ import os
 import shutil
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 
 import combine_data
@@ -55,6 +56,24 @@ HUBER_DELTA = 0.05
 # random seed. Averaging removes much of one network's day-to-day noise.
 ENSEMBLE_SIZE = int(os.getenv('OPENFLOW_ENSEMBLE_SIZE', '') or 3)
 SEED = 20261103
+# Probabilistic band (model.QuantileBand): forecast quantiles of daily min /
+# max flow around the point forecast, trained with the pinball loss behind a
+# stop-gradient (the point forecast is unchanged) and calibrated per lead day
+# on the validation split. OPENFLOW_BAND=0 trains the point model only.
+QUANTILES = (model_mod.DEFAULT_QUANTILES
+             if os.getenv('OPENFLOW_BAND', '1').strip() not in ('0', 'false', 'False') else ())
+# Per-river gain on the decoder's upstream_change (model.StationUpstreamGain),
+# on top of the shared linear skip. Rivers whose upstream gauges carry almost
+# all of their flow and rivers where they carry a fraction otherwise fight
+# over one coefficient. Leave-years-out CV with upstream gauges on three more
+# rivers (docs/MODEL_DESIGN.md): day-1 error better in every fold, 14-day
+# mean unchanged. OPENFLOW_RIVER_SKIP=0 switches it off.
+RIVER_SKIP = os.getenv('OPENFLOW_RIVER_SKIP', '1').strip() not in ('0', 'false', 'False')
+# Also score the held-out ensemble with the weather forecasts actually issued
+# (live_forcing.py; Open-Meteo archive, 2024 on) instead of the observed
+# weather, and add that to quality_report. Off by default: it downloads the
+# archive (~70 requests) and the free API can rate-limit.
+LIVE_FORCING = os.getenv('OPENFLOW_LIVE_FORCING', '').strip() in ('1', 'true', 'True')
 # After the held-out evaluation, retrain every member on ALL windows (train +
 # val + test) for the epochs and learning-rate schedule early stopping chose,
 # so the published model has also learned from the most recent years (the
@@ -128,7 +147,15 @@ def _build_member(num_stations, num_basins):
         encoder_days=ENCODER_DAYS,
         decoder_days=DECODER_DAYS,
         huber_delta=HUBER_DELTA,
+        quantiles=QUANTILES or None,
+        upstream_change_index=(windowing.DECODER_FEATURES.index('upstream_change')
+                               if RIVER_SKIP else None),
     )
+
+
+def _monitor(net):
+    """Early stopping / LR schedule follow the point forecast's validation loss."""
+    return f'val_{model_mod.POINT_OUTPUT}_loss' if model_mod.has_band(net) else 'val_loss'
 
 
 def fit_members(num_stations, num_basins, train_data, val_data, size=None, seed=SEED):
@@ -144,20 +171,23 @@ def fit_members(num_stations, num_basins, train_data, val_data, size=None, seed=
         net = _build_member(num_stations, num_basins)
         if i == 0:
             net.summary(print_fn=logger.info)
+        monitor = _monitor(net)
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
-                monitor='val_loss', patience=PATIENCE,
+                monitor=monitor, patience=PATIENCE,
                 restore_best_weights=True, verbose=1),
             tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_loss', factor=0.5, patience=LR_PATIENCE,
+                monitor=monitor, factor=0.5, patience=LR_PATIENCE,
                 min_lr=1e-5, verbose=1),
         ]
-        hist = net.fit(train_data[0], train_data[1], sample_weight=train_data[2],
-                       validation_data=val_data, epochs=EPOCHS, batch_size=BATCH_SIZE,
+        y, w = model_mod.fit_targets(net, train_data[1], train_data[2])
+        vy, vw = model_mod.fit_targets(net, *val_data[1:])
+        hist = net.fit(train_data[0], y, sample_weight=w,
+                       validation_data=(val_data[0], vy, vw), epochs=EPOCHS, batch_size=BATCH_SIZE,
                        callbacks=callbacks, verbose=2)
-        best = int(np.argmin(hist.history['val_loss'])) + 1
+        best = int(np.argmin(hist.history[monitor])) + 1
         lrs = [float(v) for v in hist.history.get('lr', [])][:best] or [1e-3] * best
-        logger.info("Member %d/%d: best epoch %d of %d", i + 1, size, best, len(hist.history['val_loss']))
+        logger.info("Member %d/%d: best epoch %d of %d", i + 1, size, best, len(hist.history[monitor]))
         members.append(net)
         schedules.append(lrs)
     return members, schedules
@@ -170,7 +200,8 @@ def refit_members(num_stations, num_basins, all_data, schedules, seed=SEED):
         tf.keras.utils.set_random_seed(seed + 1000 + i)
         net = _build_member(num_stations, num_basins)
         sched = tf.keras.callbacks.LearningRateScheduler(lambda epoch, lr, lrs=lrs: lrs[min(epoch, len(lrs) - 1)])
-        net.fit(all_data[0], all_data[1], sample_weight=all_data[2], epochs=len(lrs),
+        y, w = model_mod.fit_targets(net, all_data[1], all_data[2])
+        net.fit(all_data[0], y, sample_weight=w, epochs=len(lrs),
                 batch_size=BATCH_SIZE, callbacks=[sched], verbose=2)
         logger.info("Refit member %d/%d on all windows for %d epochs", i + 1, len(schedules), len(lrs))
         members.append(net)
@@ -192,7 +223,6 @@ def main():
     # wrote instead of re-fetching every source (model iteration; not for CI).
     cached = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
     if os.getenv('OPENFLOW_REUSE_COMBINED', '').strip() in ('1', 'true', 'True') and os.path.exists(cached):
-        import pandas as pd
         logger.info("Reusing %s (OPENFLOW_REUSE_COMBINED)", cached)
         data = normalize_data.normalize_data(pd.read_csv(cached), artifacts_dir=base_path)
     else:
@@ -249,13 +279,23 @@ def main():
         (train_inputs, train_targets, train_w), (val_inputs, val_targets, val_w))
     net = model_mod.average_ensemble(members)
     logger.info("Ensemble of %d member(s)", len(members))
+    # Calibrate the band's spread per lead day on the validation windows
+    # (split-conformal; model.calibrate_band). Early stopping already used
+    # val, but only for the point forecast, which the band cannot move.
+    band_scale = None
+    if model_mod.has_band(net):
+        band_scale = model_mod.calibrate_band(net, val_inputs, val_targets, QUANTILES)
+        logger.info("Band calibration (daily max, lower / upper factor by lead day):\n%s",
+                    np.round(band_scale[:, windowing.TARGET_FEATURES.index('Max Flow')], 2).T)
 
     # 7. Evaluate against persistence + any external operational baselines
     #    on the held-out test set. External baselines (CBRFC, S2F) return
     #    None when their archive integration isn't wired in yet, in which
     #    case they're silently skipped.
     if test_inputs is not None and len(splits.test) > 0:
-        model_pred = net.predict(test_inputs, verbose=0)
+        test_pred = net.predict(test_inputs, verbose=0)
+        model_pred = model_mod.point_forecast(test_pred)
+        band_pred = model_mod.band_forecast(test_pred)
         model_mae_per_h = _summarize_per_horizon(test_targets, model_pred)
         persistence_pred = _persistence_pred_for_samples(splits.test)
         persistence_mae_per_h = _summarize_per_horizon(test_targets, persistence_pred)
@@ -303,8 +343,19 @@ def main():
         try:
             import evaluate
             report = evaluate.build_report(
-                evaluate.forecasts(splits.test, model_pred, scalers),
+                evaluate.forecasts(splits.test, model_pred, scalers,
+                                   band=band_pred, quantiles=QUANTILES),
                 os.environ.get('OPENFLOW_MODEL_VERSION'))
+            if LIVE_FORCING:
+                try:
+                    import live_forcing
+                    issue = [s.anchor_date + pd.Timedelta(days=ENCODER_DAYS - 1) for s in splits.test]
+                    table = live_forcing.fetch_table(
+                        sorted({s.site_id for s in splits.test}), min(issue) + pd.Timedelta(days=1),
+                        max(issue) + pd.Timedelta(days=7), os.path.join(base_path, 'live_forcing_cache'))
+                    report['live_forcing'] = live_forcing.score(net, splits.test, scalers, table)
+                except Exception as e:
+                    logger.warning("Live-forcing score skipped: %s", e)
             evaluate.write_report(report, base_path, names)
             logger.info("Forecast quality (test split):\n%s", evaluate.to_markdown(report, names))
         except Exception as e:
@@ -317,7 +368,8 @@ def main():
             import hindcast
             hindcast.write_hindcast_charts(
                 splits.test, model_pred, scalers, os.path.join(base_path, 'charts'),
-                names=names, model_version=os.environ.get('OPENFLOW_MODEL_VERSION'))
+                names=names, model_version=os.environ.get('OPENFLOW_MODEL_VERSION'),
+                band=band_pred, quantiles=QUANTILES)
         except Exception as e:
             logger.warning("Hindcast charts skipped: %s", e)
 
@@ -331,9 +383,13 @@ def main():
         refit = model_mod.average_ensemble(refit_members(
             len(station_index), len(basin_index),
             (all_inputs, all_targets, sample_weights(all_inputs, all_targets)), schedules))
+        if band_scale is not None:
+            # No held-out windows remain to calibrate on; the refit is the
+            # same recipe, so it keeps the held-out run's calibration.
+            model_mod.set_band_scale(refit, band_scale)
         held_out = float(np.mean(_summarize_per_horizon(test_targets, model_pred)))
         in_sample = float(np.mean(_summarize_per_horizon(
-            test_targets, refit.predict(test_inputs, verbose=0))))
+            test_targets, model_mod.point_forecast(refit.predict(test_inputs, verbose=0)))))
         logger.info("Refit check: test MAE held-out %.4f, refit (in-sample) %.4f", held_out, in_sample)
         if in_sample <= held_out:
             net, refit_done = refit, True
@@ -373,6 +429,13 @@ def main():
         'lead_weight_power': LEAD_WEIGHT_POWER,
         'huber_delta': HUBER_DELTA,
         'linear_skip': True,
+        'river_upstream_gain': RIVER_SKIP,
+        # Model outputs: the point forecast and, with the band, the forecast
+        # quantiles at these levels (last axis of flow_quantiles) and the
+        # per-lead calibration factors applied to the band (H, T, [low, high]).
+        'outputs': [model_mod.POINT_OUTPUT] + ([model_mod.QUANTILE_OUTPUT] if band_scale is not None else []),
+        'quantiles': list(QUANTILES) if band_scale is not None else None,
+        'band_calibration': band_scale.round(4).tolist() if band_scale is not None else None,
         'ensemble_size': len(members),
         'final_refit': refit_done,
         'training_years': int(os.getenv('OPENFLOW_TRAINING_YEARS', '') or combine_data.TRAINING_YEARS),

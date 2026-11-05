@@ -10,7 +10,9 @@ archive/YYYY-MM-DD/) and score them once the days have happened.
 The forecast CSV and JSON files that flow_forecast.py writes carry:
   routing  forecast_cfs (hourly)
   NWS      nws_official_cfs (hourly; only where NWS forecasts the gauge)
-  ML       ml.daily min/max in the JSON (daily; its midpoint is scored)
+  ML       ml.daily min/max in the JSON (daily; its midpoint is scored), and
+           for models with the forecast range its quantiles (min_q05_cfs ...
+           max_q95_cfs)
 
 Per source, river and lead day it reports:
   error    median absolute % error of the daily mean flow
@@ -18,6 +20,11 @@ Per source, river and lead day it reports:
            (routing.find_crests): the forecast's highest flow within 48 h of it.
            Hourly sources get a timing error; every source gets a
            forecast/observed crest ratio.
+  ML range the share of days whose observed daily mean fell inside the ML
+           90% range of the daily midpoint, by lead day. That range is the
+           mean of the q05 (and of the q95) of the daily min and max. Ideal
+           is 90%. This is the live check of the range, which training
+           calibrated with observed weather as the forecast.
 
   python score_archive.py --archive <dir with archive/> [--days 60]
 """
@@ -35,6 +42,8 @@ import routing
 from data import get_upstream
 
 SOURCES = ('routing', 'nws', 'ml')
+# The ML forecast range's outer quantiles, in the flow_forecast.py JSON.
+RANGE_KEYS = ('min_q05_cfs', 'max_q05_cfs', 'min_q95_cfs', 'max_q95_cfs')
 
 
 def load_archive(root: str, since: Optional[pd.Timestamp] = None) -> List[dict]:
@@ -53,8 +62,12 @@ def load_archive(root: str, since: Optional[pd.Timestamp] = None) -> List[dict]:
         hourly = hourly[hourly.index > issued]
         ml = (s.get('ml') or {}).get('daily') or []
         ml_daily = pd.Series({pd.Timestamp(d['date']): (d['min_cfs'] + d['max_cfs']) / 2 for d in ml}, dtype=float)
+        band = [d for d in ml if all(k in d for k in RANGE_KEYS)]
+        ml_range = pd.DataFrame({'lo': [(d['min_q05_cfs'] + d['max_q05_cfs']) / 2 for d in band],
+                                 'hi': [(d['min_q95_cfs'] + d['max_q95_cfs']) / 2 for d in band]},
+                                index=pd.DatetimeIndex([pd.Timestamp(d['date']) for d in band]), dtype=float)
         out.append({'site_id': s['site_id'], 'issued': issued, 'hourly': hourly,
-                    'ml_daily': ml_daily, 'tz': s.get('timezone', 'UTC')})
+                    'ml_daily': ml_daily, 'ml_range': ml_range, 'tz': s.get('timezone', 'UTC')})
     return out
 
 
@@ -80,6 +93,11 @@ def score_one(fc: dict, obs: pd.Series, days: int = 5) -> List[dict]:
             if np.isfinite(v):
                 rows.append({'site_id': fc['site_id'], 'issued': fc['issued'], 'kind': 'daily',
                              'source': src, 'lead_day': lead, 'pct_error': abs(v / o - 1) * 100})
+        rng = fc.get('ml_range')
+        if rng is not None and day in rng.index:
+            lo, hi = rng.loc[day, 'lo'], rng.loc[day, 'hi']
+            rows.append({'site_id': fc['site_id'], 'issued': fc['issued'], 'kind': 'range',
+                         'source': 'ml', 'lead_day': lead, 'inside': float(lo <= o <= hi)})
     # Crests observed inside the forecast window.
     window = obs[(obs.index > fc['issued']) & (obs.index <= fc['hourly'].index.max())]
     if len(window) > 72:
@@ -131,6 +149,14 @@ def summarize(rows: pd.DataFrame) -> str:
             r = [f"{c.loc[c.source == s, 'crest_ratio'].median():.2f}" if (c.source == s).any() else '—' for s in SOURCES]
             lines += ['| median timing error | ' + ' | '.join(t) + ' |', '| crest ratio | ' + ' | '.join(r) + ' |',
                       f"| scored (forecast, crest) pairs | {len(c[c.source == 'routing'])} | {len(c[c.source == 'nws'])} | {len(c[c.source == 'ml'])} |"]
+        r = g[g['kind'] == 'range'] if 'kind' in g else g.iloc[:0]
+        if len(r):
+            by_lead = r.groupby('lead_day')['inside']
+            lines += ['', '| ML 90% range held the day (ideal 90%) | ' +
+                      ' | '.join(f'day {int(k)}' for k in by_lead.groups) + ' |',
+                      '|---|' + '---|' * len(by_lead.groups),
+                      '| share of days | ' + ' | '.join(f'{v:.0%}' for v in by_lead.mean()) + ' |',
+                      '| days scored | ' + ' | '.join(str(int(v)) for v in by_lead.size()) + ' |']
         lines.append('')
     return '\n'.join(lines)
 

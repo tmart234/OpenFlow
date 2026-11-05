@@ -95,38 +95,59 @@ def test_export_round_trips_with_parity(tmp_path):
     # Both formats made it to disk.
     assert result['mlpackage_zip'] and os.path.exists(result['mlpackage_zip'])
     assert result['tflite'] and os.path.exists(result['tflite'])
+    _assert_mobile_parity(result, base_path, net)
 
-    # Keras reference predictions.
+
+def _assert_mobile_parity(result, base_path, net):
+    """
+    Both exports answer to the names the mobile apps use and match Keras:
+      - Android runs the TFLite SignatureRunner and reads the output key
+        'persistence_plus_delta' (OpenFlowAndroid ml/ModelBundle.kt)
+      - iOS reads featureValue(for: "persistence_plus_delta")
+        (OpenFlowiOS/ModelBundle.swift)
+    """
+    import sys
+    import tensorflow as tf
     keras_inputs = _sample_inputs(n=4)
     keras_pred = net.predict(keras_inputs, verbose=0)
 
-    # TFLite parity (one sample at a time -- fixed batch=1 in input specs).
-    import tensorflow as tf
-    interp = tf.lite.Interpreter(model_path=result['tflite'])
-    interp.allocate_tensors()
-    in_details = {d['name'].split(':')[0]: d for d in interp.get_input_details()}
-    out_details = interp.get_output_details()
-    for i in range(keras_pred.shape[0]):
-        for name in ('encoder_input', 'decoder_input', 'persistence_input',
-                     'station_input', 'basin_input'):
-            # Names may carry serving prefixes ("serving_default_encoder_input")
-            # depending on TF version; match by suffix.
-            matched = next((v for k, v in in_details.items() if k.endswith(name)), None)
-            assert matched is not None, f"TFLite input {name} not found in {list(in_details)}"
-            interp.set_tensor(matched['index'], keras_inputs[name][i:i+1])
-        interp.invoke()
-        tflite_pred = interp.get_tensor(out_details[0]['index'])
-        assert np.max(np.abs(tflite_pred - keras_pred[i:i+1])) < 1e-3
+    if not isinstance(keras_pred, dict):
+        keras_pred = {export_mobile.OUTPUT_NAME: keras_pred}
+    n = keras_inputs['encoder_input'].shape[0]
 
-    # CoreML parity.
+    runner = tf.lite.Interpreter(model_path=result['tflite']).get_signature_runner()
+    for i in range(n):
+        out = runner(**{name: keras_inputs[name][i:i+1] for name in keras_inputs})
+        assert sorted(out) == sorted(keras_pred)
+        for name, want in keras_pred.items():
+            assert np.max(np.abs(out[name] - want[i:i+1])) < 1e-3, name
+
     import coremltools as ct
     ct_model = ct.models.MLModel(os.path.join(base_path, export_mobile.MLPACKAGE_NAME))
-    for i in range(keras_pred.shape[0]):
-        ct_inputs = {name: keras_inputs[name][i:i+1] for name in keras_inputs}
-        ct_out = ct_model.predict(ct_inputs)
-        # CoreML names the output after the Add layer; pick the single output.
-        coreml_pred = next(iter(ct_out.values()))
-        assert np.max(np.abs(np.asarray(coreml_pred) - keras_pred[i:i+1])) < 1e-3
+    spec = ct_model.get_spec()
+    assert sorted(o.name for o in spec.description.output) == sorted(keras_pred)
+    assert sorted(i.name for i in spec.description.input) == sorted(keras_inputs)
+    if sys.platform != 'darwin':
+        return   # CoreML can only run predictions on macOS
+    for i in range(n):
+        ct_out = ct_model.predict({name: keras_inputs[name][i:i+1] for name in keras_inputs})
+        for name, want in keras_pred.items():
+            assert np.max(np.abs(np.asarray(ct_out[name]) - want[i:i+1])) < 1e-3, name
+
+
+def test_ensemble_export_round_trips_with_parity(tmp_path):
+    """What CI ships: an averaged ensemble of members (model.average_ensemble)."""
+    base_path = str(tmp_path)
+    net = model_mod.average_ensemble([_build_tiny_model(), _build_tiny_model()])
+    net.save(os.path.join(base_path, 'lstm_model.h5'))
+    _write_training_config(base_path)
+    _seed_index_files(base_path)
+
+    result = export_mobile.export_all(base_path)
+
+    assert result['mlpackage_zip'] and os.path.exists(result['mlpackage_zip'])
+    assert result['tflite'] and os.path.exists(result['tflite'])
+    _assert_mobile_parity(result, base_path, net)
 
 
 def test_manifest_records_correct_sha256s(tmp_path):
@@ -170,3 +191,27 @@ def test_manifest_schema_matches_training_config(tmp_path):
                 'decoder_features', 'target_features',
                 'num_stations', 'num_basins'):
         assert manifest['schema'][key] == config[key]
+
+
+def test_band_model_exports_both_outputs(tmp_path):
+    """What train.py ships: a calibrated two-output ensemble with the river-specific gain."""
+    base_path = str(tmp_path)
+    def member():
+        return model_mod.build_encoder_decoder(
+            num_stations=3, num_basins=2, encoder_features=len(windowing.ENCODER_FEATURES),
+            decoder_features=len(windowing.DECODER_FEATURES),
+            target_features=len(windowing.TARGET_FEATURES), encoder_days=windowing.ENCODER_DAYS,
+            decoder_days=windowing.DECODER_DAYS, lstm_units=8, embedding_dim=4,
+            station_dropout=0.0, dropout=0.0, recurrent_dropout=0.0,
+            quantiles=model_mod.DEFAULT_QUANTILES,
+            upstream_change_index=windowing.DECODER_FEATURES.index('upstream_change'))
+    net = model_mod.average_ensemble([member(), member()])
+    model_mod.set_band_scale(net, np.full((windowing.DECODER_DAYS, 2, 2), 1.5, 'float32'))
+    net.save(os.path.join(base_path, 'lstm_model.h5'))
+    _write_training_config(base_path)
+    _seed_index_files(base_path)
+
+    result = export_mobile.export_all(base_path)
+
+    assert result['mlpackage_zip'] and result['tflite']
+    _assert_mobile_parity(result, base_path, net)

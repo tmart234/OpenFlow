@@ -309,3 +309,45 @@ def test_windows_carry_upstream_change():
     chg = s.decoder_X[:, windowing.DECODER_FEATURES.index('upstream_change')]
     np.testing.assert_allclose(chg[:3], up[60:63] - up[59])
     assert (chg[3:] == 0).all()
+
+
+def test_water_year_boundaries():
+    assert windowing.water_year('2023-09-30') == 2023
+    assert windowing.water_year('2023-10-01') == 2024
+
+
+def test_water_year_folds_test_every_year_once_without_shared_days():
+    frame = pd.concat([_make_station_frame('A', 1, 1, n_days=6 * 365 + 30, start='2015-10-01'),
+                       _make_station_frame('B', 2, 1, n_days=6 * 365 + 30, start='2015-10-01')],
+                      ignore_index=True)
+    samples = windowing.build_windows(frame)
+    folds = windowing.water_year_folds(samples, n_folds=3)
+    assert len(folds) == 3
+
+    def issue(s):
+        return s.anchor_date + pd.Timedelta(days=windowing.ENCODER_DAYS - 1)
+
+    def days(s):
+        return pd.date_range(s.anchor_date, issue(s) + pd.Timedelta(days=windowing.DECODER_DAYS))
+
+    tested = []
+    for fold in folds:
+        test_years = {windowing.water_year(issue(s)) for s in fold.test}
+        val_years = {windowing.water_year(issue(s)) for s in fold.val}
+        assert fold.train and fold.val and fold.test
+        assert not test_years & val_years
+        assert len(val_years) == 1 and (min(test_years) - 1 in val_years or max(test_years) + 1 in val_years)
+        held = test_years | val_years
+        for s in fold.train:                       # no training day inside the held-out years
+            assert not {windowing.water_year(d) for d in days(s)} & held
+        for s in fold.test:                        # test windows stay inside their years
+            assert {windowing.water_year(d) for d in days(s)[windowing.ENCODER_DAYS:]} <= test_years
+        tested += sorted(test_years)
+    assert tested == sorted(set(tested))           # each water year tested exactly once
+    assert set(tested) == {windowing.water_year(issue(s)) for s in samples}
+
+
+def test_water_year_folds_need_enough_years():
+    samples = windowing.build_windows(_make_station_frame('A', 1, 1, n_days=400))
+    with pytest.raises(ValueError):
+        windowing.water_year_folds(samples, n_folds=5)

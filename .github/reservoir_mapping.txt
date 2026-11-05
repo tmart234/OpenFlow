@@ -31,3 +31,18 @@
 #
 # USGS:09163500, Lake Powell,        6126,  6127
 # USGS:09114500, Blue Mesa Reservoir, 6135,  6136
+
+# Candidate entries (USBR RISE daily storage / total-release item ids), found
+# and tested 2026-11-05. Enabled together they made held-out forecasts WORSE
+# (mean error 8.80% vs 8.60%, two seeds; Conejos day 7 15.7% vs 14.9%): the
+# model gains nothing from past reservoir states, and what would matter --
+# the planned release schedule -- is not in RISE. Kept commented out for
+# reference; see docs/MODEL_DESIGN.md.
+# DWR:CONMOGCO, Platoro Reservoir, 6120, 6121
+# USGS:09180000, McPhee Reservoir, 569, 4342
+# USGS:09163500, Crystal Reservoir, 274, 4312
+# USGS:09163500, Blue Mesa Reservoir, 76,
+# USGS:09163500, Ruedi Reservoir, 711, 716
+# USGS:09114500, Taylor Park Reservoir, 793, 4309
+# DWR:ARKCANCO, Twin Lakes Reservoir, 818, 823
+# DWR:ARKCANCO, Turquoise Lake, 814, 817

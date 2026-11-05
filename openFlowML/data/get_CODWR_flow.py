@@ -68,6 +68,11 @@ def get_historical_data(abbrev, start_date, end_date):
             flow = float(value)
         except (ValueError, TypeError):
             continue
+        # Flow cannot be negative: DWR marks missing days with sentinels such
+        # as -999, which would otherwise enter the data as a real reading
+        # (and turn into NaN or garbage after the log transform).
+        if not flow >= 0:
+            continue
         rows.append((date, flow))
 
     if not rows:

@@ -10,7 +10,7 @@ import score_archive as sa
 ISSUED = pd.Timestamp('2026-11-02T03:00Z')     # Nov 1, 8 PM MST
 
 
-def _write_day(root, routing_shift_h=0, nws=True):
+def _write_day(root, routing_shift_h=0, nws=True, ml_range=None):
     d = os.path.join(root, 'archive', '2026-11-02')
     os.makedirs(d, exist_ok=True)
     t = pd.date_range(ISSUED - pd.Timedelta(days=1), ISSUED + pd.Timedelta(days=6), freq='1h')
@@ -20,7 +20,9 @@ def _write_day(root, routing_shift_h=0, nws=True):
                   'forecast_cfs': shape(routing_shift_h),
                   'nws_official_cfs': shape(0) * 1.1 if nws else np.nan}).to_csv(
         os.path.join(d, 'taos-box_forecast.csv'), index=False)
-    ml = [{'date': str(day.date()), 'min_cfs': 600, 'max_cfs': 800}
+    ml = [{'date': str(day.date()), 'min_cfs': 600, 'max_cfs': 800,
+           **({} if ml_range is None else {'min_q05_cfs': ml_range[0], 'max_q05_cfs': ml_range[0],
+                                            'min_q95_cfs': ml_range[1], 'max_q95_cfs': ml_range[1]})}
           for day in pd.date_range('2026-11-02', periods=6)]
     with open(os.path.join(d, 'taos-box_forecast.json'), 'w') as f:
         json.dump({'site_id': 'USGS:08276500', 'timezone': 'America/Denver',
@@ -46,3 +48,25 @@ def test_scores_daily_errors_and_crest_timing_per_source(tmp_path):
 
 def test_summarize_handles_an_empty_archive():
     assert 'No archived forecasts' in sa.summarize(pd.DataFrame())
+
+
+def test_scores_whether_the_ml_range_held_each_day(tmp_path):
+    obs = _write_day(str(tmp_path), ml_range=(400, 1000))   # holds the ~500-cfs days only
+    fc = sa.load_archive(str(tmp_path))[0]
+    assert list(fc['ml_range'].columns) == ['lo', 'hi'] and len(fc['ml_range']) == 6
+    rows = pd.DataFrame(sa.score_one(fc, obs))
+    held = rows[rows.kind == 'range'].set_index('lead_day')['inside']
+    assert held.index.tolist() == [1, 2, 3, 4, 5]
+    # Daily means: Nov 2 502, Nov 3 1,117 (rising to the Nov 4 crest), Nov 4 2,825, Nov 5 689.
+    assert held.tolist() == [1.0, 0.0, 0.0, 1.0, 1.0]
+    md = sa.summarize(rows)
+    assert 'ML 90% range held the day' in md and '| share of days | 100% | 0% |' in md
+
+
+def test_archives_without_an_ml_range_score_as_before(tmp_path):
+    obs = _write_day(str(tmp_path))
+    fc = sa.load_archive(str(tmp_path))[0]
+    assert fc['ml_range'].empty
+    rows = pd.DataFrame(sa.score_one(fc, obs))
+    assert 'range' not in set(rows.kind)
+    assert 'ML 90% range' not in sa.summarize(rows)

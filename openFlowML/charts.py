@@ -336,22 +336,29 @@ def plot_hindcast(out_path: str, *, title: str, history_dates: Sequence,
                   history_flow: Sequence[float], future_dates: Sequence,
                   observed_min: Sequence[float], observed_max: Sequence[float],
                   predicted_min: Sequence[float], predicted_max: Sequence[float],
-                  subtitle: Optional[str] = None, footnote: Optional[str] = None) -> dict:
+                  subtitle: Optional[str] = None, footnote: Optional[str] = None,
+                  range_low: Optional[Sequence[float]] = None,
+                  range_high: Optional[Sequence[float]] = None,
+                  band_label: str = 'Model daily min–max') -> dict:
     """
     Daily ML hindcast chart: encoder-window history + observed truth over the
     forecast window (daily midpoint of Min/Max Flow) against the model's
     predicted daily range (band) and midpoint (dashed), with the forecast
-    peak called out. The "Now" line marks the forecast issue day.
+    peak called out. The "Now" line marks the forecast issue day. With
+    range_low / range_high (the probabilistic band) those bound the shading.
     """
     hist_t = pd.DatetimeIndex(pd.to_datetime(history_dates))
     fut_t = pd.DatetimeIndex(pd.to_datetime(future_dates))
     obs_mid = (np.asarray(observed_min, float) + np.asarray(observed_max, float)) / 2
     p_lo = np.asarray(predicted_min, float)
     p_hi = np.asarray(predicted_max, float)
+    central = (p_lo + p_hi) / 2
+    if range_low is not None and range_high is not None:
+        p_lo, p_hi = np.asarray(range_low, float), np.asarray(range_high, float)
     return plot_forecast(
         out_path, title=title, subtitle=subtitle, footnote=footnote,
         obs_times=hist_t.append(fut_t),
         obs_values=np.concatenate([np.asarray(history_flow, float), obs_mid]),
-        fc_times=fut_t, fc_central=(p_lo + p_hi) / 2, fc_low=p_lo, fc_high=p_hi,
+        fc_times=fut_t, fc_central=central, fc_low=p_lo, fc_high=p_hi,
         now=hist_t[-1], obs_label='Observed (daily mean of min/max)',
-        fc_label='Model forecast (midpoint)', band_label='Model daily min–max')
+        fc_label='Model forecast (midpoint)', band_label=band_label)
