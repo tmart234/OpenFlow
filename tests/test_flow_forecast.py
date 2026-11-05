@@ -462,3 +462,33 @@ def test_ml_overlay_skips_the_issue_day(tmp_path, fake_nwps, monkeypatch):
     drawn = pd.to_datetime(pd.Series(seen['ml']['dates']))
     assert s['ml']['daily'][0]['date'] == str(issue_day.date())    # the summary keeps the issue day
     assert drawn.min() == issue_day + pd.Timedelta(days=1)          # the chart starts the day after
+
+
+def _anchor_wave(lag_a, lag_c, n=400, inow=300):
+    t = np.arange(n, dtype=float)
+    a = 200 + 2800 * np.exp(-0.5 * ((t - 250) / 14.0) ** 2)
+    c = 700 + 2500 * np.exp(-0.5 * ((t - 200) / 10.0) ** 2)
+    cfg = {'anchor': {'nws_lid': 'LOBC2', 'lag_hours': 12},
+           'upstream': [{'nws_lid': 'ALAC2', 'lag_hours': 30, 'to_anchor': {'lag_hours': 24, 'k_hours': 12, 'weight': 1.05}},
+                        {'nws_lid': 'MOGC2', 'lag_hours': 30, 'to_anchor': {'lag_hours': 21, 'k_hours': 72, 'weight': 0.83}}]}
+    obs = (1.05 * routing.route(a, lag_a, 12) + 0.83 * routing.route(c, lag_c, 72) - 150)
+    obs[inow + 1:] = np.nan
+    return cfg, obs, [a, c], inow
+
+
+def test_fit_anchor_supply_finds_the_faster_travel_time():
+    # Nov 2026: Alamosa -> Lobatos took ~12 h with the ditches off, not the 24 h
+    # fitted in irrigation season.
+    cfg, obs, ins, inow = _anchor_wave(12, 15)
+    fit = flow_forecast.fit_anchor_supply(cfg, obs, ins, inow)
+    assert fit is not None and fit['rmse'] < fit['registry_rmse']
+    assert [p[0] for p in fit['params']] == [12, 15]
+    assert [p[1:] for p in fit['params']] == [(12.0, 1.05), (72.0, 0.83)]   # K and weight kept
+
+
+def test_fit_anchor_supply_keeps_the_registry_without_a_wave():
+    cfg, obs, ins, inow = _anchor_wave(12, 15)
+    flat = np.where(np.isfinite(obs), 900.0, np.nan)
+    assert flow_forecast.fit_anchor_supply(cfg, flat, ins, inow) is None
+    cfg, obs, ins, inow = _anchor_wave(24, 21)                          # registry already right
+    assert flow_forecast.fit_anchor_supply(cfg, obs, ins, inow) is None

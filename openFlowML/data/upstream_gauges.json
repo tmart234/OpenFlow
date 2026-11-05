@@ -71,7 +71,9 @@
       "lag_days": 1,
       "weight": 1.0,
       "lag_hours": 12,
-      "k_hours": 12
+      "k_hours": 12,
+      "refit_to_anchor": true,
+      "_refit_doc": "Routing CLI: each run refits the Alamosa/Mogote -> Lobatos lags (to_anchor.lag_hours; K and weight kept) on Lobatos' last 5 days when they hold a wave (flow_forecast.fit_anchor_supply). The valley's travel time changes with the ditches: 24 h in the Oct 2026 flood (irrigation season), ~12 h in the Nov 2026 flood. Checked on Oct 2026 replays: crest error +359 -> +33 cfs at the earliest issue, no replay worse by more than 25 cfs."
     },
     "routing": {
       "_doc": "Hourly routing CLI only (flow_forecast.py, crest_backtest.py); the ML model keeps `anchor` (Lobatos, daily). The Rio Grande near Cerro crests a median 11 h before Taos Junction Bridge at ordinary flows (4-7 h above 1,000 cfs), and its rise is most of the Taos rise in nearly every flood, so the routing forecast routes Cerro, with a flow-dependent travel time (celerity) whose lag at q_ref is refitted each run. After Cerro's latest reading it continues with Lobatos (itself continued by Alamosa/Mogote) routed to Cerro's clock (from_anchor, flow-dependent, not refitted: a refit on the Oct 2026 flood put the Nov 3 rise ~6 h early). Nothing is diverted between them, so changes pass 1:1 (fixed_ratio). Tributaries entering below Cerro are added at full weight with their measured travel times (cross-correlation of hourly changes 2015-2026), not fitted.",

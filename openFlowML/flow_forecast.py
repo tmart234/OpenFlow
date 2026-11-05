@@ -32,6 +32,7 @@ drawn on the chart for comparison.
 """
 
 import argparse
+import itertools
 import json
 import logging
 import os
@@ -325,6 +326,68 @@ def anchor_supply(cfg: dict, upstream_inputs: Sequence[np.ndarray]) -> np.ndarra
     return out
 
 
+# Refit of the upstream -> anchor travel times (fit_anchor_supply).
+ANCHOR_REFIT_HOURS = 120
+ANCHOR_REFIT_MIN_RANGE_CFS = 500.0
+ANCHOR_REFIT_LAGS = tuple(range(6, 37, 3))
+
+
+def fit_anchor_supply(cfg: dict, anchor_obs: np.ndarray, upstream_inputs: Sequence[np.ndarray],
+                      inow: int, hours: int = ANCHOR_REFIT_HOURS) -> Optional[dict]:
+    """
+    The upstream -> anchor travel times (lag_hours per upstream gauge)
+    refitted by least squares on the anchor's last `hours` observed hours,
+    when that window holds a real wave at the anchor (range >=
+    ANCHOR_REFIT_MIN_RANGE_CFS); else None and the registry's to_anchor
+    lags stand. K and weight keep their registry values: a free fit on a
+    window that holds only a rise trades them off against the lag (on the
+    Oct 2026 flood it chose K 72 h at weight 1.95 for Alamosa and missed the
+    drop below 3,000 cfs by two days).
+
+    Travel through the San Luis Valley changes with the ditches. The Alamosa ->
+    Lobatos lag fitted on the Oct 2026 flood (irrigation season) was 24 h; the
+    Nov 2026 flood, with the ditches off, took about 12 h. Run with 24 h on
+    Nov 5, the routed supply still had ~1,000 cfs of rise to come that
+    Lobatos had already shown, so the continuation counted it twice: Lobatos
+    forecast to ~4,900 (a 5,900 cfs Taos crest) and a tail ~1,000 cfs too
+    high for days.
+
+    Returns {'supply', 'params': [(lag, k, weight), ...], 'rmse',
+    'registry_rmse'}; the fit is kept only when it beats the registry lags.
+    """
+    a = np.asarray(anchor_obs, dtype=float)
+    lo = max(0, inow - hours + 1)
+    win = np.arange(lo, inow + 1)
+    win = win[np.isfinite(a[win])]
+    if len(win) < hours // 2 or np.ptp(a[win]) < ANCHOR_REFIT_MIN_RANGE_CFS:
+        return None
+    a_lag = _lag_hours(cfg['anchor'])
+    prior = []
+    for g in cfg['upstream']:
+        to = g.get('to_anchor') or {}
+        prior.append((int(to.get('lag_hours', max(_lag_hours(g) - a_lag, 0))),
+                      float(to.get('k_hours', g.get('k_hours', 12))),
+                      float(to.get('weight', g.get('weight', 1.0)))))
+    xs = [np.asarray(x, dtype=float) for x in upstream_inputs]
+    lags = sorted(set(ANCHOR_REFIT_LAGS) | {p[0] for p in prior})
+    routed = {(i, lag): prior[i][2] * routing.route(x, lag, prior[i][1])
+              for i, x in enumerate(xs) for lag in lags}
+
+    def rmse(choice):
+        s_ = sum(routed[(i, lag)] for i, lag in enumerate(choice))[win]
+        r = a[win] - s_
+        return float(np.sqrt(np.mean((r - r.mean()) ** 2)))          # free intercept
+
+    base = rmse(tuple(p[0] for p in prior))
+    best = min(itertools.product(lags, repeat=len(xs)), key=rmse)
+    err = rmse(best)
+    if err >= base:
+        return None
+    return {'supply': sum(routed[(i, lag)] for i, lag in enumerate(best)), 'rmse': err,
+            'registry_rmse': base,
+            'params': [(int(lag), prior[i][1], prior[i][2]) for i, lag in enumerate(best)]}
+
+
 def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequence[np.ndarray],
                     anchor_obs: Optional[np.ndarray] = None, rain_flux: Optional[np.ndarray] = None,
                     rain_calib_mm: float = 0.0,
@@ -367,7 +430,13 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
     if cfg.get('anchor') and anchor_obs is not None and np.isfinite(anchor_obs[:inow + 1]).any():
         obs = np.asarray(anchor_obs, dtype=float).copy()
         obs[inow + 1:] = np.nan
-        values, anchor_info = routing.anchored_input(obs, supply, anchor_cfg=cfg['anchor'])
+        a_cfg, refit = cfg['anchor'], None
+        if a_cfg.get('refit_to_anchor'):
+            refit = fit_anchor_supply(cfg, obs, inputs, inow)
+        if refit is not None:
+            supply = refit['supply']
+        values, anchor_info = routing.anchored_input(obs, supply, anchor_cfg=a_cfg)
+        anchor_info['refit'] = refit and {k: refit[k] for k in ('params', 'rmse', 'registry_rmse')}
         gauges, inputs = [cfg['anchor']], [values]
     rcfg = cfg.get('routing') or {}
     # A station whose registry parameters were fitted on its historical floods
@@ -585,6 +654,9 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                                               'refitted': near_info['from_anchor_fitted']}
         if anchor_status is not None and anchor_info is not None:
             anchor_status['pass_through_ratio'] = round(anchor_info['ratio'], 3)
+            if anchor_info.get('refit'):
+                anchor_status['travel_hours_refit'] = {
+                    g.get('name', g['nws_lid']): p[0] for g, p in zip(cfg['upstream'], anchor_info['refit']['params'])}
     else:
         values, info = _target_only_forecast(target, grid, mode == 'nws')
         values[:inow + 1] = np.where(np.isfinite(tgt[:inow + 1]), tgt[:inow + 1], values[:inow + 1])
