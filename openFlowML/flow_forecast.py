@@ -671,7 +671,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         if mode == 'routing':
             up_names = ' + '.join(g.get('name', g['nws_lid']).split(',')[0] for g in cfg['upstream'])
             issued_txt = (f"issued {fmt_t(min(issued))}" if issued
-                          else 'no current upstream RFC forecast: observed upstream flow + recession')
+                          else 'no current RFC forecast upstream: observed flow, then recession')
             best = fits[0]
             how = (f"calibrated on the last {calib_days} days (RMSE ≈ {best.rmse:,.0f} cfs; "
                    f"lags {'/'.join(str(int(l)) for l in best.lags)} h)") if calibrated else \
@@ -682,8 +682,9 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                 near = rc['anchor']
                 tribs = (' + ' + ' + '.join(short_name(g).split(' below ')[0] for g in rc['tributaries']) + ' gauges'
                          if trib_inputs is not None else '')
-                after = (f"{place(cfg['anchor'])}, with {anchor_info['ratio']:.0%} of the change at {up_names} "
-                         f"getting past the ditches ({issued_txt})" if anchor_info is not None
+                after = (f"{place(cfg['anchor'])}, with {anchor_info['ratio']:.0%} of the change at "
+                         f"{' + '.join(place(g) for g in cfg['upstream'])} getting past the ditches ({issued_txt})"
+                         if anchor_info is not None
                          else f"{up_names} ({issued_txt})")
                 routed = (f"Routed from {short_name(near)} (~{_lag_hours(near)} h upstream){tribs}, {how}.\n"
                           f"After {place(near)}'s latest reading it follows {after}.\n")

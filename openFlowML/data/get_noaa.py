@@ -215,13 +215,14 @@ def get_station_metadata(noaa_station_id):
         return None
 
 def fetch_temperature_data(nearest_station_id, start_str, end_str):
-    temperature_data = {}
     metadata = get_station_metadata(nearest_station_id)
     logging.debug(metadata)
-    
+
     if not metadata:
+        # E.g. NCEI rate limiting (HTTP 429). An empty frame, like every other
+        # failure path here, so callers fall back (gridMET) instead of crashing.
         logging.error("Failed to fetch station metadata.")
-        return temperature_data
+        return pd.DataFrame()
 
     ncei_search_url = "https://www.ncei.noaa.gov/access/services/data/v1"
     ncei_search_params = {
@@ -287,7 +288,7 @@ def _realized_coverage_ok(df, fields, min_fraction):
     of TMIN. Without this gate the model trains on a column that's mostly NaN
     and gap-filled to 0, which silently destroys temperature signal.
     """
-    if df is None or df.empty:
+    if not isinstance(df, pd.DataFrame) or df.empty:
         return False
     n = len(df)
     for field in fields:

@@ -234,15 +234,20 @@ def plot_forecast(out_path: str, *,
         peak_info = {'peak_time': pt, 'peak_value': pv, 'callout': 'peak' if rising else 'end'}
 
     top = _nice_ceiling(ymax * 1.25)
+    data_top = top
+    drawn = []
     for name, value in sorted((thresholds or {}).items(), key=lambda kv: kv[1]):
-        # Only draw categories the forecast is getting near; far-away flood
-        # lines would squash the hydrograph.
-        if value <= top * 1.05:
+        # Only draw categories the flows are getting near; far-away flood
+        # lines would squash the hydrograph. Compared with the data's own
+        # axis top: drawing one line raises `top`, which must not let the
+        # next category in (that stretched a 5,000 cfs chart to 20,000).
+        if value <= data_top * 1.05:
             color = FLOOD.get(name, MUTED)
             ax.axhline(value, color=color, lw=1, ls=(0, (2, 2)), zorder=1)
             ax.text(1.0, value, f" {name.title()} {value:,.0f}", transform=ax.get_yaxis_transform(),
                     color=color, fontsize=8.5, va='center', ha='left', clip_on=False)
             top = max(top, _nice_ceiling(value * 1.1))
+            drawn.append(name)
 
     if now is not None:
         nt = _local_naive([now], tz)[0]
@@ -297,6 +302,7 @@ def plot_forecast(out_path: str, *,
     fig.tight_layout(rect=(0, bottom + 0.02, 1, 0.97), h_pad=0.4)
     fig.savefig(out_path, facecolor=SURFACE)
     plt.close(fig)
+    peak_info['thresholds_drawn'] = drawn
     return peak_info
 
 

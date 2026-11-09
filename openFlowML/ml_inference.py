@@ -37,6 +37,7 @@ import pandas as pd
 
 import combine_data
 import normalize_data
+import routing
 import windowing
 from data import get_basin_precip, get_CODWR_flow, get_flow, get_upstream, nwps
 from data.utils.get_coordinates import get_dwr_coordinates, get_usgs_coordinates
@@ -199,6 +200,38 @@ def splice_on_training_scale(archive: pd.Series, nwps_daily: pd.Series) -> pd.Se
     return pd.concat([archive, tail]).sort_index()
 
 
+def _nwps_daily_continued(payload: Optional[dict], last_day, tz: str, recession: bool = True) -> pd.Series:
+    """
+    One upstream gauge's daily means (local days) from NWPS: observations,
+    then the RFC forecast, then the routing recession (routing.build_input)
+    through last_day. Training always saw upstream_known_days of observed
+    upstream flow; RFCs often stop forecasting a gauge between floods (e.g.
+    Alamosa and Mogote on Nov 8 2026), and holding the last value marked
+    "unknown" from day 2 on is a pattern the model never saw -- its Taos
+    forecast then went flat at ~2,600 cfs while the river was receding.
+    The recession is the same one the routing forecast uses (5-day error
+    29% after floods vs 37% for holding the last value, routing.RECESSION_EXPONENT).
+    """
+    if not payload:
+        return pd.Series(dtype=float)
+    obs = nwps.hourly(nwps.parse_series(payload, 'observed')).dropna()
+    if obs.empty:
+        return pd.Series(dtype=float)
+    fc = nwps.hourly(nwps.parse_series(payload, 'forecast')).dropna()
+    if not recession:
+        h = pd.concat([obs, fc[fc.index > obs.index.max()]]).tz_convert(tz)
+        d = h.groupby(h.index.date).mean()
+        d.index = pd.DatetimeIndex(d.index)
+        return d
+    end = (pd.Timestamp(last_day).tz_localize(tz) + pd.Timedelta(days=1)).tz_convert('UTC')
+    grid = pd.date_range(obs.index.min().floor('h'), max(end, obs.index.max().ceil('h')), freq='1h')
+    values, _ = routing.build_input(grid, obs, fc if len(fc) else None)
+    h = pd.Series(values, index=grid).tz_convert(tz)
+    d = h.groupby(h.index.date).mean()
+    d.index = pd.DatetimeIndex(d.index)
+    return d[d.index <= pd.Timestamp(last_day)]
+
+
 def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
                      history_start) -> pd.DataFrame:
     """Routed upstream_flow + observed flag for `days` from observed daily means + RFC forecasts."""
@@ -211,16 +244,10 @@ def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
     for g in cfg['upstream'] + ([cfg['anchor']] if cfg.get('anchor') else []):
         hist = get_upstream.fetch_daily_mean(g['site_id'], history_start, days[-1])
         payload = nwps.get_stageflow(g['nws_lid']) if g.get('nws_lid') else None
-        nwps_daily = []
-        for kind in ('observed', 'forecast'):
-            h = nwps.hourly(nwps.parse_series(payload, kind)) if payload else pd.Series(dtype=float)
-            if len(h):
-                d = h.tz_convert(cfg.get('timezone', 'UTC'))
-                d = d.groupby(d.index.date).mean()
-                d.index = pd.DatetimeIndex(d.index)
-                nwps_daily.append(d)
-        nw = pd.concat(nwps_daily) if nwps_daily else pd.Series(dtype=float)
-        nw = nw[~nw.index.duplicated(keep='last')].sort_index()
+        # The anchor is not continued here: get_upstream.anchored_daily
+        # carries it on with the upstream gauges' change.
+        is_anchor = g is cfg.get('anchor')
+        nw = _nwps_daily_continued(payload, days[-1], cfg.get('timezone', 'UTC'), recession=not is_anchor)
         series[g['site_id']] = splice_on_training_scale(hist, nw)
     routed = get_upstream.routed_daily(series, cfg)
     out['upstream_flow'] = routed.reindex(days)

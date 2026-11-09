@@ -218,3 +218,25 @@ def test_splice_keeps_the_training_scale_and_rescales_nwps_days():
     assert out[days[15]] == pytest.approx(50.0)                  # NWPS rescaled by 0.5
     assert out[days[-1]] == pytest.approx(150.0)                 # the forecast rise keeps its shape
     assert ml_inference.splice_on_training_scale(pd.Series(dtype=float), nwps_days).equals(nwps_days)
+
+
+def _nwps_payload(times, flows, fc_times=(), fc_flows=()):
+    block = lambda ts, qs: {'data': [{'validTime': t.strftime('%Y-%m-%dT%H:%M:%SZ'), 'primary': 5.0,
+                                      'secondary': q / 1000.0} for t, q in zip(ts, qs)]}
+    return {'observed': block(times, flows), 'forecast': block(fc_times, fc_flows)}
+
+
+def test_upstream_without_rfc_forecast_recedes_through_the_decoder_days():
+    # A gauge falling after a flood, no RFC forecast (NWS stopped issuing):
+    # the daily series must reach the last decoder day, keep falling and
+    # stay above the pre-flood flow, instead of ending (-> "unknown", held).
+    t = pd.date_range('2026-10-20T00:00Z', '2026-11-08T23:00Z', freq='1h')
+    q = np.r_[np.full(len(t) - 120, 400.0), np.linspace(3000, 1200, 120)]
+    payload = _nwps_payload(t, q)
+    d = ml_inference._nwps_daily_continued(payload, pd.Timestamp('2026-11-15'), 'America/Denver')
+    assert d.index.max() == pd.Timestamp('2026-11-15')
+    tail = d.loc['2026-11-09':]
+    assert (np.diff(tail.to_numpy()) < 0).all() and tail.min() > 400.0
+    held = ml_inference._nwps_daily_continued(payload, pd.Timestamp('2026-11-15'), 'America/Denver',
+                                              recession=False)
+    assert held.index.max() == pd.Timestamp('2026-11-08')    # anchor: no continuation here

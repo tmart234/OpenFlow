@@ -44,7 +44,7 @@ def test_plot_forecast_without_forecast_has_no_peak(tmp_path):
     t = _hourly('2026-11-01T00:00Z', 48)
     info = charts.plot_forecast(str(tmp_path / 'o.png'), title='Obs only',
                                 obs_times=t, obs_values=np.full(48, 500.0))
-    assert info == {'peak_time': None, 'peak_value': None, 'callout': None}
+    assert info == {'peak_time': None, 'peak_value': None, 'callout': None, 'thresholds_drawn': []}
 
 
 def test_plot_hindcast_writes_png(tmp_path):
@@ -112,3 +112,16 @@ def test_ml_band_is_smooth_starts_at_the_observation_and_spans_the_days():
     assert lo.min() >= 1330 and hi.max() <= 3400                                     # PCHIP: no overshoot
     t1, lo1, hi1 = charts.ml_band(dates[:1], [5.0], [3.0])
     assert (lo1 == 3.0).all() and (hi1 == 5.0).all()
+
+
+def test_only_flood_lines_near_the_flows_are_drawn(tmp_path):
+    # A 5,100 cfs week: the action line (7,750) is near enough to show; minor
+    # (9,800) and moderate (15,000) must not be pulled in one after another.
+    obs_t = _hourly('2026-11-04T00:00Z', 120)
+    fc_t = _hourly('2026-11-09T00:00Z', 24 * 6)
+    obs = 2500 + 2600 * np.exp(-0.5 * ((np.arange(len(obs_t)) - 70) / 18.0) ** 2)
+    info = charts.plot_forecast(
+        str(tmp_path / 't.png'), title='Taos', obs_times=obs_t, obs_values=obs,
+        fc_times=fc_t, fc_central=np.linspace(2600, 1300, len(fc_t)), now=fc_t[0], tz='America/Denver',
+        thresholds={'action': 7750.0, 'minor': 9800.0, 'moderate': 15000.0})
+    assert info['thresholds_drawn'] == ['action']
