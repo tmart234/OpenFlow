@@ -1,0 +1,259 @@
+{
+  "site_id": "DWR:CONMOGCO",
+  "name": "Conejos River near Mogote, CO",
+  "reach": "Conejos River above Mogote",
+  "nws_lid": "MOGC2",
+  "usgs_id": "08246500",
+  "timezone": "America/Denver",
+  "mode": "recession",
+  "generated_utc": "2026-11-10T20:33:21Z",
+  "latest_observation": {
+    "time_utc": "2026-11-10T19:00:00+00:00",
+    "time_local": "2026-11-10T12:00:00-07:00",
+    "cfs": 683.0
+  },
+  "peak": {
+    "time_utc": "2026-11-10T20:00:00+00:00",
+    "time_local": "2026-11-10T13:00:00-07:00",
+    "cfs": 679,
+    "ahead": false,
+    "end_cfs": 299,
+    "band_low_cfs": null,
+    "band_high_cfs": null
+  },
+  "daily": [
+    {
+      "date": "2026-11-10",
+      "min_cfs": 637,
+      "mean_cfs": 660,
+      "max_cfs": 683,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    },
+    {
+      "date": "2026-11-11",
+      "min_cfs": 549,
+      "mean_cfs": 590,
+      "max_cfs": 633,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    },
+    {
+      "date": "2026-11-12",
+      "min_cfs": 478,
+      "mean_cfs": 511,
+      "max_cfs": 546,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    },
+    {
+      "date": "2026-11-13",
+      "min_cfs": 419,
+      "mean_cfs": 446,
+      "max_cfs": 475,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    },
+    {
+      "date": "2026-11-14",
+      "min_cfs": 371,
+      "mean_cfs": 394,
+      "max_cfs": 417,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    },
+    {
+      "date": "2026-11-15",
+      "min_cfs": 332,
+      "mean_cfs": 350,
+      "max_cfs": 370,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    },
+    {
+      "date": "2026-11-16",
+      "min_cfs": 300,
+      "mean_cfs": 315,
+      "max_cfs": 331,
+      "band_low_cfs": null,
+      "band_high_cfs": null
+    }
+  ],
+  "routing": null,
+  "anchor": null,
+  "routing_anchor": null,
+  "tributaries": [],
+  "nws_forecast_end_utc": null,
+  "upstream": [],
+  "context_gauges": [
+    {
+      "name": "Rio Grande near Del Norte, CO (neighbouring basin)",
+      "nws_lid": "DNRC2",
+      "latest_time_utc": "2026-11-10T19:00:00+00:00",
+      "latest_cfs": 1657.5,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 2.6775,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    }
+  ],
+  "nws_official_forecast_issued_utc": null,
+  "flood_thresholds_cfs": {},
+  "basin_rain": {
+    "zone_totals_mm": {
+      "past": {
+        "rain_local": 0.0,
+        "rain_mid": 0.0,
+        "rain_far": 0.0,
+        "snow_local": 1.0,
+        "snow_mid": 0.0,
+        "snow_far": 0.0
+      },
+      "next": {
+        "rain_local": 4.1,
+        "rain_mid": 0.0,
+        "rain_far": 0.0,
+        "snow_local": 14.6,
+        "snow_mid": 0.0,
+        "snow_far": 0.0
+      },
+      "past_through": "2026-11-09"
+    },
+    "ungauged_area_km2": 730.8,
+    "ungauged_rain_mm": {
+      "calibration_window": 170.1,
+      "past_7_days": 0.0,
+      "forecast": 1.5
+    },
+    "sources": [
+      "gridmet",
+      "stage4",
+      "nws"
+    ],
+    "missing_hours": 12,
+    "rain_term": "off",
+    "runoff_ratio": null
+  },
+  "ml": {
+    "version": "model-216",
+    "anchor": "2026-11-10",
+    "today": "2026-11-10",
+    "station_idx": 2,
+    "basin_idx": 2,
+    "trained_station": true,
+    "bridged_weather_days": [
+      "2026-11-09",
+      "2026-11-10"
+    ],
+    "weather_forecast_days": 14,
+    "upstream_known_days": 0,
+    "verified": {
+      "windows": 784,
+      "issued": [
+        "2024-09-01",
+        "2026-10-24"
+      ],
+      "leads": [
+        1,
+        3,
+        7
+      ],
+      "model_error_pct": [
+        4.83,
+        9.68,
+        14.54
+      ],
+      "persistence_error_pct": [
+        6.23,
+        14.43,
+        26.9
+      ],
+      "rise_peak_ratio": 0.763
+    },
+    "daily": [
+      {
+        "date": "2026-11-11",
+        "min_cfs": 652,
+        "max_cfs": 672,
+        "min_q05_cfs": 605,
+        "min_q25_cfs": 651,
+        "min_q75_cfs": 693,
+        "min_q95_cfs": 741,
+        "max_q05_cfs": 589,
+        "max_q25_cfs": 633,
+        "max_q75_cfs": 671,
+        "max_q95_cfs": 719
+      },
+      {
+        "date": "2026-11-12",
+        "min_cfs": 620,
+        "max_cfs": 641,
+        "min_q05_cfs": 554,
+        "min_q25_cfs": 614,
+        "min_q75_cfs": 669,
+        "min_q95_cfs": 735,
+        "max_q05_cfs": 537,
+        "max_q25_cfs": 593,
+        "max_q75_cfs": 646,
+        "max_q95_cfs": 710
+      },
+      {
+        "date": "2026-11-13",
+        "min_cfs": 587,
+        "max_cfs": 604,
+        "min_q05_cfs": 509,
+        "min_q25_cfs": 574,
+        "min_q75_cfs": 637,
+        "min_q95_cfs": 710,
+        "max_q05_cfs": 494,
+        "max_q25_cfs": 557,
+        "max_q75_cfs": 618,
+        "max_q95_cfs": 686
+      },
+      {
+        "date": "2026-11-14",
+        "min_cfs": 583,
+        "max_cfs": 588,
+        "min_q05_cfs": 474,
+        "min_q25_cfs": 549,
+        "min_q75_cfs": 631,
+        "min_q95_cfs": 727,
+        "max_q05_cfs": 470,
+        "max_q25_cfs": 544,
+        "max_q75_cfs": 625,
+        "max_q95_cfs": 721
+      },
+      {
+        "date": "2026-11-15",
+        "min_cfs": 540,
+        "max_cfs": 549,
+        "min_q05_cfs": 432,
+        "min_q25_cfs": 508,
+        "min_q75_cfs": 591,
+        "min_q95_cfs": 684,
+        "max_q05_cfs": 421,
+        "max_q25_cfs": 499,
+        "max_q75_cfs": 582,
+        "max_q95_cfs": 670
+      },
+      {
+        "date": "2026-11-16",
+        "min_cfs": 499,
+        "max_cfs": 502,
+        "min_q05_cfs": 386,
+        "min_q25_cfs": 461,
+        "min_q75_cfs": 543,
+        "min_q95_cfs": 632,
+        "max_q05_cfs": 386,
+        "max_q25_cfs": 460,
+        "max_q75_cfs": 539,
+        "max_q95_cfs": 619
+      }
+    ]
+  },
+  "files": {
+    "csv": "forecast_out/conejos_forecast.csv",
+    "json": "forecast_out/conejos_forecast.json",
+    "png": "forecast_out/conejos_forecast.png"
+  }
+}
