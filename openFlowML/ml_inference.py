@@ -476,10 +476,13 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
     forecast quantiles of the daily low and high, e.g. max_q05_cfs ..
     max_q95_cfs (the 0.5 quantile is min_cfs / max_cfs themselves).
     """
-    import model as model_mod
     pred = art['model'].predict(prepared['inputs'], verbose=0)
-    out = model_mod.point_forecast(pred)[0]
-    band = model_mod.band_forecast(pred)
+    if isinstance(pred, dict):
+        out = pred['persistence_plus_delta'][0]
+        band = pred.get('flow_quantiles')
+    else:
+        out = pred[0]
+        band = None
     tf_ = windowing.TARGET_FEATURES
     sc = art['scalers']
 

@@ -46,7 +46,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import charts  # noqa: E402
 import routing  # noqa: E402
-import ml_inference  # noqa: E402
 from data import basin_zones, get_basin_precip, get_upstream, nwps  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -690,6 +689,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
     ml_daily = None
     if model_dir or model_artifacts:
         try:
+            import ml_inference
             res = ml_inference.forecast(site_id, model_dir, art=model_artifacts)
             ml_daily = res['daily']
             ml_daily = ml_daily[(ml_daily['Date'] >= pd.Timestamp(daily.index[0]))

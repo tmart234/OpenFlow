@@ -64,11 +64,11 @@ def get_dwr_coordinates(abbrev):
     if not results:
         return None
     station = results[0]
-    latitude = station.get('latitude')
-    longitude = station.get('longitude')
-    if latitude is None or longitude is None:
+    y = station.get('latitude')
+    x = station.get('longitude')
+    if y is None or x is None:
         return None
-    return {'latitude': latitude, 'longitude': longitude}
+    return {'latitude': y, 'longitude': x}
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
@@ -82,7 +82,7 @@ def main():
     else:
         print("Invalid source. Use 'usgs' or 'dwr'.")
         sys.exit(1)
-    print(result)
+    sys.stdout.write(f"{result}\n")
 
 if __name__ == '__main__':
     main()
