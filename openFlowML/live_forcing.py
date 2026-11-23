@@ -90,8 +90,13 @@ def _request(pt: dict, start: str, end: str, cache: Optional[str]) -> dict:
             time.sleep(15 * (attempt + 1))
             continue
         if d.get('error'):
-            if 'limit' in str(d.get('reason', '')).lower():
-                raise RuntimeError(f"Open-Meteo: {d.get('reason')}")
+            reason = str(d.get('reason', ''))
+            if 'minutely' in reason.lower():
+                logger.warning("Open-Meteo minutely limit on %s %s; sleeping 65s", pt['site'], pt['kind'])
+                time.sleep(65)
+                continue
+            if 'limit' in reason.lower():
+                raise RuntimeError(f"Open-Meteo: {reason}")
             time.sleep(15 * (attempt + 1))           # "too many concurrent requests"
             continue
         if path:
@@ -276,7 +281,7 @@ def main(argv=None) -> int:
     import ml_inference
     art = ml_inference.load_artifacts(args.model_dir, with_model=True)
     data = pd.read_csv(os.path.join(args.data_dir, 'openFlowML', 'normalized_data.csv'), parse_dates=['Date'])
-    samples = windowing.build_windows(data)
+    samples = windowing.build_windows_for_config(data, art['training_config'], art['scalers'])
     if args.start:
         start = pd.Timestamp(args.start)
         samples = [s for s in samples

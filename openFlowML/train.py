@@ -212,21 +212,48 @@ def _concat_inputs(parts):
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
 
 
+def _train_fit_mask(raw: pd.DataFrame, val_frac: float = 0.15, test_frac: float = 0.15) -> np.ndarray:
+    """Boolean row mask covering only dates <= last target day of the training split."""
+    dates = pd.to_datetime(raw['Date'])
+    first = dates.min()
+    last_anchor = dates.max() - pd.Timedelta(days=ENCODER_DAYS + DECODER_DAYS - 1)
+    if pd.isna(first) or pd.isna(last_anchor) or last_anchor <= first:
+        return np.ones(len(raw), dtype=bool)
+    train_frac = 1.0 - val_frac - test_frac
+    train_anchor_end = first + pd.Timedelta(days=int((last_anchor - first).days * train_frac))
+    # Any validation window starts >= train_anchor_end + DECODER_DAYS, so its
+    # first target day is >= train_anchor_end + ENCODER_DAYS + DECODER_DAYS.
+    cutoff = train_anchor_end + pd.Timedelta(days=ENCODER_DAYS + DECODER_DAYS - 1)
+    return (dates <= cutoff).to_numpy()
+
+
 def main():
     base_path = combine_data.get_base_path()
 
     # 1. Pull and normalize the data spine. (Combine_data is responsible for
     #    fetch + daily indexing + gap handling + SWE wiring + HUC8 tagging;
-    #    save_combined_data inside combine_data writes the normalized CSV plus
-    #    scalers/station_index/basin_index JSON.)
+    #    save_combined_data inside combine_data writes the raw combined CSV plus
+    #    normalized CSV and scalers/station_index/basin_index JSON.)
     # OPENFLOW_REUSE_COMBINED=1 re-normalizes the combined CSV a previous run
     # wrote instead of re-fetching every source (model iteration; not for CI).
     cached = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
     if os.getenv('OPENFLOW_REUSE_COMBINED', '').strip() in ('1', 'true', 'True') and os.path.exists(cached):
         logger.info("Reusing %s (OPENFLOW_REUSE_COMBINED)", cached)
-        data = normalize_data.normalize_data(pd.read_csv(cached), artifacts_dir=base_path)
+        raw = pd.read_csv(cached)
+        data = normalize_data.normalize_data(raw, artifacts_dir=base_path, fit_mask=_train_fit_mask(raw))
+        if data is not None:
+            data.to_csv(os.path.join(base_path, 'openFlowML', 'normalized_data.csv'), index=False)
     else:
         data = combine_data.main()
+        if os.path.exists(cached):
+            # Refit scalers strictly on training-split dates so validation and
+            # test statistics cannot leak into normalization or quality_report.
+            raw = pd.read_csv(cached)
+            refit_norm = normalize_data.normalize_data(
+                raw, artifacts_dir=base_path, fit_mask=_train_fit_mask(raw))
+            if refit_norm is not None and not refit_norm.empty:
+                data = refit_norm
+                data.to_csv(os.path.join(base_path, 'openFlowML', 'normalized_data.csv'), index=False)
     if data is None or data.empty:
         raise ValueError("combine_data returned no usable data")
 
@@ -244,8 +271,16 @@ def main():
     if missing:
         raise ValueError(f"Normalized dataset is missing expected columns: {sorted(missing)}")
 
-    # 3. Build station-aware windows with no flow leakage in the decoder.
-    samples = windowing.build_windows(data, ENCODER_DAYS, DECODER_DAYS)
+    with open(os.path.join(base_path, 'scalers.json')) as f:
+        scalers = json.load(f)
+    with open(os.path.join(base_path, 'station_index.json')) as f:
+        station_index = json.load(f)
+    with open(os.path.join(base_path, 'basin_index.json')) as f:
+        basin_index = json.load(f)
+
+    # 3. Build station-aware windows with no flow leakage in the decoder,
+    #    using scalers for physically consistent mass-balance upstream_change.
+    samples = windowing.build_windows(data, ENCODER_DAYS, DECODER_DAYS, scalers=scalers)
     if not samples:
         raise ValueError("No usable training windows were produced from the dataset")
     logger.info("Built %d total windows across %d sites",
@@ -263,14 +298,6 @@ def main():
     val_inputs, val_targets = windowing.stack(splits.val)
     test_inputs, test_targets = windowing.stack(splits.test) if splits.test else (None, None)
 
-    # 5. Build the encoder-decoder. Vocabulary sizes come from the persisted
-    #    index files so the embedding indices line up with what inference will
-    #    look up.
-    with open(os.path.join(base_path, 'station_index.json')) as f:
-        station_index = json.load(f)
-    with open(os.path.join(base_path, 'basin_index.json')) as f:
-        basin_index = json.load(f)
-
     # 6. Fit an averaged ensemble of members (each early-stopped on val).
     train_w = sample_weights(train_inputs, train_targets)
     val_w = sample_weights(val_inputs, val_targets)
@@ -279,12 +306,15 @@ def main():
         (train_inputs, train_targets, train_w), (val_inputs, val_targets, val_w))
     net = model_mod.average_ensemble(members)
     logger.info("Ensemble of %d member(s)", len(members))
-    # Calibrate the band's spread per lead day on the validation windows
-    # (split-conformal; model.calibrate_band). Early stopping already used
-    # val, but only for the point forecast, which the band cannot move.
+    # Calibrate the band's spread per lead day (and per station) on the
+    # validation windows (split-conformal; model.calibrate_band). Early
+    # stopping already used val, but only for the point forecast, which the
+    # band cannot move.
     band_scale = None
+    band_station_scale = None
     if model_mod.has_band(net):
         band_scale = model_mod.calibrate_band(net, val_inputs, val_targets, QUANTILES)
+        band_station_scale = model_mod.get_band_station_scale(net)
         logger.info("Band calibration (daily max, lower / upper factor by lead day):\n%s",
                     np.round(band_scale[:, windowing.TARGET_FEATURES.index('Max Flow')], 2).T)
 
@@ -331,8 +361,6 @@ def main():
         for name in external_mae_per_h:
             logger.info("External baseline available: %s", name)
 
-        with open(os.path.join(base_path, 'scalers.json')) as f:
-            scalers = json.load(f)
         names = {sid: cfg.get('short_name') or cfg.get('name', sid)
                  for sid, cfg in get_upstream.load_registry().items()}
 
@@ -387,6 +415,8 @@ def main():
             # No held-out windows remain to calibrate on; the refit is the
             # same recipe, so it keeps the held-out run's calibration.
             model_mod.set_band_scale(refit, band_scale)
+            if band_station_scale is not None:
+                model_mod.set_band_station_scale(refit, band_station_scale)
         held_out = float(np.mean(_summarize_per_horizon(test_targets, model_pred)))
         in_sample = float(np.mean(_summarize_per_horizon(
             test_targets, model_mod.point_forecast(refit.predict(test_inputs, verbose=0)))))
@@ -422,7 +452,9 @@ def main():
         # windowing.upstream_decoder_window and docs/INFERENCE.md.
         'window_built_decoder_features': windowing.WINDOW_BUILT_DECODER_FEATURES,
         'upstream_known_days': {k: int(v) for k, v in known.items()},
+        'upstream_change_mode': 'mass_balance_hold',
         'upstream_registry': 'upstream_gauges.json',
+        'weather_source': combine_data.weather_source(),
         'basin_precip_known_days': windowing.BASIN_PRECIP_KNOWN_DAYS,
         'basin_zones': 'basin_zones.json',
         'event_weight': EVENT_WEIGHT,
@@ -436,6 +468,7 @@ def main():
         'outputs': [model_mod.POINT_OUTPUT] + ([model_mod.QUANTILE_OUTPUT] if band_scale is not None else []),
         'quantiles': list(QUANTILES) if band_scale is not None else None,
         'band_calibration': band_scale.round(4).tolist() if band_scale is not None else None,
+        'band_station_calibration': band_station_scale is not None,
         'ensemble_size': len(members),
         'final_refit': refit_done,
         'training_years': int(os.getenv('OPENFLOW_TRAINING_YEARS', '') or combine_data.TRAINING_YEARS),

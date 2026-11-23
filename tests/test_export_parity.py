@@ -207,6 +207,10 @@ def test_band_model_exports_both_outputs(tmp_path):
             upstream_change_index=windowing.DECODER_FEATURES.index('upstream_change'))
     net = model_mod.average_ensemble([member(), member()])
     model_mod.set_band_scale(net, np.full((windowing.DECODER_DAYS, 2, 2), 1.5, 'float32'))
+    st_mult = np.ones((4, windowing.DECODER_DAYS * 2 * 2), 'float32')
+    st_mult[1] = 1.25
+    st_mult[2] = 0.75
+    model_mod.set_band_station_scale(net, st_mult)
     net.save(os.path.join(base_path, 'lstm_model.h5'))
     _write_training_config(base_path)
     _seed_index_files(base_path)

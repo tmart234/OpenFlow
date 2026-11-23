@@ -59,8 +59,11 @@ def climatology_baseline(df):
     for col in FLOW_COLUMNS:
         errors = []
         for _, station in df.groupby('site_id'):
-            doy_mean = station.groupby('doy')[col].transform('mean').to_numpy(float)
             actual = station[col].to_numpy(float)
+            doy_sum = station.groupby('doy')[col].transform('sum').to_numpy(float)
+            doy_cnt = station.groupby('doy')[col].transform('count').to_numpy(float)
+            # Leave-one-out DOY mean avoids leaking the evaluated day into its own baseline.
+            doy_mean = np.where(doy_cnt > 1, (doy_sum - actual) / np.maximum(doy_cnt - 1, 1.0), actual)
             errors.append(np.abs(actual - doy_mean))
         result[col] = float(np.concatenate(errors).mean()) if errors else float('nan')
     return result

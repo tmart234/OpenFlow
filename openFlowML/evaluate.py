@@ -302,8 +302,8 @@ def main(argv=None):
     art = ml_inference.load_artifacts(args.base_path, with_model=True)
     data = pd.read_csv(os.path.join(args.base_path, 'openFlowML', 'normalized_data.csv'),
                        parse_dates=['Date'])
-    split = windowing.chronological_split(windowing.build_windows(data), 0.15, 0.15,
-                                          windowing.DECODER_DAYS)
+    samples = windowing.build_windows_for_config(data, art['training_config'], art['scalers'])
+    split = windowing.chronological_split(samples, 0.15, 0.15, windowing.DECODER_DAYS)
     x, _ = windowing.stack(split.test)
     pred = art['model'].predict(x, verbose=0, batch_size=512)
     quantiles = art['training_config'].get('quantiles')

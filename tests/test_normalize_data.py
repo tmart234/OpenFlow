@@ -1,6 +1,7 @@
 import json
 import numpy as np
 import pandas as pd
+import pytest
 
 import normalize_data
 
@@ -302,3 +303,17 @@ def test_normalize_scales_basin_precip_on_observed_rows(tmp_path):
         assert abs(out[out['site_id'] == 'USGS:A'][c].mean()) < 1e-6
         assert (out[out['site_id'] == 'DWR:B'][c] == 0.0).all()
     assert 'basin_precip_observed' not in scalers
+
+
+def test_normalize_fit_mask_excludes_held_out_rows_from_scalers(tmp_path):
+    df = _make_combined()
+    # First 10 rows have TMAX ~ 100; last 10 rows have extreme held-out values ~ 900.
+    df['TMAX'] = [100.0 + i for i in range(10)] + [900.0 + i for i in range(10)]
+    mask = np.array([True] * 10 + [False] * 10)
+    out = normalize_data.normalize_data(df, artifacts_dir=str(tmp_path), fit_mask=mask)
+    assert out is not None and '_fit_row' not in out.columns
+    scalers = json.loads((tmp_path / 'scalers.json').read_text())
+    assert scalers['TMAX']['mean'] == pytest.approx(104.5, abs=1e-6)
+    # Training rows are zero-mean; held-out rows sit far above 0.
+    assert abs(out['TMAX'].iloc[:10].mean()) < 1e-6
+    assert out['TMAX'].iloc[10:].mean() > 100.0
