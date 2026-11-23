@@ -135,19 +135,18 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
                 combined[col] = float('nan')
             combined[col] = pd.to_numeric(combined[col], errors='coerce')
 
-        # Time-aware interpolation of short interior gaps only (limit_area
-        # 'inside' means no edge extrapolation). `combined` is a single station,
-        # so this interpolation never bleeds across station boundaries. We
-        # interpolate the core flow/temp columns at MAX_GAP_DAYS and handle
-        # precipitation separately just below with a much shorter limit
-        # (interpolation across a missed storm day is misleading).
-        combined[CORE_COLUMNS] = combined[CORE_COLUMNS].interpolate(
-            method='time', limit=MAX_GAP_DAYS, limit_area='inside')
+        # Whole-gap interpolation of short interior gaps only (<= MAX_GAP_DAYS):
+        # unlike pandas' limit=n, a long outage (e.g. winter ice) stays entirely
+        # missing instead of getting MAX_GAP_DAYS fake linear-ramp days at its
+        # start. `combined` is a single station, so interpolation never bleeds
+        # across station boundaries.
+        for col in CORE_COLUMNS:
+            combined[col] = get_upstream.interpolate_short_gaps(combined[col], MAX_GAP_DAYS)
         if 'precipitation' in combined.columns:
             combined['precipitation'] = pd.to_numeric(
                 combined['precipitation'], errors='coerce')
-            combined['precipitation'] = combined['precipitation'].interpolate(
-                method='time', limit=MAX_PRECIP_GAP_DAYS, limit_area='inside')
+            combined['precipitation'] = get_upstream.interpolate_short_gaps(
+                combined['precipitation'], MAX_PRECIP_GAP_DAYS)
 
         # SWE: separate, slow-varying series; longer interpolation limit.
         if swe_data is not None and not swe_data.empty:
@@ -361,22 +360,35 @@ def fill_weather_gaps(noaa_data, grid_data):
     return out.reset_index(), filled
 
 
+DEFAULT_WEATHER_SOURCE = 'gridmet'
+
+
+def weather_source(override=None) -> str:
+    """Weather source for point TMIN/TMAX/precipitation: 'gridmet' (default) or 'noaa'."""
+    raw = override if override is not None else os.getenv('OPENFLOW_WEATHER_SOURCE', '')
+    src = (raw or DEFAULT_WEATHER_SOURCE).strip().lower()
+    return src if src in ('gridmet', 'noaa') else DEFAULT_WEATHER_SOURCE
+
+
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None,
-                           coords=None):
+                           coords=None, weather_source_override=None):
     """
     Resolve a site's coordinates and fetch all its auxiliary timeseries:
-    NOAA temperature, NRCS SWE, SMAP soil moisture, USDM drought, USBR
-    reservoir storage + release, and the enclosing HUC8 basin id.
+    gauge-collocated weather (gridMET by default, or NOAA GHCND), NRCS SWE,
+    SMAP soil moisture, USDM drought, USBR reservoir storage + release, and
+    the enclosing HUC8 basin id.
 
     Returns a dict with keys:
       noaa_data, swe_data, sm_data, drought_data, reservoir_data,
       upstream_data, upstream_known_days, basin_precip_data, huc8
     Any data frame may be empty (auxiliary features degrade gracefully; only
-    missing NOAA causes the caller to skip the site). huc8 may be None.
+    missing weather causes the caller to skip the site). huc8 may be None.
 
     Per-source env vars short-circuit the corresponding fetch to empty for
     ablation runs:
       OPENFLOW_DISABLE_SMAP, OPENFLOW_DISABLE_DROUGHT, OPENFLOW_DISABLE_RESERVOIR
+    Set OPENFLOW_WEATHER_SOURCE=noaa (or pass weather_source_override='noaa')
+    to use the legacy nearest-GHCND-station + gridMET-gap-fill weather path.
     """
     if coords is not None:   # caller already resolved them (saves a flaky second lookup)
         coords_dict = {'latitude': coords['lat'], 'longitude': coords['lon']}
@@ -397,27 +409,42 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
     # get_noaa.main expects date strings, not datetime objects.
     start_str = start_date.strftime('%Y-%m-%d')
     end_str = end_date.strftime('%Y-%m-%d')
-    closest_noaa_station, noaa_data = get_noaa.main(latitude, longitude, start_str, end_str)
+    wx_source = weather_source(weather_source_override)
+    noaa_data = pd.DataFrame()
 
-    if (noaa_data is None or noaa_data.empty) and noaa_fallback is not None:
-        # Inference over a short recent window: no nearby GHCND station may
-        # pass the coverage gate even though one did over the training years.
-        logger.info("No NOAA station for %s; using fallback weather", site_id)
-        noaa_data = noaa_fallback(latitude, longitude, start_date, end_date)
-
-    # Station outages (a GHCND station that stops reporting) otherwise drop
-    # every day without temperature from training; fill them from gridMET.
-    if not _disabled('OPENFLOW_DISABLE_WEATHER_FILL'):
+    if wx_source == 'gridmet' and not _disabled('OPENFLOW_DISABLE_WEATHER_FILL'):
+        # Collocated 4-km gridMET at the gauge coordinates eliminates elevation
+        # offsets between distant GHCND stations and live gauge-point forecasts
+        # (Open-Meteo / NWS gridpoints).
         try:
             grid = get_basin_precip.gridmet_point_weather(latitude, longitude, start_date, end_date)
-            noaa_data, n_filled = fill_weather_gaps(noaa_data, grid)
-            if n_filled:
-                logger.info("Filled %d NOAA weather days for %s from gridMET", n_filled, site_id)
+            if grid is not None and not grid.empty:
+                noaa_data = grid
         except Exception as e:
-            logger.warning("gridMET weather gap fill skipped for %s: %s", site_id, e)
+            logger.warning("gridMET primary weather failed for %s (%s); falling back to NOAA", site_id, e)
 
     if noaa_data is None or noaa_data.empty:
-        logger.warning(f"No NOAA data available for site ID {site_id}. Skipping...")
+        _, noaa_data = get_noaa.main(latitude, longitude, start_str, end_str)
+
+        if (noaa_data is None or noaa_data.empty) and noaa_fallback is not None:
+            # Inference over a short recent window: no nearby GHCND station may
+            # pass the coverage gate even though one did over the training years.
+            logger.info("No NOAA station for %s; using fallback weather", site_id)
+            noaa_data = noaa_fallback(latitude, longitude, start_date, end_date)
+
+        # Station outages (a GHCND station that stops reporting) otherwise drop
+        # every day without temperature from training; fill them from gridMET.
+        if wx_source == 'noaa' and not _disabled('OPENFLOW_DISABLE_WEATHER_FILL'):
+            try:
+                grid = get_basin_precip.gridmet_point_weather(latitude, longitude, start_date, end_date)
+                noaa_data, n_filled = fill_weather_gaps(noaa_data, grid)
+                if n_filled:
+                    logger.info("Filled %d NOAA weather days for %s from gridMET", n_filled, site_id)
+            except Exception as e:
+                logger.warning("gridMET weather gap fill skipped for %s: %s", site_id, e)
+
+    if noaa_data is None or noaa_data.empty:
+        logger.warning(f"No weather data available for site ID {site_id}. Skipping...")
         return None
 
     noaa_data = noaa_data.copy()

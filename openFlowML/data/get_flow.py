@@ -31,6 +31,9 @@ def _parse_rdb_flow(text):
             # Header / format-spec row, missing value, or a non-numeric
             # qualifier in the value column -- skip it.
             continue
+        if not (flow >= 0):
+            # USGS uses negative sentinels (e.g. -999999) for ice/equipment outages.
+            continue
         rows.append((dt.strftime("%Y-%m-%d"), flow))
     return rows
 

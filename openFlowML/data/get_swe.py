@@ -75,7 +75,11 @@ def get_snotel_station_triplets(huc_id, active_only=True):
         stations = response.json()
     except ValueError:
         return []
-    return [s["stationTriplet"] for s in stations if s.get("stationTriplet")]
+    triplets = [s["stationTriplet"] for s in stations if s.get("stationTriplet")]
+    # Prefer automated daily SNOTEL (:SNTL) stations over manual monthly snow
+    # courses (:SNOW) when daily stations exist, preventing 1st-of-month spikes.
+    sntl = [t for t in triplets if ':SNTL' in t]
+    return sntl if sntl else triplets
 
 
 def get_swe_timeseries(station_triplets, start_date, end_date):
@@ -125,18 +129,32 @@ def get_swe(lat, lon, start_date, end_date, huc_level=8):
     """
     End-to-end SWE lookup for a point: lat/lon -> HUC -> SNOTEL triplets -> WTEQ.
 
+    When the gauge's own HUC8 sits in a lower-elevation canyon/valley with no
+    SNOTEL stations (e.g. Royal Gorge 11020002, Dolores near Cisco 14030004),
+    falls back to the enclosing HUC6 basin so upstream headwaters snowpack is
+    captured rather than defaulting to zero.
+
     Returns a DataFrame with columns [Date, SWE]. Empty if no HUC is found, no
-    SNOTEL stations report WTEQ in that HUC, or AWDB returns nothing.
+    SNOTEL stations report WTEQ in that HUC (or its HUC6 fallback), or AWDB
+    returns nothing.
     """
     huc_id = get_huc_id(lat, lon, huc_level)
     if not huc_id:
         logger.warning("Could not resolve HUC%d for (%s, %s)", huc_level, lat, lon)
         return pd.DataFrame(columns=['Date', 'SWE'])
     triplets = get_snotel_station_triplets(huc_id)
+    used_huc = huc_id
+    if not triplets and len(str(huc_id)) > 6:
+        huc6 = str(huc_id)[:6]
+        triplets = get_snotel_station_triplets(huc6)
+        if triplets:
+            logger.info("No SNOTEL WTEQ stations in HUC %s; falling back to enclosing HUC6 %s (%d stations)",
+                        huc_id, huc6, len(triplets))
+            used_huc = huc6
     if not triplets:
         logger.warning("No SNOTEL WTEQ stations found in HUC %s", huc_id)
         return pd.DataFrame(columns=['Date', 'SWE'])
-    logger.info("HUC %s: averaging WTEQ across %d SNOTEL stations", huc_id, len(triplets))
+    logger.info("HUC %s: averaging WTEQ across %d SNOTEL stations", used_huc, len(triplets))
     return get_swe_timeseries(triplets, start_date, end_date)
 
 

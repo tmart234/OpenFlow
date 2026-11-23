@@ -112,3 +112,18 @@ def test_get_drought_tolerates_alternate_date_keys(mock_api, monkeypatch):
     df = get_drought.get_drought(40.0, -106.0, '2024-01-01', '2024-01-15')
     assert len(df) == 15
     assert df.set_index('Date').loc['2024-01-02', 'drought_index'] == 100.0
+
+
+def test_get_drought_reads_direct_dsci_field(mock_api, monkeypatch):
+    monkeypatch.setattr(get_drought.get_swe, 'get_huc_id', lambda *a, **kw: '14010001')
+    mock_api.get(
+        get_drought.USDM_URL,
+        json=[
+            {'MapDate': '2024-01-02T00:00:00', 'DSCI': 175},
+            {'MapDate': '2024-01-09T00:00:00', 'DSCI': 210},
+        ],
+    )
+    df = get_drought.get_drought(40.0, -106.0, '2024-01-01', '2024-01-15')
+    rows = df.set_index('Date')
+    assert rows.loc['2024-01-02', 'drought_index'] == 175.0
+    assert rows.loc['2024-01-15', 'drought_index'] == 210.0
