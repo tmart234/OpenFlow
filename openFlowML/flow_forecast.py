@@ -118,6 +118,46 @@ def _gauge_series_for(g: dict, grid: pd.DatetimeIndex) -> dict:
     return {'obs': obs, 'fc': pd.Series(dtype=float), 'issued': None, 'stage': pd.Series(dtype=float)}
 
 
+def _align_dwr_target(site_id: str, lid: str, target: dict) -> dict:
+    """
+    For CO DWR target sites, compare NWPS observations against authoritative
+    DWR hourly telemetry over their overlap. When NWPS carries a shifted rating
+    curve (e.g. MOGC2 reading +48% above DWR:CONMOGCO in Nov 2026), switch
+    target observations to DWR (with scaled NWPS top-up past DWR's last hour)
+    and rescale the NWPS forecast onto DWR's scale.
+    """
+    if not site_id.startswith('DWR:'):
+        return target
+    nwps_obs = target['obs'].dropna()
+    if nwps_obs.empty:
+        return target
+    try:
+        import crest_backtest
+        dwr = crest_backtest.dwr_hourly(
+            site_id.split(':', 1)[1],
+            nwps_obs.index.min().tz_convert(None) - pd.Timedelta(days=1),
+            nwps_obs.index.max().tz_convert(None) + pd.Timedelta(days=1),
+        ).dropna()
+    except Exception as e:
+        logger.debug("DWR hourly check skipped for %s: %s", site_id, e)
+        return target
+    if dwr.empty:
+        return target
+    both = pd.concat([dwr, nwps_obs], axis=1, keys=['dwr', 'nwps']).dropna()
+    both = both[(both['dwr'] > 0) & (both['nwps'] > 0)]
+    if len(both) < 24:
+        return target
+    ratio = float(np.median(both['dwr'] / both['nwps']))
+    if abs(ratio - 1.0) <= 0.05:
+        return target
+    logger.warning("DWR %s disagrees with NWPS %s (median DWR/NWPS=%.3f over %d h); aligning to DWR scale",
+                   site_id, lid, ratio, len(both))
+    tail = nwps_obs[nwps_obs.index > dwr.index.max()] * ratio
+    aligned_obs = pd.concat([dwr, tail]).sort_index()
+    aligned_fc = target['fc'] * ratio if len(target['fc']) else target['fc']
+    return {**target, 'obs': aligned_obs, 'fc': aligned_fc}
+
+
 def _gauge_label(g: dict) -> str:
     return g.get('nws_lid') or f"USGS {g.get('usgs_id')}"
 
@@ -435,10 +475,20 @@ def routed_forecast(cfg: dict, tgt: np.ndarray, inow: int, upstream_inputs: Sequ
         calibrated = False
         fits = _default_ensemble(gauges, tgt[:inow + 1], cal_inputs)
     if rain_mode == 'default':
+        r_lag = int(rain_cfg['lag_hours'])
+        r_k = float(rain_cfg['k_hours'])
+        r_coef = float(rain_cfg['runoff_ratio'])
+        routed_rain = routing.route(np.asarray(rain_flux[:inow + 1], dtype=float), r_lag, r_k)
+        rows = np.isfinite(tgt[:inow + 1])
+        rows[:min(routing.WARMUP_HOURS, len(rows))] = False
+        rain_mean = float(np.mean(routed_rain[rows])) if rows.any() else 0.0
         for f in fits:
-            f.lags.append(int(rain_cfg['lag_hours']))
-            f.ks.append(float(rain_cfg['k_hours']))
-            f.coefs.append(float(rain_cfg['runoff_ratio']))
+            f.lags.append(r_lag)
+            f.ks.append(r_k)
+            f.coefs.append(r_coef)
+            if f.celerity:
+                f.celerity = list(f.celerity) + [None]
+            f.intercept -= r_coef * rain_mean
     all_inputs = inputs + ([rain_flux] if rain_flux is not None else [])
     ef = routing.forecast(fits, all_inputs, tgt, inow, bias_tau_hours=bias_tau_hours)
     if trib is not None:
@@ -470,7 +520,7 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
     short = cfg.get('short_name', name)
     slug = (cfg.get('aliases') or [site_id.replace(':', '_')])[0]
 
-    target = _gauge_series(cfg['nws_lid'])
+    target = _align_dwr_target(site_id, cfg['nws_lid'], _gauge_series(cfg['nws_lid']))
     target_obs = target['obs'].dropna()
     if target_obs.empty:
         raise ForecastError(f"No recent observations at {cfg['nws_lid']}")
@@ -496,7 +546,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         s = _gauge_series(g['nws_lid'])
         if s['obs'].dropna().empty:
             raise ForecastError(f"No recent observations at upstream gauge {g['nws_lid']}")
-        values, info = routing.build_input(grid, s['obs'], s['fc'])
+        values, info = routing.build_input(grid, s['obs'], s['fc'],
+                                           max_tau_hours=routing.MAINSTEM_RECESSION_TAU_HOURS)
         inputs.append(values)
         st = _status(g['nws_lid'], s, g.get('name', g['nws_lid']))
         st['forecast_end_utc'] = info['forecast_end'].isoformat() if info['forecast_end'] is not None else None

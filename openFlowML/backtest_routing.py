@@ -37,21 +37,31 @@ TZ_OFFSETS = {'MST': '-07:00', 'MDT': '-06:00', 'PST': '-08:00', 'PDT': '-07:00'
               'CST': '-06:00', 'CDT': '-05:00'}
 
 
+from data.utils import data_utils
+
+
 def usgs_hourly(site: str, start, end) -> pd.Series:
     """Hourly-mean discharge (cfs, UTC index) from the USGS IV service, fetched by calendar year."""
     parts = []
     for y in range(pd.Timestamp(start).year, pd.Timestamp(end).year + 1):
         a = max(pd.Timestamp(start), pd.Timestamp(f'{y}-01-01'))
         b = min(pd.Timestamp(end), pd.Timestamp(f'{y}-12-31'))
-        r = requests.get(USGS_IV_URL, params={'sites': site, 'parameterCd': '00060', 'siteStatus': 'all',
-                                              'startDT': f'{a:%Y-%m-%d}', 'endDT': f'{b:%Y-%m-%d}',
-                                              'format': 'rdb'}, timeout=300)
-        r.raise_for_status()
+        r = data_utils.request_with_retry(
+            USGS_IV_URL,
+            params={'sites': site, 'parameterCd': '00060', 'siteStatus': 'all',
+                    'startDT': f'{a:%Y-%m-%d}', 'endDT': f'{b:%Y-%m-%d}',
+                    'format': 'rdb'},
+            timeout=300,
+        )
+        if r is None:
+            raise requests.RequestException(f"USGS IV request failed for {site} ({a:%Y-%m-%d}..{b:%Y-%m-%d})")
         rows = [l.split('\t') for l in r.text.splitlines() if l.startswith('USGS')]
         df = pd.DataFrame([(x[2], x[3], x[4]) for x in rows if len(x) > 4], columns=['t', 'tz', 'q'])
         if df.empty:
             continue
         df['q'] = pd.to_numeric(df['q'], errors='coerce')
+        # Drop USGS negative missing-value sentinels (e.g. -999999).
+        df.loc[df['q'] < 0, 'q'] = np.nan
         df['t'] = pd.to_datetime(df['t'] + df['tz'].map(TZ_OFFSETS).fillna('+00:00'), utc=True,
                                  format='%Y-%m-%d %H:%M%z')
         parts.append(df.set_index('t')['q'])

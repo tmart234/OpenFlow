@@ -69,7 +69,9 @@ def fake_nwps(monkeypatch):
         monkeypatch.setattr(get_basin_precip, 'nws_points_hourly',
                             lambda cfg: forecast_points or {})
         import backtest_routing
+        import crest_backtest
         monkeypatch.setattr(backtest_routing, 'usgs_hourly', lambda site, a, b: pd.Series(dtype=float))
+        monkeypatch.setattr(crest_backtest, 'dwr_hourly', lambda abbrev, a, b: pd.Series(dtype=float))
         monkeypatch.setattr(nwps, 'get_gauge', lambda lid: {'flood': {'categories': {
             'action': {'flow': 7750}, 'minor': {'flow': 9800}}}})
     return install
@@ -222,6 +224,18 @@ def test_station_with_nothing_current_falls_back_to_recession(tmp_path, fake_nwp
     assert not s['peak']['ahead']
     assert s['daily'][-1]['mean_cfs'] < s['latest_observation']['cfs']
     assert 'none ahead' in flow_forecast.format_summary(s)
+
+
+def test_dwr_target_aligns_shifted_nwps_rating_curve(tmp_path, fake_nwps, monkeypatch):
+    import crest_backtest
+    fake_nwps({'MOGC2': _conejos_payload(), 'DNRC2': _conejos_payload(False)})
+    obs_t = GRID[:INOW + 1]
+    nwps_flow = 800 + 2500 * np.exp(-0.5 * ((np.arange(len(obs_t)) - len(obs_t) + 3) / 10.0) ** 2)
+    # Authoritative DWR reads 0.67x of NWPS MOGC2 (reproducing the +48% Nov 2026 shift)
+    dwr_series = pd.Series(nwps_flow * 0.67, index=obs_t)
+    monkeypatch.setattr(crest_backtest, 'dwr_hourly', lambda abbrev, a, b: dwr_series)
+    s = flow_forecast.run('conejos', days=7, out_dir=str(tmp_path), make_chart=False)
+    assert s['peak']['cfs'] == pytest.approx(3400 * 0.67, rel=0.05)
 
 
 def test_rain_panel_is_opt_in(tmp_path, fake_nwps, monkeypatch):

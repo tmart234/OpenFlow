@@ -82,8 +82,9 @@ def dwr_hourly(abbrev: str, start, end) -> pd.Series:
             t = pd.DatetimeIndex(pd.to_datetime(df['measDate'])).tz_localize(
                 DWR_TZ, ambiguous='NaT', nonexistent='shift_forward').tz_convert('UTC')
             keep = ~t.isna()
-            parts.append(pd.Series(pd.to_numeric(df['measValue'], errors='coerce').to_numpy()[keep],
-                                   index=t[keep]))
+            vals = pd.to_numeric(df['measValue'], errors='coerce').to_numpy(dtype=float)
+            vals = np.where(vals < 0, np.nan, vals)
+            parts.append(pd.Series(vals[keep], index=t[keep]))
         if page >= int(j.get('PageCount', 1) or 1):
             break
         page += 1
