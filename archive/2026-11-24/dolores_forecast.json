@@ -6,77 +6,77 @@
   "usgs_id": "09180000",
   "timezone": "America/Denver",
   "mode": "routing",
-  "generated_utc": "2026-11-24T00:57:52Z",
+  "generated_utc": "2026-11-24T23:06:14Z",
   "latest_observation": {
-    "time_utc": "2026-11-23T23:00:00+00:00",
-    "time_local": "2026-11-23T16:00:00-07:00",
-    "cfs": 334.5
+    "time_utc": "2026-11-24T21:00:00+00:00",
+    "time_local": "2026-11-24T14:00:00-07:00",
+    "cfs": 352.0
   },
   "peak": {
-    "time_utc": "2026-11-24T10:00:00+00:00",
-    "time_local": "2026-11-24T03:00:00-07:00",
-    "cfs": 335,
+    "time_utc": "2026-11-24T22:00:00+00:00",
+    "time_local": "2026-11-24T15:00:00-07:00",
+    "cfs": 350,
     "ahead": false,
-    "end_cfs": 300,
-    "band_low_cfs": 234,
-    "band_high_cfs": 539
+    "end_cfs": 308,
+    "band_low_cfs": 341,
+    "band_high_cfs": 549
   },
   "daily": [
     {
-      "date": "2026-11-23",
-      "min_cfs": 332,
-      "mean_cfs": 334,
-      "max_cfs": 334,
-      "band_low_cfs": 269,
-      "band_high_cfs": 395
-    },
-    {
       "date": "2026-11-24",
-      "min_cfs": 332,
-      "mean_cfs": 334,
-      "max_cfs": 335,
-      "band_low_cfs": 115,
-      "band_high_cfs": 539
+      "min_cfs": 347,
+      "mean_cfs": 349,
+      "max_cfs": 352,
+      "band_low_cfs": 266,
+      "band_high_cfs": 425
     },
     {
       "date": "2026-11-25",
-      "min_cfs": 325,
-      "mean_cfs": 329,
-      "max_cfs": 332,
-      "band_low_cfs": 104,
-      "band_high_cfs": 538
+      "min_cfs": 341,
+      "mean_cfs": 344,
+      "max_cfs": 347,
+      "band_low_cfs": 125,
+      "band_high_cfs": 549
     },
     {
       "date": "2026-11-26",
-      "min_cfs": 319,
-      "mean_cfs": 322,
-      "max_cfs": 325,
-      "band_low_cfs": 95,
-      "band_high_cfs": 532
+      "min_cfs": 335,
+      "mean_cfs": 337,
+      "max_cfs": 340,
+      "band_low_cfs": 115,
+      "band_high_cfs": 547
     },
     {
       "date": "2026-11-27",
-      "min_cfs": 316,
-      "mean_cfs": 317,
-      "max_cfs": 318,
-      "band_low_cfs": 92,
-      "band_high_cfs": 527
+      "min_cfs": 334,
+      "mean_cfs": 335,
+      "max_cfs": 337,
+      "band_low_cfs": 113,
+      "band_high_cfs": 546
     },
     {
       "date": "2026-11-28",
-      "min_cfs": 310,
-      "mean_cfs": 313,
-      "max_cfs": 316,
-      "band_low_cfs": 85,
-      "band_high_cfs": 525
+      "min_cfs": 329,
+      "mean_cfs": 332,
+      "max_cfs": 335,
+      "band_low_cfs": 107,
+      "band_high_cfs": 544
     },
     {
       "date": "2026-11-29",
-      "min_cfs": 300,
-      "mean_cfs": 305,
-      "max_cfs": 309,
-      "band_low_cfs": 75,
-      "band_high_cfs": 518
+      "min_cfs": 319,
+      "mean_cfs": 324,
+      "max_cfs": 329,
+      "band_low_cfs": 97,
+      "band_high_cfs": 538
+    },
+    {
+      "date": "2026-11-30",
+      "min_cfs": 308,
+      "mean_cfs": 313,
+      "max_cfs": 319,
+      "band_low_cfs": 86,
+      "band_high_cfs": 527
     }
   ],
   "routing": {
@@ -95,12 +95,12 @@
           12.0
         ],
         "coefs": [
-          0.9130746721224874,
-          1.3455788855814705,
-          0.01840691162134369
+          0.9128408026856019,
+          1.3478297316454058,
+          0.01837544942022995
         ],
-        "intercept": -13.724418684465105,
-        "rmse": 198.4188384534056,
+        "intercept": -15.748845210273265,
+        "rmse": 198.6309396521874,
         "source": "calibrated",
         "timing_mae_hours": null
       },
@@ -116,12 +116,12 @@
           12.0
         ],
         "coefs": [
-          0.8720401251633895,
-          1.4792339265796306,
-          0.017735880333082547
+          0.8718924066662832,
+          1.4802627143437879,
+          0.017697098014924154
         ],
-        "intercept": -65.5034864342253,
-        "rmse": 201.37829750626494,
+        "intercept": -66.05381969838865,
+        "rmse": 201.4535977943192,
         "source": "calibrated",
         "timing_mae_hours": null
       },
@@ -137,12 +137,12 @@
           12.0
         ],
         "coefs": [
-          0.8472140735297268,
-          1.4890896870200223,
-          0.016430548424588937
+          0.8469807631942473,
+          1.4904465274258114,
+          0.016385036464503986
         ],
-        "intercept": -56.3324069530082,
-        "rmse": 205.91361087356708,
+        "intercept": -57.04683977606689,
+        "rmse": 206.01033712490434,
         "source": "calibrated",
         "timing_mae_hours": null
       },
@@ -158,12 +158,12 @@
           12.0
         ],
         "coefs": [
-          0.88581684750871,
-          1.357623395924438,
-          0.016964015442815387
+          0.8854613929719121,
+          1.3602674264777985,
+          0.01692254266947088
         ],
-        "intercept": -4.332461983871294,
-        "rmse": 206.6928680717808,
+        "intercept": -6.51669776522176,
+        "rmse": 206.95658215413937,
         "source": "calibrated",
         "timing_mae_hours": null
       },
@@ -179,12 +179,12 @@
           12.0
         ],
         "coefs": [
-          0.8670419410761296,
-          1.3888297809409458,
-          0.01610894666794321
+          0.8666687520063013,
+          1.3913604079206174,
+          0.016063061737005044
         ],
-        "intercept": -10.720548161791218,
-        "rmse": 212.63163816033563,
+        "intercept": -12.666605941864656,
+        "rmse": 212.86703773757532,
         "source": "calibrated",
         "timing_mae_hours": null
       }
@@ -199,21 +199,21 @@
     {
       "name": "Dolores River near Bedrock, CO",
       "nws_lid": "DBDC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 66.4,
-      "forecast_issued_utc": "2026-11-23T15:39:00+00:00",
-      "latest_stage_ft": 2.97,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 59.4,
+      "forecast_issued_utc": "2026-11-24T16:48:00+00:00",
+      "latest_stage_ft": 2.92,
       "forecast_peak_cfs": 66.4,
-      "forecast_peak_time_utc": "2026-11-23T13:00:00+00:00",
-      "forecast_end_utc": "2026-11-30T12:00:00+00:00"
+      "forecast_peak_time_utc": "2026-11-27T11:00:00+00:00",
+      "forecast_end_utc": "2026-12-01T12:00:00+00:00"
     },
     {
       "name": "San Miguel River at Uravan, CO",
       "nws_lid": "SMUC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 230.0,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 231.5,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 3.39,
+      "latest_stage_ft": 3.395,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null,
       "forecast_end_utc": null
@@ -223,77 +223,79 @@
     {
       "name": "Dolores River near Gateway, CO (section put-in)",
       "nws_lid": "DGAC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 322.0,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 349.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 7.91,
+      "latest_stage_ft": 8.0,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "San Miguel River near Placerville, CO",
       "nws_lid": "SMPC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 194.0,
-      "forecast_issued_utc": "2026-11-23T15:39:00+00:00",
-      "latest_stage_ft": 4.66,
-      "forecast_peak_cfs": 179.0,
-      "forecast_peak_time_utc": "2026-11-23T13:00:00+00:00"
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 174.5,
+      "forecast_issued_utc": "2026-11-24T16:48:00+00:00",
+      "latest_stage_ft": 4.585,
+      "forecast_peak_cfs": 173.0,
+      "forecast_peak_time_utc": "2026-11-24T13:00:00+00:00"
     }
   ],
-  "nws_official_forecast_issued_utc": "2026-11-23T15:39:00+00:00",
+  "nws_official_forecast_issued_utc": "2026-11-24T16:48:00+00:00",
   "flood_thresholds_cfs": {},
   "basin_rain": {
     "zone_totals_mm": {
       "past": {
-        "rain_local": 9.2,
-        "rain_mid": 5.9,
-        "rain_far": 3.8,
-        "snow_local": 2.9,
-        "snow_mid": 4.2,
-        "snow_far": 8.7
+        "rain_local": 2.5,
+        "rain_mid": 1.8,
+        "rain_far": 0.7,
+        "snow_local": 1.5,
+        "snow_mid": 4.7,
+        "snow_far": 6.5
       },
       "next": {
-        "rain_local": 0.4,
-        "rain_mid": 0.5,
-        "rain_far": 0.2,
-        "snow_local": 0.5,
-        "snow_mid": 0.2,
-        "snow_far": 1.2
+        "rain_local": 0.3,
+        "rain_mid": 0.2,
+        "rain_far": 0.0,
+        "snow_local": 0.3,
+        "snow_mid": 0.1,
+        "snow_far": 0.4
       },
-      "past_through": "2026-11-22"
+      "past_through": "2026-11-23"
     },
     "ungauged_area_km2": 2508.4,
     "ungauged_rain_mm": {
-      "calibration_window": 68.9,
-      "past_7_days": 9.8,
-      "forecast": 0.1
+      "calibration_window": 68.5,
+      "past_7_days": 3.1,
+      "forecast": 0.3
     },
     "sources": [
       "gridmet",
+      "stage4",
       "nws"
     ],
-    "missing_hours": 17,
+    "missing_hours": 14,
     "rain_term": "calibrated",
     "runoff_ratio": 0.018
   },
   "ml": {
-    "version": "model-218",
-    "anchor": "2026-11-23",
-    "today": "2026-11-23",
+    "version": "model-219",
+    "anchor": "2026-11-24",
+    "today": "2026-11-24",
     "station_idx": 7,
     "basin_idx": 7,
     "trained_station": true,
     "bridged_weather_days": [
-      "2026-11-23"
+      "2026-11-23",
+      "2026-11-24"
     ],
     "weather_forecast_days": 14,
     "upstream_known_days": 6,
     "verified": {
-      "windows": 776,
+      "windows": 784,
       "issued": [
-        "2024-09-23",
-        "2026-11-07"
+        "2024-09-16",
+        "2026-11-08"
       ],
       "leads": [
         1,
@@ -301,95 +303,95 @@
         7
       ],
       "model_error_pct": [
-        5.23,
-        7.78,
-        13.57
+        5.47,
+        8.45,
+        10.81
       ],
       "persistence_error_pct": [
-        8.49,
-        20.0,
-        32.54
+        8.63,
+        20.54,
+        32.69
       ],
-      "rise_peak_ratio": 0.831
+      "rise_peak_ratio": 0.793
     },
     "daily": [
       {
-        "date": "2026-11-24",
-        "min_cfs": 329,
-        "max_cfs": 367,
-        "min_q05_cfs": 295,
-        "min_q25_cfs": 320,
-        "min_q75_cfs": 339,
-        "min_q95_cfs": 367,
-        "max_q05_cfs": 332,
-        "max_q25_cfs": 355,
-        "max_q75_cfs": 378,
-        "max_q95_cfs": 409
-      },
-      {
         "date": "2026-11-25",
-        "min_cfs": 327,
-        "max_cfs": 364,
+        "min_cfs": 318,
+        "max_cfs": 366,
         "min_q05_cfs": 284,
-        "min_q25_cfs": 315,
-        "min_q75_cfs": 340,
-        "min_q95_cfs": 375,
+        "min_q25_cfs": 308,
+        "min_q75_cfs": 329,
+        "min_q95_cfs": 362,
         "max_q05_cfs": 320,
-        "max_q25_cfs": 350,
-        "max_q75_cfs": 380,
-        "max_q95_cfs": 418
-      },
-      {
-        "date": "2026-11-26",
-        "min_cfs": 326,
-        "max_cfs": 362,
-        "min_q05_cfs": 280,
-        "min_q25_cfs": 313,
-        "min_q75_cfs": 342,
-        "min_q95_cfs": 381,
-        "max_q05_cfs": 312,
-        "max_q25_cfs": 345,
+        "max_q25_cfs": 352,
         "max_q75_cfs": 379,
-        "max_q95_cfs": 420
-      },
-      {
-        "date": "2026-11-27",
-        "min_cfs": 324,
-        "max_cfs": 356,
-        "min_q05_cfs": 277,
-        "min_q25_cfs": 310,
-        "min_q75_cfs": 341,
-        "min_q95_cfs": 382,
-        "max_q05_cfs": 305,
-        "max_q25_cfs": 339,
-        "max_q75_cfs": 375,
-        "max_q95_cfs": 418
-      },
-      {
-        "date": "2026-11-28",
-        "min_cfs": 321,
-        "max_cfs": 350,
-        "min_q05_cfs": 272,
-        "min_q25_cfs": 307,
-        "min_q75_cfs": 339,
-        "min_q95_cfs": 383,
-        "max_q05_cfs": 295,
-        "max_q25_cfs": 331,
-        "max_q75_cfs": 370,
         "max_q95_cfs": 415
       },
       {
-        "date": "2026-11-29",
-        "min_cfs": 319,
-        "max_cfs": 346,
-        "min_q05_cfs": 265,
-        "min_q25_cfs": 302,
-        "min_q75_cfs": 339,
-        "min_q95_cfs": 387,
-        "max_q05_cfs": 285,
-        "max_q25_cfs": 324,
+        "date": "2026-11-26",
+        "min_cfs": 310,
+        "max_cfs": 353,
+        "min_q05_cfs": 263,
+        "min_q25_cfs": 296,
+        "min_q75_cfs": 324,
+        "min_q95_cfs": 364,
+        "max_q05_cfs": 298,
+        "max_q25_cfs": 337,
         "max_q75_cfs": 368,
-        "max_q95_cfs": 419
+        "max_q95_cfs": 409
+      },
+      {
+        "date": "2026-11-27",
+        "min_cfs": 305,
+        "max_cfs": 346,
+        "min_q05_cfs": 252,
+        "min_q25_cfs": 289,
+        "min_q75_cfs": 320,
+        "min_q95_cfs": 361,
+        "max_q05_cfs": 292,
+        "max_q25_cfs": 330,
+        "max_q75_cfs": 364,
+        "max_q95_cfs": 408
+      },
+      {
+        "date": "2026-11-28",
+        "min_cfs": 301,
+        "max_cfs": 340,
+        "min_q05_cfs": 250,
+        "min_q25_cfs": 286,
+        "min_q75_cfs": 318,
+        "min_q95_cfs": 361,
+        "max_q05_cfs": 286,
+        "max_q25_cfs": 324,
+        "max_q75_cfs": 358,
+        "max_q95_cfs": 403
+      },
+      {
+        "date": "2026-11-29",
+        "min_cfs": 298,
+        "max_cfs": 336,
+        "min_q05_cfs": 249,
+        "min_q25_cfs": 283,
+        "min_q75_cfs": 316,
+        "min_q95_cfs": 360,
+        "max_q05_cfs": 279,
+        "max_q25_cfs": 319,
+        "max_q75_cfs": 354,
+        "max_q95_cfs": 395
+      },
+      {
+        "date": "2026-11-30",
+        "min_cfs": 292,
+        "max_cfs": 328,
+        "min_q05_cfs": 239,
+        "min_q25_cfs": 276,
+        "min_q75_cfs": 310,
+        "min_q95_cfs": 356,
+        "max_q05_cfs": 272,
+        "max_q25_cfs": 311,
+        "max_q75_cfs": 347,
+        "max_q95_cfs": 393
       }
     ]
   },

@@ -6,77 +6,77 @@
   "usgs_id": "07096000",
   "timezone": "America/Denver",
   "mode": "routing",
-  "generated_utc": "2026-11-24T00:55:52Z",
+  "generated_utc": "2026-11-24T23:04:38Z",
   "latest_observation": {
-    "time_utc": "2026-11-24T00:00:00+00:00",
-    "time_local": "2026-11-23T17:00:00-07:00",
-    "cfs": 337.0
+    "time_utc": "2026-11-24T22:00:00+00:00",
+    "time_local": "2026-11-24T15:00:00-07:00",
+    "cfs": 352.0
   },
   "peak": {
-    "time_utc": "2026-11-27T21:00:00+00:00",
-    "time_local": "2026-11-27T14:00:00-07:00",
-    "cfs": 452,
+    "time_utc": "2026-11-25T18:00:00+00:00",
+    "time_local": "2026-11-25T11:00:00-07:00",
+    "cfs": 361,
     "ahead": true,
-    "end_cfs": 450,
-    "band_low_cfs": 333,
-    "band_high_cfs": 571
+    "end_cfs": 354,
+    "band_low_cfs": 239,
+    "band_high_cfs": 505
   },
   "daily": [
     {
-      "date": "2026-11-23",
-      "min_cfs": 337,
-      "mean_cfs": 348,
-      "max_cfs": 358,
-      "band_low_cfs": 327,
-      "band_high_cfs": 395
-    },
-    {
       "date": "2026-11-24",
-      "min_cfs": 361,
-      "mean_cfs": 399,
-      "max_cfs": 426,
-      "band_low_cfs": 293,
-      "band_high_cfs": 542
+      "min_cfs": 352,
+      "mean_cfs": 356,
+      "max_cfs": 359,
+      "band_low_cfs": 308,
+      "band_high_cfs": 407
     },
     {
       "date": "2026-11-25",
-      "min_cfs": 427,
-      "mean_cfs": 439,
-      "max_cfs": 446,
-      "band_low_cfs": 308,
-      "band_high_cfs": 564
+      "min_cfs": 360,
+      "mean_cfs": 360,
+      "max_cfs": 361,
+      "band_low_cfs": 216,
+      "band_high_cfs": 505
     },
     {
       "date": "2026-11-26",
-      "min_cfs": 447,
-      "mean_cfs": 450,
-      "max_cfs": 452,
-      "band_low_cfs": 329,
-      "band_high_cfs": 570
+      "min_cfs": 359,
+      "mean_cfs": 360,
+      "max_cfs": 360,
+      "band_low_cfs": 216,
+      "band_high_cfs": 503
     },
     {
       "date": "2026-11-27",
-      "min_cfs": 452,
-      "mean_cfs": 452,
-      "max_cfs": 452,
-      "band_low_cfs": 333,
-      "band_high_cfs": 571
+      "min_cfs": 358,
+      "mean_cfs": 358,
+      "max_cfs": 359,
+      "band_low_cfs": 215,
+      "band_high_cfs": 500
     },
     {
       "date": "2026-11-28",
-      "min_cfs": 451,
-      "mean_cfs": 452,
-      "max_cfs": 452,
-      "band_low_cfs": 331,
-      "band_high_cfs": 571
+      "min_cfs": 356,
+      "mean_cfs": 357,
+      "max_cfs": 358,
+      "band_low_cfs": 213,
+      "band_high_cfs": 499
     },
     {
       "date": "2026-11-29",
-      "min_cfs": 450,
-      "mean_cfs": 450,
-      "max_cfs": 451,
-      "band_low_cfs": 330,
-      "band_high_cfs": 571
+      "min_cfs": 355,
+      "mean_cfs": 356,
+      "max_cfs": 356,
+      "band_low_cfs": 212,
+      "band_high_cfs": 498
+    },
+    {
+      "date": "2026-11-30",
+      "min_cfs": 354,
+      "mean_cfs": 355,
+      "max_cfs": 355,
+      "band_low_cfs": 210,
+      "band_high_cfs": 498
     }
   ],
   "routing": {
@@ -96,8 +96,8 @@
           1.0,
           0.03
         ],
-        "intercept": 171.7934593447936,
-        "rmse": 109.14270188809442,
+        "intercept": 54.232903825309094,
+        "rmse": 141.07630902172087,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -114,8 +114,8 @@
           0.8,
           0.03
         ],
-        "intercept": 238.263435568696,
-        "rmse": 114.40912452205757,
+        "intercept": 115.55281154883205,
+        "rmse": 148.38637632892116,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -132,8 +132,8 @@
           1.2,
           0.03
         ],
-        "intercept": 105.32348312089125,
-        "rmse": 103.93560485431402,
+        "intercept": -7.087003898213851,
+        "rmse": 133.81745530521897,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -150,8 +150,8 @@
           1.0,
           0.03
         ],
-        "intercept": 172.67381912591654,
-        "rmse": 107.60561159230951,
+        "intercept": 54.817607464163316,
+        "rmse": 140.10732018842998,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -168,8 +168,8 @@
           0.8,
           0.03
         ],
-        "intercept": 238.96772339359427,
-        "rmse": 113.20566802677806,
+        "intercept": 116.02057445991544,
+        "rmse": 147.63776343436146,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -186,8 +186,8 @@
           1.2,
           0.03
         ],
-        "intercept": 106.37991485823872,
-        "rmse": 102.04855979843936,
+        "intercept": -6.385359531588797,
+        "rmse": 132.61074415074617,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -204,8 +204,8 @@
           1.0,
           0.03
         ],
-        "intercept": 170.96837522967158,
-        "rmse": 112.28339714483606,
+        "intercept": 52.41621639825057,
+        "rmse": 144.15002531109604,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -222,8 +222,8 @@
           0.8,
           0.03
         ],
-        "intercept": 237.60336827659836,
-        "rmse": 116.83828546781298,
+        "intercept": 114.0994616071852,
+        "rmse": 150.774967355684,
         "source": "default",
         "timing_mae_hours": null
       },
@@ -240,8 +240,8 @@
           1.2,
           0.03
         ],
-        "intercept": 104.33338218274481,
-        "rmse": 107.83803015719477,
+        "intercept": -9.267028810684103,
+        "rmse": 137.62028115339461,
         "source": "default",
         "timing_mae_hours": null
       }
@@ -256,10 +256,10 @@
     {
       "name": "Arkansas River near Wellsville, CO",
       "nws_lid": "WSVC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 293.0,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 306.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 3.13,
+      "latest_stage_ft": 3.17,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null,
       "forecast_end_utc": null
@@ -272,17 +272,17 @@
       "latest_time_utc": null,
       "latest_cfs": null,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 2.58,
+      "latest_stage_ft": 2.61,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "Arkansas River at Salida, CO",
       "nws_lid": "SALC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 215.0,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 227.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 2.77,
+      "latest_stage_ft": 2.79,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     }
@@ -292,31 +292,32 @@
   "basin_rain": {
     "zone_totals_mm": {
       "past": {
-        "rain_local": 1.2,
-        "rain_mid": 0.4,
+        "rain_local": 0.0,
+        "rain_mid": 0.1,
         "rain_far": 0.0,
-        "snow_local": 0.8,
-        "snow_mid": 4.1,
+        "snow_local": 2.1,
+        "snow_mid": 3.8,
         "snow_far": 0.0
       },
       "next": {
-        "rain_local": 0.0,
+        "rain_local": 0.3,
         "rain_mid": 0.0,
         "rain_far": 0.0,
-        "snow_local": 0.2,
-        "snow_mid": 1.9,
+        "snow_local": 0.1,
+        "snow_mid": 1.8,
         "snow_far": 0.0
       },
-      "past_through": "2026-11-22"
+      "past_through": "2026-11-23"
     },
     "ungauged_area_km2": 4144.5,
     "ungauged_rain_mm": {
-      "calibration_window": 27.9,
-      "past_7_days": 1.8,
+      "calibration_window": 27.3,
+      "past_7_days": 0.1,
       "forecast": 0.2
     },
     "sources": [
       "gridmet",
+      "stage4",
       "nws"
     ],
     "missing_hours": 12,
@@ -324,22 +325,23 @@
     "runoff_ratio": 0.03
   },
   "ml": {
-    "version": "model-218",
-    "anchor": "2026-11-23",
-    "today": "2026-11-23",
+    "version": "model-219",
+    "anchor": "2026-11-24",
+    "today": "2026-11-24",
     "station_idx": 1,
     "basin_idx": 1,
     "trained_station": true,
     "bridged_weather_days": [
-      "2026-11-23"
+      "2026-11-23",
+      "2026-11-24"
     ],
     "weather_forecast_days": 14,
     "upstream_known_days": 1,
     "verified": {
       "windows": 784,
       "issued": [
-        "2024-09-15",
-        "2026-11-07"
+        "2024-09-16",
+        "2026-11-08"
       ],
       "leads": [
         1,
@@ -347,95 +349,95 @@
         7
       ],
       "model_error_pct": [
-        1.88,
-        5.68,
-        8.41
+        1.95,
+        5.67,
+        9.04
       ],
       "persistence_error_pct": [
         3.45,
-        7.22,
+        7.24,
         11.07
       ],
-      "rise_peak_ratio": 0.792
+      "rise_peak_ratio": 0.78
     },
     "daily": [
       {
-        "date": "2026-11-24",
-        "min_cfs": 341,
-        "max_cfs": 342,
-        "min_q05_cfs": 312,
-        "min_q25_cfs": 333,
-        "min_q75_cfs": 352,
-        "min_q95_cfs": 378,
-        "max_q05_cfs": 312,
-        "max_q25_cfs": 332,
-        "max_q75_cfs": 350,
-        "max_q95_cfs": 374
-      },
-      {
         "date": "2026-11-25",
-        "min_cfs": 344,
-        "max_cfs": 345,
-        "min_q05_cfs": 307,
-        "min_q25_cfs": 334,
-        "min_q75_cfs": 358,
-        "min_q95_cfs": 390,
-        "max_q05_cfs": 306,
-        "max_q25_cfs": 333,
-        "max_q75_cfs": 355,
-        "max_q95_cfs": 385
-      },
-      {
-        "date": "2026-11-26",
-        "min_cfs": 342,
-        "max_cfs": 344,
-        "min_q05_cfs": 303,
-        "min_q25_cfs": 331,
-        "min_q75_cfs": 358,
-        "min_q95_cfs": 393,
-        "max_q05_cfs": 301,
-        "max_q25_cfs": 329,
-        "max_q75_cfs": 354,
-        "max_q95_cfs": 385
-      },
-      {
-        "date": "2026-11-27",
-        "min_cfs": 343,
-        "max_cfs": 345,
-        "min_q05_cfs": 302,
-        "min_q25_cfs": 332,
-        "min_q75_cfs": 360,
-        "min_q95_cfs": 397,
-        "max_q05_cfs": 300,
-        "max_q25_cfs": 329,
-        "max_q75_cfs": 356,
+        "min_cfs": 360,
+        "max_cfs": 364,
+        "min_q05_cfs": 336,
+        "min_q25_cfs": 353,
+        "min_q75_cfs": 367,
+        "min_q95_cfs": 386,
+        "max_q05_cfs": 337,
+        "max_q25_cfs": 356,
+        "max_q75_cfs": 371,
         "max_q95_cfs": 389
       },
       {
-        "date": "2026-11-28",
-        "min_cfs": 347,
-        "max_cfs": 349,
-        "min_q05_cfs": 302,
-        "min_q25_cfs": 334,
-        "min_q75_cfs": 366,
+        "date": "2026-11-26",
+        "min_cfs": 357,
+        "max_cfs": 358,
+        "min_q05_cfs": 316,
+        "min_q25_cfs": 345,
+        "min_q75_cfs": 370,
         "min_q95_cfs": 408,
-        "max_q05_cfs": 299,
-        "max_q25_cfs": 331,
-        "max_q75_cfs": 363,
-        "max_q95_cfs": 400
+        "max_q05_cfs": 318,
+        "max_q25_cfs": 346,
+        "max_q75_cfs": 371,
+        "max_q95_cfs": 402
+      },
+      {
+        "date": "2026-11-27",
+        "min_cfs": 361,
+        "max_cfs": 362,
+        "min_q05_cfs": 312,
+        "min_q25_cfs": 346,
+        "min_q75_cfs": 376,
+        "min_q95_cfs": 413,
+        "max_q05_cfs": 315,
+        "max_q25_cfs": 348,
+        "max_q75_cfs": 379,
+        "max_q95_cfs": 425
+      },
+      {
+        "date": "2026-11-28",
+        "min_cfs": 364,
+        "max_cfs": 364,
+        "min_q05_cfs": 305,
+        "min_q25_cfs": 346,
+        "min_q75_cfs": 383,
+        "min_q95_cfs": 428,
+        "max_q05_cfs": 303,
+        "max_q25_cfs": 345,
+        "max_q75_cfs": 385,
+        "max_q95_cfs": 439
       },
       {
         "date": "2026-11-29",
-        "min_cfs": 347,
-        "max_cfs": 351,
-        "min_q05_cfs": 299,
-        "min_q25_cfs": 334,
-        "min_q75_cfs": 369,
-        "min_q95_cfs": 414,
-        "max_q05_cfs": 296,
-        "max_q25_cfs": 330,
-        "max_q75_cfs": 365,
-        "max_q95_cfs": 405
+        "min_cfs": 362,
+        "max_cfs": 366,
+        "min_q05_cfs": 296,
+        "min_q25_cfs": 341,
+        "min_q75_cfs": 382,
+        "min_q95_cfs": 429,
+        "max_q05_cfs": 302,
+        "max_q25_cfs": 346,
+        "max_q75_cfs": 389,
+        "max_q95_cfs": 447
+      },
+      {
+        "date": "2026-11-30",
+        "min_cfs": 361,
+        "max_cfs": 364,
+        "min_q05_cfs": 293,
+        "min_q25_cfs": 340,
+        "min_q75_cfs": 381,
+        "min_q95_cfs": 427,
+        "max_q05_cfs": 295,
+        "max_q25_cfs": 342,
+        "max_q75_cfs": 387,
+        "max_q95_cfs": 446
       }
     ]
   },

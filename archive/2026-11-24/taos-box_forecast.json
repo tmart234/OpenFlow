@@ -6,77 +6,77 @@
   "usgs_id": "08276500",
   "timezone": "America/Denver",
   "mode": "routing",
-  "generated_utc": "2026-11-24T00:52:50Z",
+  "generated_utc": "2026-11-24T23:03:18Z",
   "latest_observation": {
-    "time_utc": "2026-11-24T00:00:00+00:00",
-    "time_local": "2026-11-23T17:00:00-07:00",
-    "cfs": 1890.0
+    "time_utc": "2026-11-24T22:00:00+00:00",
+    "time_local": "2026-11-24T15:00:00-07:00",
+    "cfs": 1853.3333333333333
   },
   "peak": {
-    "time_utc": "2026-11-24T06:00:00+00:00",
-    "time_local": "2026-11-23T23:00:00-07:00",
-    "cfs": 1907,
+    "time_utc": "2026-11-25T08:00:00+00:00",
+    "time_local": "2026-11-25T01:00:00-07:00",
+    "cfs": 1858,
     "ahead": false,
-    "end_cfs": 1165,
-    "band_low_cfs": 1875,
-    "band_high_cfs": 1920
+    "end_cfs": 1438,
+    "band_low_cfs": 1827,
+    "band_high_cfs": 1880
   },
   "daily": [
     {
-      "date": "2026-11-23",
-      "min_cfs": 1888,
-      "mean_cfs": 1895,
-      "max_cfs": 1907,
-      "band_low_cfs": 1875,
-      "band_high_cfs": 1920
-    },
-    {
       "date": "2026-11-24",
-      "min_cfs": 1818,
-      "mean_cfs": 1856,
-      "max_cfs": 1902,
-      "band_low_cfs": 1763,
-      "band_high_cfs": 1915
+      "min_cfs": 1851,
+      "mean_cfs": 1855,
+      "max_cfs": 1858,
+      "band_low_cfs": 1834,
+      "band_high_cfs": 1878
     },
     {
       "date": "2026-11-25",
-      "min_cfs": 1695,
-      "mean_cfs": 1762,
-      "max_cfs": 1815,
-      "band_low_cfs": 1637,
-      "band_high_cfs": 1868
+      "min_cfs": 1745,
+      "mean_cfs": 1808,
+      "max_cfs": 1858,
+      "band_low_cfs": 1693,
+      "band_high_cfs": 1880
     },
     {
       "date": "2026-11-26",
-      "min_cfs": 1534,
-      "mean_cfs": 1610,
-      "max_cfs": 1689,
-      "band_low_cfs": 1474,
-      "band_high_cfs": 1738
+      "min_cfs": 1677,
+      "mean_cfs": 1705,
+      "max_cfs": 1741,
+      "band_low_cfs": 1622,
+      "band_high_cfs": 1789
     },
     {
       "date": "2026-11-27",
-      "min_cfs": 1390,
-      "mean_cfs": 1457,
-      "max_cfs": 1527,
-      "band_low_cfs": 1328,
-      "band_high_cfs": 1578
+      "min_cfs": 1614,
+      "mean_cfs": 1644,
+      "max_cfs": 1674,
+      "band_low_cfs": 1558,
+      "band_high_cfs": 1728
     },
     {
       "date": "2026-11-28",
-      "min_cfs": 1269,
-      "mean_cfs": 1325,
-      "max_cfs": 1384,
-      "band_low_cfs": 1206,
-      "band_high_cfs": 1437
+      "min_cfs": 1552,
+      "mean_cfs": 1581,
+      "max_cfs": 1611,
+      "band_low_cfs": 1496,
+      "band_high_cfs": 1666
     },
     {
       "date": "2026-11-29",
-      "min_cfs": 1169,
-      "mean_cfs": 1216,
-      "max_cfs": 1265,
-      "band_low_cfs": 1104,
-      "band_high_cfs": 1318
+      "min_cfs": 1494,
+      "mean_cfs": 1521,
+      "max_cfs": 1549,
+      "band_low_cfs": 1437,
+      "band_high_cfs": 1604
+    },
+    {
+      "date": "2026-11-30",
+      "min_cfs": 1440,
+      "mean_cfs": 1465,
+      "max_cfs": 1491,
+      "band_low_cfs": 1382,
+      "band_high_cfs": 1547
     }
   ],
   "routing": {
@@ -93,11 +93,11 @@
           120.0
         ],
         "coefs": [
-          1.176407663601259,
-          0.012764317221262896
+          1.179128291461488,
+          0.012616718814435234
         ],
-        "intercept": -157.36489412818858,
-        "rmse": 44.81743743917022,
+        "intercept": -162.27089989153745,
+        "rmse": 44.63704141258145,
         "source": "calibrated",
         "timing_mae_hours": null,
         "celerity": [
@@ -118,11 +118,11 @@
           120.0
         ],
         "coefs": [
-          1.1823173264319613,
-          0.007317152462334079
+          1.1826318246226266,
+          0.007865960370426823
         ],
-        "intercept": -153.1993256347701,
-        "rmse": 44.875446155006316,
+        "intercept": -157.03837101914365,
+        "rmse": 44.719549856976506,
         "source": "calibrated",
         "timing_mae_hours": null,
         "celerity": [
@@ -143,11 +143,11 @@
           120.0
         ],
         "coefs": [
-          1.1957500004482344,
-          0.0059450150342904295
+          1.195420974978456,
+          0.006557619752957715
         ],
-        "intercept": -177.28049315358072,
-        "rmse": 47.08790776421663,
+        "intercept": -180.19897925916172,
+        "rmse": 46.648128758504185,
         "source": "calibrated",
         "timing_mae_hours": null,
         "celerity": [
@@ -168,11 +168,11 @@
           120.0
         ],
         "coefs": [
-          1.1918510690582134,
-          0.012466553267693884
+          1.194995945392651,
+          0.012131337500875626
         ],
-        "intercept": -189.60605348607038,
-        "rmse": 50.21460209801602,
+        "intercept": -194.13324548356718,
+        "rmse": 49.61928696060795,
         "source": "calibrated",
         "timing_mae_hours": null,
         "celerity": [
@@ -193,11 +193,11 @@
           120.0
         ],
         "coefs": [
-          1.1794762471705387,
-          0.005991960737032835
+          1.1789087669893887,
+          0.006836132984332598
         ],
-        "intercept": -142.8228283363697,
-        "rmse": 51.50989736503811,
+        "intercept": -146.60100331125443,
+        "rmse": 50.83761730886213,
         "source": "calibrated",
         "timing_mae_hours": null,
         "celerity": [
@@ -214,21 +214,21 @@
   "anchor": {
     "name": "Rio Grande near Lobatos, CO (state line)",
     "nws_lid": "LOBC2",
-    "latest_time_utc": "2026-11-23T23:00:00+00:00",
-    "latest_cfs": 1553.3333333333333,
+    "latest_time_utc": "2026-11-24T21:00:00+00:00",
+    "latest_cfs": 1510.0,
     "forecast_issued_utc": null,
-    "latest_stage_ft": 3.3733333333333335,
+    "latest_stage_ft": 3.32,
     "forecast_peak_cfs": null,
     "forecast_peak_time_utc": null,
-    "pass_through_ratio": 0.952
+    "pass_through_ratio": 0.953
   },
   "routing_anchor": {
     "name": "Rio Grande near Cerro, NM",
     "nws_lid": "CERN5",
-    "latest_time_utc": "2026-11-24T00:00:00+00:00",
-    "latest_cfs": 1630.0,
+    "latest_time_utc": "2026-11-24T22:00:00+00:00",
+    "latest_cfs": 1600.0,
     "forecast_issued_utc": null,
-    "latest_stage_ft": 7.84,
+    "latest_stage_ft": 7.765000000000001,
     "forecast_peak_cfs": null,
     "forecast_peak_time_utc": null,
     "used": true,
@@ -242,18 +242,18 @@
     {
       "name": "Rio Pueblo de Taos below Los Cordovas, NM",
       "nws_lid": "TBCN5",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 84.9,
+      "latest_time_utc": "2026-11-24T21:00:00+00:00",
+      "latest_cfs": 87.73333333333333,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 7.080000000000001,
+      "latest_stage_ft": 7.1066666666666665,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "Red River below Fish Hatchery near Questa, NM",
       "nws_lid": "USGS 08266820",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 51.775,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 52.825,
       "forecast_issued_utc": null,
       "latest_stage_ft": null,
       "forecast_peak_cfs": null,
@@ -265,10 +265,10 @@
     {
       "name": "Rio Grande at Alamosa, CO",
       "nws_lid": "ALAC2",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 957.3333333333334,
+      "latest_time_utc": "2026-11-24T21:00:00+00:00",
+      "latest_cfs": 916.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 5.873333333333334,
+      "latest_stage_ft": 5.78,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null,
       "forecast_end_utc": null
@@ -276,10 +276,10 @@
     {
       "name": "Conejos River near Mogote, CO",
       "nws_lid": "MOGC2",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 617.5,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 599.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 3.495,
+      "latest_stage_ft": 3.455,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null,
       "forecast_end_utc": null
@@ -289,50 +289,50 @@
     {
       "name": "Rio Grande near Del Norte, CO",
       "nws_lid": "DNRC2",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 816.2857142857143,
+      "latest_time_utc": "2026-11-24T21:00:00+00:00",
+      "latest_cfs": 765.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 1.9357142857142855,
+      "latest_stage_ft": 1.8849999999999998,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "Rio Grande near Lobatos, CO (state line)",
       "nws_lid": "LOBC2",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 1553.3333333333333,
+      "latest_time_utc": "2026-11-24T21:00:00+00:00",
+      "latest_cfs": 1510.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 3.3733333333333335,
+      "latest_stage_ft": 3.32,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "Rio Grande near Cerro, NM",
       "nws_lid": "CERN5",
-      "latest_time_utc": "2026-11-24T00:00:00+00:00",
-      "latest_cfs": 1630.0,
+      "latest_time_utc": "2026-11-24T22:00:00+00:00",
+      "latest_cfs": 1600.0,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 7.84,
+      "latest_stage_ft": 7.765000000000001,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "Costilla Creek at Costilla, NM",
       "nws_lid": "COSN5",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 16.725,
+      "latest_time_utc": "2026-11-24T21:00:00+00:00",
+      "latest_cfs": 12.875,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 1.795,
+      "latest_stage_ft": 1.72,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     },
     {
       "name": "Rio Pueblo de Taos below Los Cordovas, NM",
       "nws_lid": "TBCN5",
-      "latest_time_utc": "2026-11-23T23:00:00+00:00",
-      "latest_cfs": 84.9,
+      "latest_time_utc": "2026-11-24T21:00:00+00:00",
+      "latest_cfs": 87.73333333333333,
       "forecast_issued_utc": null,
-      "latest_stage_ft": 7.080000000000001,
+      "latest_stage_ft": 7.1066666666666665,
       "forecast_peak_cfs": null,
       "forecast_peak_time_utc": null
     }
@@ -347,31 +347,32 @@
   "basin_rain": {
     "zone_totals_mm": {
       "past": {
-        "rain_local": 5.9,
-        "rain_mid": 2.1,
-        "rain_far": 0.5,
-        "snow_local": 3.1,
-        "snow_mid": 3.5,
-        "snow_far": 16.6
+        "rain_local": 0.0,
+        "rain_mid": 0.0,
+        "rain_far": 0.0,
+        "snow_local": 2.7,
+        "snow_mid": 3.8,
+        "snow_far": 7.6
       },
       "next": {
         "rain_local": 0.0,
         "rain_mid": 0.0,
         "rain_far": 0.0,
-        "snow_local": 0.0,
+        "snow_local": 0.2,
         "snow_mid": 0.2,
-        "snow_far": 0.4
+        "snow_far": 0.9
       },
-      "past_through": "2026-11-22"
+      "past_through": "2026-11-23"
     },
     "ungauged_area_km2": 11748.6,
     "ungauged_rain_mm": {
-      "calibration_window": 30.5,
-      "past_7_days": 3.9,
-      "forecast": 0.0
+      "calibration_window": 30.0,
+      "past_7_days": 0.2,
+      "forecast": 0.1
     },
     "sources": [
       "gridmet",
+      "stage4",
       "nws"
     ],
     "missing_hours": 15,
@@ -379,22 +380,23 @@
     "runoff_ratio": 0.013
   },
   "ml": {
-    "version": "model-218",
-    "anchor": "2026-11-23",
-    "today": "2026-11-23",
+    "version": "model-219",
+    "anchor": "2026-11-24",
+    "today": "2026-11-24",
     "station_idx": 3,
     "basin_idx": 3,
     "trained_station": true,
     "bridged_weather_days": [
-      "2026-11-23"
+      "2026-11-23",
+      "2026-11-24"
     ],
     "weather_forecast_days": 14,
     "upstream_known_days": 7,
     "verified": {
       "windows": 784,
       "issued": [
-        "2024-09-15",
-        "2026-11-07"
+        "2024-09-16",
+        "2026-11-08"
       ],
       "leads": [
         1,
@@ -402,95 +404,95 @@
         7
       ],
       "model_error_pct": [
-        2.59,
-        3.65,
-        4.8
+        2.57,
+        3.5,
+        4.42
       ],
       "persistence_error_pct": [
         2.84,
         6.59,
         10.4
       ],
-      "rise_peak_ratio": 0.761
+      "rise_peak_ratio": 0.789
     },
     "daily": [
       {
-        "date": "2026-11-24",
-        "min_cfs": 1858,
-        "max_cfs": 1920,
-        "min_q05_cfs": 1721,
-        "min_q25_cfs": 1817,
-        "min_q75_cfs": 1902,
-        "min_q95_cfs": 2003,
-        "max_q05_cfs": 1790,
-        "max_q25_cfs": 1878,
-        "max_q75_cfs": 1963,
-        "max_q95_cfs": 2065
-      },
-      {
         "date": "2026-11-25",
-        "min_cfs": 1981,
-        "max_cfs": 2030,
-        "min_q05_cfs": 1799,
-        "min_q25_cfs": 1926,
-        "min_q75_cfs": 2039,
-        "min_q95_cfs": 2174,
-        "max_q05_cfs": 1860,
-        "max_q25_cfs": 1974,
-        "max_q75_cfs": 2090,
-        "max_q95_cfs": 2227
+        "min_cfs": 1812,
+        "max_cfs": 1871,
+        "min_q05_cfs": 1683,
+        "min_q25_cfs": 1775,
+        "min_q75_cfs": 1853,
+        "min_q95_cfs": 1955,
+        "max_q05_cfs": 1730,
+        "max_q25_cfs": 1828,
+        "max_q75_cfs": 1904,
+        "max_q95_cfs": 1989
       },
       {
         "date": "2026-11-26",
-        "min_cfs": 1911,
-        "max_cfs": 1946,
-        "min_q05_cfs": 1729,
-        "min_q25_cfs": 1856,
-        "min_q75_cfs": 1970,
-        "min_q95_cfs": 2107,
-        "max_q05_cfs": 1774,
-        "max_q25_cfs": 1889,
-        "max_q75_cfs": 2004,
-        "max_q95_cfs": 2130
+        "min_cfs": 1936,
+        "max_cfs": 2012,
+        "min_q05_cfs": 1744,
+        "min_q25_cfs": 1881,
+        "min_q75_cfs": 1992,
+        "min_q95_cfs": 2123,
+        "max_q05_cfs": 1841,
+        "max_q25_cfs": 1962,
+        "max_q75_cfs": 2053,
+        "max_q95_cfs": 2150
       },
       {
         "date": "2026-11-27",
-        "min_cfs": 1926,
-        "max_cfs": 1961,
-        "min_q05_cfs": 1727,
-        "min_q25_cfs": 1865,
-        "min_q75_cfs": 1992,
-        "min_q95_cfs": 2146,
-        "max_q05_cfs": 1772,
-        "max_q25_cfs": 1897,
-        "max_q75_cfs": 2027,
-        "max_q95_cfs": 2166
+        "min_cfs": 1940,
+        "max_cfs": 1998,
+        "min_q05_cfs": 1735,
+        "min_q25_cfs": 1881,
+        "min_q75_cfs": 2006,
+        "min_q95_cfs": 2156,
+        "max_q05_cfs": 1821,
+        "max_q25_cfs": 1946,
+        "max_q75_cfs": 2044,
+        "max_q95_cfs": 2146
       },
       {
         "date": "2026-11-28",
-        "min_cfs": 1940,
-        "max_cfs": 1974,
-        "min_q05_cfs": 1721,
-        "min_q25_cfs": 1872,
-        "min_q75_cfs": 2016,
-        "min_q95_cfs": 2193,
-        "max_q05_cfs": 1755,
-        "max_q25_cfs": 1899,
-        "max_q75_cfs": 2049,
-        "max_q95_cfs": 2204
+        "min_cfs": 1939,
+        "max_cfs": 1991,
+        "min_q05_cfs": 1715,
+        "min_q25_cfs": 1874,
+        "min_q75_cfs": 2017,
+        "min_q95_cfs": 2197,
+        "max_q05_cfs": 1797,
+        "max_q25_cfs": 1934,
+        "max_q75_cfs": 2042,
+        "max_q95_cfs": 2151
       },
       {
         "date": "2026-11-29",
-        "min_cfs": 1955,
-        "max_cfs": 1989,
-        "min_q05_cfs": 1697,
+        "min_cfs": 1940,
+        "max_cfs": 1982,
+        "min_q05_cfs": 1710,
         "min_q25_cfs": 1873,
-        "min_q75_cfs": 2043,
-        "min_q95_cfs": 2248,
-        "max_q05_cfs": 1736,
-        "max_q25_cfs": 1900,
-        "max_q75_cfs": 2078,
-        "max_q95_cfs": 2257
+        "min_q75_cfs": 2024,
+        "min_q95_cfs": 2214,
+        "max_q05_cfs": 1789,
+        "max_q25_cfs": 1925,
+        "max_q75_cfs": 2034,
+        "max_q95_cfs": 2140
+      },
+      {
+        "date": "2026-11-30",
+        "min_cfs": 1922,
+        "max_cfs": 1956,
+        "min_q05_cfs": 1668,
+        "min_q25_cfs": 1847,
+        "min_q75_cfs": 2001,
+        "min_q95_cfs": 2178,
+        "max_q05_cfs": 1757,
+        "max_q25_cfs": 1897,
+        "max_q75_cfs": 2013,
+        "max_q95_cfs": 2125
       }
     ]
   },
