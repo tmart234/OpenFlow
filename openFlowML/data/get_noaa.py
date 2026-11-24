@@ -46,8 +46,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
     # Convert startStr and endStr to datetime objects
     start_date_obj = datetime.strptime(startStr, "%Y-%m-%d")
-    three_days_ago = start_date_obj - timedelta(days=3)
     end_date_obj = datetime.strptime(endStr, "%Y-%m-%d")
+    # Allow up to 14 days of NCEI GHCND ingestion lag relative to end_date_obj
+    # (previously compared against start_date_obj, which accepted dead stations).
+    recent_cutoff = end_date_obj - timedelta(days=14)
     
     for station_id in sorted_stations:
         metadata = get_station_metadata(station_id)
@@ -60,8 +62,8 @@ def find_station_with_recent_data(sorted_stations, startStr, fields, endStr):
                 mindate = datetime.strptime(mindate_str, "%Y-%m-%d")
                 logging.debug(f"Station ID: {station_id} has an end of: {maxdate} and start of {mindate}")
                 
-                # Now, you're comparing datetime objects with datetime objects
-                if (maxdate >= end_date_obj or maxdate >= three_days_ago) and mindate <= start_date_obj:
+                # Station must cover the requested start and remain active near the end.
+                if maxdate >= recent_cutoff and mindate <= start_date_obj:
                     bool_value = check_fields(fields, station_id[0], startStr, endStr)
                     if bool_value:
                         return station_id
@@ -101,7 +103,7 @@ def get_data(url, headers=None, max_retries=3):
     retries = 0
     while retries < max_retries:
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=30)
             if response.status_code == 200:
                 if response.text:
                     return response.text
@@ -147,8 +149,8 @@ def find_closest_ghcnd_station(latitude, longitude, fields, startStr, endStr):
         logging.debug("US stations found!:")
         logging.debug(us_stations)
     else:
-        logging.error("No US stations found. Exiting....")
-        exit()
+        logging.error("No US stations found.")
+        return None
 
     closest_station = None
 
@@ -215,13 +217,12 @@ def get_station_metadata(noaa_station_id):
         return None
 
 def fetch_temperature_data(nearest_station_id, start_str, end_str):
-    temperature_data = {}
     metadata = get_station_metadata(nearest_station_id)
     logging.debug(metadata)
     
     if not metadata:
         logging.error("Failed to fetch station metadata.")
-        return temperature_data
+        return pd.DataFrame()
 
     ncei_search_url = "https://www.ncei.noaa.gov/access/services/data/v1"
     ncei_search_params = {
@@ -255,11 +256,9 @@ def fetch_temperature_data(nearest_station_id, start_str, end_str):
         # precipitation_sum). Missing values come through as empty strings.
         for col in ('TMAX', 'TMIN'):
             if col in temperature_df.columns:
-                temperature_df[col].replace('', np.nan, inplace=True)
-                temperature_df[col] = pd.to_numeric(temperature_df[col], errors='coerce')
+                temperature_df[col] = pd.to_numeric(temperature_df[col].replace('', np.nan), errors='coerce')
         if 'PRCP' in temperature_df.columns:
-            temperature_df['PRCP'].replace('', np.nan, inplace=True)
-            temperature_df['PRCP'] = pd.to_numeric(temperature_df['PRCP'], errors='coerce') / 10.0
+            temperature_df['PRCP'] = pd.to_numeric(temperature_df['PRCP'].replace('', np.nan), errors='coerce') / 10.0
             # Surface PRCP under combine_data's `precipitation` column name so
             # downstream code doesn't need to know about the GHCND code.
             temperature_df.rename(columns={'PRCP': 'precipitation'}, inplace=True)
@@ -276,27 +275,27 @@ def fetch_temperature_data(nearest_station_id, start_str, end_str):
         return pd.DataFrame()  # Return an empty DataFrame on error
 
 
-def _realized_coverage_ok(df, fields, min_fraction):
+def _realized_coverage_ok(df, fields, min_fraction, expected_days=None):
     """
-    Validate that a station's actual returned data isn't mostly NaN on the
-    fields we require. Returns True iff every field in `fields` is non-NaN
-    on at least `min_fraction` of the returned rows.
+    Validate that a station's actual returned data isn't mostly NaN or missing
+    dates over the requested window. Returns True iff every field in `fields`
+    is non-NaN on at least `min_fraction` of `max(len(df), expected_days)`.
 
     Why this exists: NCEI metadata `datacoverage` is a lifetime average; a
-    station with 88% lifetime coverage can still be missing the last 6 months
-    of TMIN. Without this gate the model trains on a column that's mostly NaN
-    and gap-filled to 0, which silently destroys temperature signal.
+    station that stopped reporting years ago can return 200 non-NaN rows for a
+    5,000-day request. Checking against `expected_days` (not just `len(df)`)
+    rejects dead stations instead of silently filling 95% of the window.
     """
     if df is None or df.empty:
         return False
-    n = len(df)
+    n = max(len(df), int(expected_days)) if expected_days else len(df)
     for field in fields:
         if field not in df.columns:
             return False
         present = df[field].notna().sum()
         if present / n < min_fraction:
-            logging.info("Realized coverage for %s = %.2f < %.2f, rejecting",
-                         field, present / n, min_fraction)
+            logging.info("Realized coverage for %s = %.2f (%d/%d) < %.2f, rejecting",
+                         field, present / n, present, n, min_fraction)
             return False
     return True
 
@@ -306,6 +305,10 @@ def main(latitude=38.52, longitude=-106.96, startStr=None, endStr=None):
         startStr = (datetime.now() - timedelta(days=7*365 + 7)).strftime('%Y-%m-%d')
     if endStr is None:
         endStr = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    expected_days = max(
+        1,
+        (datetime.strptime(endStr, '%Y-%m-%d') - datetime.strptime(startStr, '%Y-%m-%d')).days + 1,
+    )
 
     # Build a ranked list of candidate stations once; the metadata pass inside
     # find_closest_ghcnd_station gates on lifetime datacoverage + field
@@ -323,7 +326,8 @@ def main(latitude=38.52, longitude=-106.96, startStr=None, endStr=None):
         tried.append(station_id)
         logging.info("Trying station %s (distance %.2f km)", station_id, candidate[1])
         temperature_data = fetch_temperature_data(station_id, startStr, endStr)
-        if _realized_coverage_ok(temperature_data, REQUIRED_FIELDS, MIN_OBSERVED_FRACTION):
+        if _realized_coverage_ok(temperature_data, REQUIRED_FIELDS, MIN_OBSERVED_FRACTION,
+                                 expected_days=expected_days):
             logging.info("Accepted station %s (realized coverage passes %.0f%% gate)",
                          station_id, MIN_OBSERVED_FRACTION * 100)
             return station_id, temperature_data

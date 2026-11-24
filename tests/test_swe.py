@@ -90,3 +90,36 @@ def test_get_swe_returns_empty_when_no_snotel_stations(mock_api):
     )
     df = get_swe.get_swe(40.0, -106.0, datetime(2024, 1, 1), datetime(2024, 1, 2))
     assert df.empty
+
+
+def test_get_snotel_triplets_prefers_daily_sntl_over_snow_courses(mock_api):
+    mock_api.get(
+        "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/stations",
+        json=[
+            {"stationTriplet": "1030:CO:SNTL"},
+            {"stationTriplet": "05M12:CO:SNOW"},
+        ],
+    )
+    assert get_swe.get_snotel_station_triplets("110200") == ["1030:CO:SNTL"]
+
+
+def test_get_swe_falls_back_to_enclosing_huc6_when_huc8_has_no_snotel(mock_api):
+    mock_api.get(
+        "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/4/query",
+        json={"features": [{"attributes": {"huc8": "11020002"}}]},
+    )
+    mock_api.get(
+        "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/stations?hucs=11020002&elements=WTEQ&activeOnly=true",
+        json=[],
+    )
+    mock_api.get(
+        "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/stations?hucs=110200&elements=WTEQ&activeOnly=true",
+        json=[{"stationTriplet": "369:CO:SNTL"}],
+    )
+    mock_api.get(
+        "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data",
+        json=[{"stationTriplet": "369:CO:SNTL",
+               "data": [{"values": [{"date": "2024-01-01", "value": 12.5}]}]}],
+    )
+    df = get_swe.get_swe(38.43, -105.26, datetime(2024, 1, 1), datetime(2024, 1, 2))
+    assert len(df) == 1 and df['SWE'].iloc[0] == 12.5

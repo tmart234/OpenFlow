@@ -257,3 +257,29 @@ def test_river_specific_gain_round_trips_through_h5(tmp_path):
     want, got = net.predict(x, verbose=0), loaded.predict(x, verbose=0)
     for key in want:
         np.testing.assert_allclose(got[key], want[key], rtol=1e-5, atol=1e-6)
+
+
+def test_per_station_band_calibration_tailors_spread_and_keeps_unseen_global(tmp_path):
+    import tensorflow as tf
+    net = _build_band_model()
+    rng = np.random.default_rng(7)
+    n_per = 60
+    x = _smoke_inputs(n=2 * n_per, station_ids=[1] * n_per + [2] * n_per)
+    p = model.point_forecast(net.predict(x, verbose=0))
+    # Station 1 has tiny residuals; station 2 has 4x wider residuals.
+    y = p.copy()
+    y[:n_per] += rng.normal(0.0, 0.05, y[:n_per].shape).astype('float32')
+    y[n_per:] += rng.normal(0.0, 0.50, y[n_per:].shape).astype('float32')
+    model.calibrate_band(net, x, y, model.DEFAULT_QUANTILES, min_station_windows=50)
+    st_scale = model.get_band_station_scale(net)
+    assert st_scale is not None
+    # Station 0 (unseen) stays 1.0 (pure global calibration); station 2 gets a wider multiplier than station 1.
+    np.testing.assert_allclose(st_scale[0], 1.0)
+    assert float(st_scale[2].mean()) > float(st_scale[1].mean())
+    # Round-trips through h5 identically.
+    path = str(tmp_path / 'st_band.h5')
+    net.save(path)
+    loaded = tf.keras.models.load_model(path, custom_objects=model.CUSTOM_OBJECTS, compile=False)
+    np.testing.assert_allclose(
+        loaded.predict(x, verbose=0)[model.QUANTILE_OUTPUT],
+        net.predict(x, verbose=0)[model.QUANTILE_OUTPUT], rtol=1e-5, atol=1e-6)

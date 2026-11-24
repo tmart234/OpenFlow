@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 if not logging.getLogger().hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-USDM_URL = "https://usdmdataservices.unl.edu/api/HUCStatistics/GetWeeklyHUCStatistics"
+USDM_URL = "https://usdmdataservices.unl.edu/api/HUCStatistics/GetDSCI"
 
 # Ordinal weights for the intensity index. None has weight 0 (it cancels).
 _CATEGORY_WEIGHTS = {'D0': 1, 'D1': 2, 'D2': 3, 'D3': 4, 'D4': 5}
@@ -54,7 +54,8 @@ def _format_mdy(d) -> str:
 
 def get_drought_weekly(huc_id, start_date, end_date, huc_level=8):
     """
-    Fetch raw weekly USDM percent-area-by-category records for a HUC.
+    Fetch raw weekly USDM Drought Severity and Coverage Index (DSCI) records
+    for a HUC (0..500 scale).
 
     Returns a list of dicts (one per ISO week) or [] on any failure.
     """
@@ -62,10 +63,9 @@ def get_drought_weekly(huc_id, start_date, end_date, huc_level=8):
         return []
     params = {
         'aoi': str(huc_id),
-        'hucLevel': str(huc_level),
         'startdate': _format_mdy(start_date),
         'enddate': _format_mdy(end_date),
-        'statisticsType': '2',  # percent area by drought category
+        'statisticsType': '1',  # DSCI (0..500)
     }
     headers = {'Accept': 'application/json'}
     response = data_utils.request_with_retry(USDM_URL, params=params, headers=headers)
@@ -82,9 +82,17 @@ def get_drought_weekly(huc_id, start_date, end_date, huc_level=8):
 
 def _record_to_index(record) -> float:
     """
-    Collapse a USDM weekly record (percent area per category) into a single
-    weighted-intensity index. Missing category fields treated as 0.
+    Extract or compute the 0..500 drought intensity index (DSCI) from a USDM
+    weekly record. Uses the direct DSCI field returned by GetDSCI when present,
+    falling back to the ordinal D0..D4 weighted sum for category-percent payloads.
     """
+    for key in ('DSCI', 'dsci'):
+        val = record.get(key)
+        if val is not None and val != '':
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                pass
     total = 0.0
     for cat, weight in _CATEGORY_WEIGHTS.items():
         try:

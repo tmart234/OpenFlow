@@ -50,9 +50,9 @@ def test_merge_drops_long_gaps_instead_of_filling():
     flow.loc[3:15, ['Min Flow', 'Max Flow']] = np.nan
     merged = combine_data.merge_dataframes(
         noaa, flow, 'USGS:TEST', datetime(2022, 1, 1), datetime(2022, 1, 20))
-    # Long gap is not interpolated; those rows are dropped, no NaN remains.
+    # Long gap is not interpolated at all (no partial ramp into the gap): all 13 missing days drop.
     assert not merged[combine_data.CORE_COLUMNS].isnull().any().any()
-    assert len(merged) < 20
+    assert len(merged) == 7
 
 
 def test_merge_does_not_pooled_mean_fill_edges():
@@ -452,3 +452,23 @@ def test_fill_weather_gaps_without_station_returns_gridmet():
     assert n == 3 and list(out.columns) == ['Date', 'TMIN', 'TMAX', 'precipitation']
     same, n0 = combine_data.fill_weather_gaps(grid, None)
     assert n0 == 0 and same is grid
+
+
+def test_fetch_prefers_gridmet_by_default_and_supports_legacy_noaa(monkeypatch):
+    days = pd.date_range('2026-01-01', '2026-01-03')
+    monkeypatch.setattr(combine_data.get_noaa, 'main', lambda *a: ('COLD_STN', pd.DataFrame(
+        {'Date': days, 'TMIN': -50.0, 'TMAX': 10.0, 'precipitation': 0.0})))
+    monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather', lambda *a: pd.DataFrame(
+        {'Date': days, 'TMIN': -10.0, 'TMAX': 50.0, 'precipitation': 1.0}))
+    for v in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP'):
+        monkeypatch.setenv(f'OPENFLOW_DISABLE_{v}', '1')
+    monkeypatch.delenv('OPENFLOW_WEATHER_SOURCE', raising=False)
+    monkeypatch.setattr(combine_data.get_swe, 'get_huc_id', lambda *a, **k: None)
+    monkeypatch.setattr(combine_data.get_swe, 'get_swe', lambda *a: pd.DataFrame(columns=['Date', 'SWE']))
+    out_grid = combine_data.fetch_and_process_data(
+        'USGS', 'X', days[0], days[-1], pd.DataFrame(), coords={'lat': 38.0, 'lon': -106.0})
+    assert list(out_grid['noaa_data']['TMIN']) == [-10.0, -10.0, -10.0]
+    out_noaa = combine_data.fetch_and_process_data(
+        'USGS', 'X', days[0], days[-1], pd.DataFrame(), coords={'lat': 38.0, 'lon': -106.0},
+        weather_source_override='noaa')
+    assert list(out_noaa['noaa_data']['TMIN']) == [-50.0, -50.0, -50.0]

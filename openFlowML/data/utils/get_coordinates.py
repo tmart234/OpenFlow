@@ -3,6 +3,8 @@ import argparse
 import sys
 import logging
 
+from data.utils import data_utils
+
 if not logging.getLogger().hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -18,33 +20,29 @@ def get_usgs_coordinates(site_number):
     """
     url = "https://waterservices.usgs.gov/nwis/site/"
     params = {"format": "rdb", "sites": site_number}
+    response = data_utils.request_with_retry(url, params=params)
+    if response is None or response.status_code != 200:
+        return None
+    # Drop comment (#) and blank lines: what remains is the header row,
+    # the RDB format-spec row, then one or more data rows.
+    lines = [ln for ln in response.text.splitlines() if ln and not ln.startswith('#')]
+    if len(lines) < 3:
+        return None
+    header = lines[0].split('\t')
     try:
-        response = requests.get(url, params=params)
-        if response.status_code != 200:
-            return None
-        # Drop comment (#) and blank lines: what remains is the header row,
-        # the RDB format-spec row, then one or more data rows.
-        lines = [ln for ln in response.text.splitlines() if ln and not ln.startswith('#')]
-        if len(lines) < 3:
-            return None
-        header = lines[0].split('\t')
-        try:
-            lat_idx = header.index('dec_lat_va')
-            lon_idx = header.index('dec_long_va')
-            site_idx = header.index('site_no')
-        except ValueError:
-            logger.error("Unexpected RDB header from NWIS Site Service")
-            return None
-        for row in lines[2:]:
-            fields = row.split('\t')
-            if len(fields) <= max(lat_idx, lon_idx, site_idx):
-                continue
-            if fields[site_idx] == site_number and fields[lat_idx] and fields[lon_idx]:
-                return {'latitude': fields[lat_idx], 'longitude': fields[lon_idx]}
+        lat_idx = header.index('dec_lat_va')
+        lon_idx = header.index('dec_long_va')
+        site_idx = header.index('site_no')
+    except ValueError:
+        logger.error("Unexpected RDB header from NWIS Site Service")
         return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching USGS coordinates for {site_number}: {e}")
-        return None
+    for row in lines[2:]:
+        fields = row.split('\t')
+        if len(fields) <= max(lat_idx, lon_idx, site_idx):
+            continue
+        if fields[site_idx] == site_number and fields[lat_idx] and fields[lon_idx]:
+            return {'latitude': fields[lat_idx], 'longitude': fields[lon_idx]}
+    return None
 
 def get_dwr_coordinates(abbrev):
     """
@@ -55,22 +53,22 @@ def get_dwr_coordinates(abbrev):
     """
     url = "https://dwr.state.co.us/Rest/GET/api/v2/surfacewater/surfacewaterstations/"
     params = {"format": "json", "abbrev": abbrev, "fields": "abbrev,latitude,longitude"}
-    try:
-        response = requests.get(url, params=params)
-        if response.status_code != 200:
-            return None
-        results = response.json().get('ResultList', [])
-        if not results:
-            return None
-        station = results[0]
-        latitude = station.get('latitude')
-        longitude = station.get('longitude')
-        if latitude is None or longitude is None:
-            return None
-        return {'latitude': latitude, 'longitude': longitude}
-    except (requests.exceptions.RequestException, ValueError) as e:
-        logger.error(f"Error fetching DWR coordinates for {abbrev}: {e}")
+    response = data_utils.request_with_retry(url, params=params)
+    if response is None or response.status_code != 200:
         return None
+    try:
+        results = response.json().get('ResultList', [])
+    except ValueError as e:
+        logger.error(f"Error parsing DWR coordinates for {abbrev}: {e}")
+        return None
+    if not results:
+        return None
+    station = results[0]
+    y = station.get('latitude')
+    x = station.get('longitude')
+    if y is None or x is None:
+        return None
+    return {'latitude': y, 'longitude': x}
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch latitude and longitude for a given USGS site number.')
@@ -84,7 +82,7 @@ def main():
     else:
         print("Invalid source. Use 'usgs' or 'dwr'.")
         sys.exit(1)
-    print(result)
+    sys.stdout.write(f"{result}\n")
 
 if __name__ == '__main__':
     main()

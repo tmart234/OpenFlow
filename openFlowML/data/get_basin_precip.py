@@ -141,14 +141,15 @@ def gridmet_point_weather(lat: float, lon: float, start, end) -> pd.DataFrame:
     deg C, mm). gridMET runs about 2 days behind real time.
     """
     pad = 0.05
-    out = {}
+    series_map = {}
     for key, name in (('tmmn', 'TMIN'), ('tmmx', 'TMAX'), ('pr', 'precipitation')):
         dates, la, lo, v = _gridmet_subset(key, lat - pad, lat + pad, lon - pad, lon + pad, start, end)
         iy, ix = int(np.argmin(np.abs(la - lat))), int(np.argmin(np.abs(lo - lon)))
-        series = v[:, iy, ix]
-        out[name] = (series - 273.15) * 10.0 if key != 'pr' else series
-        out['Date'] = dates
-    return pd.DataFrame(out)[['Date', 'TMIN', 'TMAX', 'precipitation']]
+        vals = v[:, iy, ix]
+        vals = (vals - 273.15) * 10.0 if key != 'pr' else vals
+        series_map[name] = pd.Series(vals, index=pd.DatetimeIndex(dates, name='Date'))
+    df = pd.concat(series_map, axis=1, join='inner').sort_index().reset_index()
+    return df[['Date', 'TMIN', 'TMAX', 'precipitation']]
 
 
 def zone_means(cfg: dict, lon2d: np.ndarray, lat2d: np.ndarray, field: np.ndarray) -> Dict[str, np.ndarray]:
@@ -191,11 +192,13 @@ def gridmet_zone_daily(cfg: dict, start, end) -> pd.DataFrame:
     (deg C). Indexed by Date; days gridMET does not have yet are absent.
     """
     south, north, west, east = basin_zones.bbox(cfg)
-    dates, lat, lon, pr = _gridmet_subset('pr', south, north, west, east, start, end)
+    d1, lat, lon, pr = _gridmet_subset('pr', south, north, west, east, start, end)
     d2, _, _, tmn = _gridmet_subset('tmmn', south, north, west, east, start, end)
     d3, _, _, tmx = _gridmet_subset('tmmx', south, north, west, east, start, end)
-    n = min(len(dates), len(d2), len(d3))
-    pr, tmn, tmx, dates = pr[:n], tmn[:n], tmx[:n], dates[:n]
+    dates = d1.intersection(d2).intersection(d3).sort_values()
+    pr = pr[d1.get_indexer(dates)]
+    tmn = tmn[d2.get_indexer(dates)]
+    tmx = tmx[d3.get_indexer(dates)]
     tmean = (tmn + tmx) / 2.0 - 273.15
     rain = pr * basin_zones.liquid_fraction(tmean)
     lon2d, lat2d = np.meshgrid(lon, lat)

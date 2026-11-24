@@ -406,15 +406,21 @@ def _extend(celerity, n_base: int):
     return list(celerity) + [None] * (n_base + 1 - len(celerity))
 
 
+DEFAULT_INTERCEPT_RECENCY_HOURS = 120.0
+
+
 def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
                 lags: Sequence[int], ks: Sequence[float],
                 weights: Sequence[float], warmup_hours: int = WARMUP_HOURS,
-                celerity: Optional[Sequence[Optional[Tuple[float, float]]]] = None) -> RoutingFit:
+                celerity: Optional[Sequence[Optional[Tuple[float, float]]]] = None,
+                recency_tau_hours: Optional[float] = DEFAULT_INTERCEPT_RECENCY_HOURS) -> RoutingFit:
     """
     Registry-default routing: fixed lag/K/weight per upstream gauge; only the
-    intercept is fitted (mean residual), so the result is anchored to the
-    target's recent base flow. Used when the calibration window is too quiet
-    to identify travel times.
+    intercept is fitted (recency-weighted residual mean, e-folding time
+    `recency_tau_hours`), so the result is anchored to the target's current
+    base flow regime rather than lagging behind a 28-day seasonal shift.
+    Pass recency_tau_hours=None for an unweighted mean. Used when the
+    calibration window is too quiet to identify travel times.
     """
     f = RoutingFit(list(map(int, lags)), list(map(float, ks)),
                    list(map(float, weights)), 0.0, float('nan'), source='default',
@@ -425,9 +431,19 @@ def default_fit(target: np.ndarray, inputs: Sequence[np.ndarray],
     rows[:min(warmup_hours, len(target))] = False
     if rows.sum() == 0:
         rows = np.isfinite(target)
-    resid = target[rows] - pred[rows]
-    f.intercept = float(np.mean(resid)) if resid.size else 0.0
-    f.rmse = float(np.sqrt(np.mean((resid - f.intercept) ** 2))) if resid.size else float('nan')
+    idx = np.where(rows)[0]
+    resid = target[idx] - pred[idx]
+    if resid.size:
+        if recency_tau_hours is not None and recency_tau_hours > 0:
+            age = (idx[-1] - idx).astype(float)
+            w = np.exp(-age / float(recency_tau_hours))
+            f.intercept = float(np.sum(w * resid) / np.sum(w))
+        else:
+            f.intercept = float(np.mean(resid))
+        f.rmse = float(np.sqrt(np.mean((resid - f.intercept) ** 2)))
+    else:
+        f.intercept = 0.0
+        f.rmse = float('nan')
     return f
 
 
@@ -458,9 +474,17 @@ def extend_recession(values: np.ndarray, last_idx: int, floor: float,
     return out
 
 
+# Mainstem upstream gauges without RFC forecasts (e.g. Wellsville, Uravan)
+# decay much more slowly than flashy mountain tributaries; using 720 h prevents
+# artificial multi-day drops during steady/snowmelt flows while tributaries
+# keep MAX_RECESSION_TAU_HOURS = 120 h to preserve flood crest timing.
+MAINSTEM_RECESSION_TAU_HOURS = 720.0
+
+
 def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
                 forecast: Optional[pd.Series] = None,
-                floor: Optional[float] = None) -> np.ndarray:
+                floor: Optional[float] = None,
+                max_tau_hours: float = MAX_RECESSION_TAU_HOURS) -> np.ndarray:
     """
     Assemble one upstream gauge's hourly input on `grid` (UTC): observations
     up to the last observed hour, then the RFC forecast (if any), then an
@@ -495,7 +519,7 @@ def build_input(grid: pd.DatetimeIndex, observed: pd.Series,
     values[:first] = values[first]
     if floor is None:
         floor = float(np.nanmin(obs.to_numpy()))
-    values = extend_recession(values, last, floor)
+    values = extend_recession(values, last, floor, max_tau_hours=max_tau_hours)
     return values, {'last_observed': last_obs_t, 'forecast_end': fc_end}
 
 
@@ -587,11 +611,23 @@ def forecast(fits: Sequence[RoutingFit], inputs: Sequence[np.ndarray],
     t = np.arange(n) - now_idx
     decay = np.where(t <= 0, 1.0, np.exp(-np.maximum(t, 0) / bias_tau_hours))
     lo = max(0, now_idx - anchor_hours + 1)
-    anchor = np.nanmean(target_obs[lo:now_idx + 1])
+    anchor_slice = target_obs[lo:now_idx + 1]
+    if np.isfinite(anchor_slice).any():
+        anchor_obs = float(np.nanmean(anchor_slice))
+        anchor_pred_slice = slice(lo, now_idx + 1)
+    else:
+        prior = np.where(np.isfinite(target_obs[:now_idx + 1]))[0]
+        if prior.size:
+            last_ok = int(prior[-1])
+            anchor_obs = float(target_obs[last_ok])
+            anchor_pred_slice = slice(last_ok, last_ok + 1)
+        else:
+            anchor_obs = None
+            anchor_pred_slice = None
     members = []
     for f in fits:
         pred = f.predict(inputs)
-        bias = anchor - np.mean(pred[lo:now_idx + 1])
+        bias = (anchor_obs - float(np.mean(pred[anchor_pred_slice]))) if anchor_obs is not None else 0.0
         m = pred + bias * decay
         m[:now_idx + 1] = target_obs[:now_idx + 1]
         members.append(np.maximum(m, 0.0))

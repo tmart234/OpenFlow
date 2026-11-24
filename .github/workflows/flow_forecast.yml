@@ -73,7 +73,7 @@ jobs:
         python -m pip install --upgrade pip
         if [ -n "$HAS_MODEL" ]; then
           # Full training env (tensorflow) to run the ML model for the overlay.
-          pip install -r openFlowML/requirements.txt scipy h5py
+          pip install -r openFlowML/requirements.txt scipy h5py -c openFlowML/constraints-train.txt
         else
           # scipy reads gridMET (NetCDF-3); h5py reads the NWS Stage IV analysis.
           pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7" scipy h5py

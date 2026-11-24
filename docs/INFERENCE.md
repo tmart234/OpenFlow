@@ -51,16 +51,14 @@ for entry in manifest["files"]:
 
 Run it from the CLI with `python openFlowML/flow_forecast.py --site taos-box --model-dir <release dir>`. That draws the model's daily min–max next to the routing or NWS forecast. The **Flow Forecast** workflow does the same automatically with the newest `model-*` release.
 
-**Units.** Training used raw NOAA GHCND daily summaries:
-- `TMIN` / `TMAX` in **tenths of °C**;
-- `precipitation` in mm.
+**Units & weather source.** Point weather (`TMIN` / `TMAX` in **tenths of °C**, `precipitation` in mm) defaults to gauge-collocated 4-km gridMET (`training_config.weather_source = "gridmet"`), matching gauge-point Open-Meteo / NWS forecasts without nearby-GHCND elevation offsets. Legacy releases (without `weather_source`, or `"noaa"`) used raw NOAA GHCND daily summaries filled from gridMET.
 
-Forecast temperatures must be converted to these units (°C × 10). (`data/get_forecast.py` returns °F, which does not match.)
+Forecast temperatures must be converted to these units (°C × 10). (`data/get_forecast.py` returns °F by default when `temperature_unit='fahrenheit'`, which does not match; pass `temperature_unit='celsius'` and multiply by 10.)
 
 **Gaps between the data sources:**
 - **Mixed upstream sources:** for CO DWR upstream and anchor gauges, the daily archive the model trained on wins wherever it has a value. NWPS observations and RFC forecasts are appended only after the archive ends, multiplied by the median archive/NWPS ratio over their last 14 common days (`ml_inference.splice_on_training_scale`). In Oct 2026 the DWR Lobatos record read about half the USGS-based NWPS series; letting NWPS overwrite the archive fed the model an upstream level it never saw in training.
-- **Station outages:** days the nearest NOAA station did not report take the gridMET cell at the gauge (`get_basin_precip.gridmet_point_weather`). Temperatures are shifted by that calendar month's mean station-minus-gridMET difference (`combine_data.fill_weather_gaps`). Training does the same, so a station that stops reporting no longer removes those days from the training data.
-- **NOAA lag:** NOAA daily data runs 2–4 days behind. The reference bridges those days by interpolating temperature toward the NWS forecast for today, with precipitation from the observed local-zone basin rain.
+- **Station outages:** in legacy `"noaa"` mode, days the nearest NOAA station did not report take the gridMET cell at the gauge (`get_basin_precip.gridmet_point_weather`), shifted by that calendar month's mean station-minus-gridMET difference (`combine_data.fill_weather_gaps`).
+- **Weather reporting lag:** gridMET / NOAA daily observations run ~2–4 days behind real time. The reference bridges those days by interpolating temperature toward today's gauge-point forecast, with precipitation from the observed local-zone basin rain.
 - **Disabled sources:** `training_config.disabled_sources` lists data sources that training switched off (e.g. `SMAP` without Earthdata credentials). Inference switches the same ones off, so the model sees the placeholders it was trained on.
 
 ## Input tensors
@@ -69,7 +67,7 @@ The model takes a dict of 5 inputs. Names are stable across exports:
 
 | Name | dtype | Shape | Source |
 | --- | --- | --- | --- |
-| `encoder_input` | float32 | `[1, 60, len(encoder_features)]` | Last 60 days of features, columns in `training_config.encoder_features` order, pre-scaled. Includes observed precipitation (`precipitation`, mm/day from GHCND PRCP). |
+| `encoder_input` | float32 | `[1, 60, len(encoder_features)]` | Last 60 days of features, columns in `training_config.encoder_features` order, pre-scaled. Includes observed precipitation (`precipitation`, mm/day). |
 | `decoder_input` | float32 | `[1, 14, len(decoder_features)]` | Next 14 days of forecast-time-available features, columns in `training_config.decoder_features` order, pre-scaled. Includes forecast precipitation — pull `precipitation_sum` from Open-Meteo's daily forecast (`data/get_forecast.py` does this server-side; mobile clients can call Open-Meteo directly). |
 | `persistence_input` | float32 | `[1, len(target_features)]` | Last encoder-day flow values (the `Min Flow` / `Max Flow` columns from the last encoder row), in scaled space. |
 | `station_input` | int32 | `[1]` | `station_index.json[site_id]`, or `0` if the site isn't in the map. |
@@ -138,7 +136,11 @@ The routing CLI (`flow_forecast.py`) uses the same anchor, hourly (`routing.anch
 - `d < K` and the routed value exists: use it, `upstream_known = 1`.
 - otherwise: **hold** the last known value (starting from the last encoder day's `upstream_flow`) and set `upstream_known = 0`.
 
-**`upstream_change` (decoder only)** is `upstream_flow` (decoder day, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`. It is 0 on other days, and on every day when the last encoder day's `upstream_observed` is 0. The model's linear skip head reads it directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`). The skip has a shared coefficient plus a learned per-station gain (`training_config.river_upstream_gain`). Rivers whose upstream gauges carry almost all of their flow and rivers where they carry a fraction can respond differently. Clients need do nothing: the gain is looked up inside the model from `station_input`.
+**`upstream_change` (decoder only)** depends on `training_config.upstream_change_mode`:
+- `"mass_balance_hold"` (current): physically consistent additive mass-balance log-flow delta `(log1p(max(q0_mid + u_dec - u0, 0)) - log1p(q0_mid)) / flow_scale` in cfs inverted via `scalers.json`, **held** past `K` using the held `upstream_flow` (eliminating the Day `K+1` cliff). Zero on every day when the last encoder day's `upstream_observed` is 0.
+- `"legacy"` (omitted in older releases): `upstream_flow` (decoder, scaled) minus the last encoder day's `upstream_flow` (scaled) on days with `upstream_known = 1`, and 0 on later days.
+
+The model's linear skip head reads `upstream_change` directly, so an incoming upstream rise moves the forecast (`windowing.upstream_change`). The skip has a shared coefficient plus a learned per-station gain (`training_config.river_upstream_gain`). Rivers whose upstream gauges carry almost all of their flow and rivers where they carry a fraction can respond differently. Clients need do nothing: the gain is looked up inside the model from `station_input`.
 
 `windowing.upstream_decoder_window` is the single reference implementation; training calls it for every window. In training, the observed upstream flow stood in for the RFC forecast on known days. This is the same "perfect forecast" assumption the weather columns make, so expect somewhat lower skill on known days when the RFC forecast misses.
 

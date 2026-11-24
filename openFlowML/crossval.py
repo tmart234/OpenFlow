@@ -45,24 +45,55 @@ def _mean_error(report: dict) -> Optional[float]:
     return round(float(np.mean(err)), 3) if err else None
 
 
+def _concat_forecasts(parts: List[dict]) -> dict:
+    """Concatenate per-fold evaluate.forecasts() dicts (already in real cfs units)."""
+    out = {}
+    for k in parts[0]:
+        if k == 'quantiles':
+            out[k] = parts[0][k]
+        else:
+            out[k] = np.concatenate([p[k] for p in parts], axis=0)
+    return out
+
+
 def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_basins: int,
-                   folds: int = DEFAULT_FOLDS, members: int = 1) -> dict:
+                   folds: int = DEFAULT_FOLDS, members: int = 1,
+                   raw_data: Optional[pd.DataFrame] = None) -> dict:
     """Train and score one ensemble of `members` per fold; pooled + per-fold report."""
+    import tempfile
     import model as model_mod
+    import normalize_data
     import train
-    samples = windowing.build_windows(data, windowing.ENCODER_DAYS, windowing.DECODER_DAYS)
-    splits = windowing.water_year_folds(samples, folds)
-    pooled_samples: List = []
-    points, bands = [], []
+    base_samples = windowing.build_windows(
+        data, windowing.ENCODER_DAYS, windowing.DECODER_DAYS, scalers=scalers)
+    base_splits = windowing.water_year_folds(base_samples, folds)
+    raw_wy = (pd.to_datetime(raw_data['Date']).map(windowing.water_year)
+              if raw_data is not None and not raw_data.empty else None)
+    fold_fcs: List[dict] = []
     per_fold = []
-    for k, split in enumerate(splits):
+    total_windows = 0
+    for k, split in enumerate(base_splits):
         test_years = sorted({windowing.water_year(s.anchor_date + pd.Timedelta(days=windowing.ENCODER_DAYS - 1))
                              for s in split.test})
+        val_years = sorted({windowing.water_year(s.anchor_date + pd.Timedelta(days=windowing.ENCODER_DAYS - 1))
+                            for s in split.val})
+        fold_scalers = scalers
+        fold_split = split
+        if raw_data is not None and raw_wy is not None:
+            # Refit scalers strictly on this fold's training water years (zero val/test leakage).
+            fit_mask = (~raw_wy.isin(set(test_years) | set(val_years))).to_numpy()
+            with tempfile.TemporaryDirectory() as td:
+                fold_df = normalize_data.normalize_data(raw_data, artifacts_dir=td, fit_mask=fit_mask)
+                with open(os.path.join(td, 'scalers.json')) as f:
+                    fold_scalers = json.load(f)
+            fold_samples = windowing.build_windows(
+                fold_df, windowing.ENCODER_DAYS, windowing.DECODER_DAYS, scalers=fold_scalers)
+            fold_split = windowing.water_year_folds(fold_samples, folds)[k]
         logger.info("Fold %d/%d: test water years %s; train %d, val %d, test %d windows",
-                    k + 1, folds, test_years, len(split.train), len(split.val), len(split.test))
-        tr_x, tr_y = windowing.stack(split.train)
-        va_x, va_y = windowing.stack(split.val)
-        te_x, _ = windowing.stack(split.test)
+                    k + 1, folds, test_years, len(fold_split.train), len(fold_split.val), len(fold_split.test))
+        tr_x, tr_y = windowing.stack(fold_split.train)
+        va_x, va_y = windowing.stack(fold_split.val)
+        te_x, _ = windowing.stack(fold_split.test)
         nets, _ = train.fit_members(
             num_stations, num_basins,
             (tr_x, tr_y, train.sample_weights(tr_x, tr_y)),
@@ -73,23 +104,19 @@ def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_bas
             model_mod.calibrate_band(net, va_x, va_y, train.QUANTILES)
         pred = net.predict(te_x, verbose=0, batch_size=512)
         point, band = model_mod.point_forecast(pred), model_mod.band_forecast(pred)
-        fold_report = evaluate.build_report(evaluate.forecasts(
-            split.test, point, scalers, band=band, quantiles=train.QUANTILES))
-        per_fold.append({'fold': k, 'test_water_years': test_years, 'windows': len(split.test),
+        fc = evaluate.forecasts(fold_split.test, point, fold_scalers, band=band, quantiles=train.QUANTILES)
+        fold_report = evaluate.build_report(fc)
+        per_fold.append({'fold': k, 'test_water_years': test_years, 'windows': len(fold_split.test),
                          'mean_error_pct': _mean_error(fold_report),
                          'error_pct': fold_report['all']['error_pct'],
                          'band': fold_report['all'].get('band')})
         logger.info("Fold %d: mean error %.2f%% (persistence %.2f%%)", k + 1,
                     per_fold[-1]['mean_error_pct'], np.mean(fold_report['all']['error_pct']['persistence']))
-        pooled_samples += split.test
-        points.append(point)
-        if band is not None:
-            bands.append(band)
-    pooled = evaluate.build_report(evaluate.forecasts(
-        pooled_samples, np.concatenate(points), scalers,
-        band=np.concatenate(bands) if bands else None, quantiles=train.QUANTILES))
+        fold_fcs.append(fc)
+        total_windows += len(fold_split.test)
+    pooled = evaluate.build_report(_concat_forecasts(fold_fcs))
     return {'folds': per_fold, 'pooled': pooled, 'mean_error_pct': _mean_error(pooled),
-            'n_folds': folds, 'members_per_fold': members, 'windows': len(pooled_samples),
+            'n_folds': folds, 'members_per_fold': members, 'windows': total_windows,
             'settings': {k: v for k, v in sorted(os.environ.items()) if k.startswith('OPENFLOW_')}}
 
 
@@ -157,7 +184,9 @@ def main(argv=None) -> int:
     with open(os.path.join(args.base_path, 'basin_index.json')) as f:
         num_basins = len(json.load(f))
     data = pd.read_csv(os.path.join(args.base_path, 'openFlowML', 'normalized_data.csv'), parse_dates=['Date'])
-    report = cross_validate(data, scalers, num_stations, num_basins, args.folds, args.members)
+    raw_path = os.path.join(args.base_path, 'openFlowML', 'combined_data_all_sites.csv')
+    raw_data = pd.read_csv(raw_path, parse_dates=['Date']) if os.path.exists(raw_path) else None
+    report = cross_validate(data, scalers, num_stations, num_basins, args.folds, args.members, raw_data=raw_data)
     names = {}
     try:
         from data import get_upstream

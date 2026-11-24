@@ -204,7 +204,14 @@ def build_station(site_id, zone_km=basin_zones.DEFAULT_ZONE_KM, n_points=DEFAULT
     zone_of = assign_zones(all_ids, local_ids, mid_ids)
 
     cfg = get_upstream.upstream_config(site_id, registry)
-    gauges = [g['usgs_id'] for g in (cfg or {}).get('upstream', []) if g.get('usgs_id')]
+    gauge_entries = list((cfg or {}).get('upstream', []))
+    if (cfg or {}).get('anchor'):
+        gauge_entries.append(cfg['anchor'])
+    rcfg = (cfg or {}).get('routing') or {}
+    if rcfg.get('anchor'):
+        gauge_entries.append(rcfg['anchor'])
+    gauge_entries.extend(rcfg.get('tributaries') or [])
+    gauges = list(dict.fromkeys(g['usgs_id'] for g in gauge_entries if g.get('usgs_id')))
     gauged = set()
     for g in gauges:
         gauged |= upstream_huc12(g)

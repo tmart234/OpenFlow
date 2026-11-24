@@ -151,6 +151,24 @@ def test_chronological_split_is_temporally_disjoint_with_embargo():
             assert (min(test_dates) - max(val_dates)).days >= 7
 
 
+def test_chronological_split_uses_global_cutoffs_for_unequal_stations():
+    # Station A has 400 days; Station B starts 200 days later (shorter record).
+    # Global cutoffs ensure Station B cannot place later dates into train
+    # while Station A is already in val or test.
+    df = pd.concat([
+        _make_station_frame('USGS:A', 1, 1, n_days=400, start='2022-01-01'),
+        _make_station_frame('USGS:B', 2, 2, n_days=200, start='2022-07-20'),
+    ], ignore_index=True)
+    samples = windowing.build_windows(df, encoder_days=30, decoder_days=7)
+    splits = windowing.chronological_split(samples, val_frac=0.15, test_frac=0.15, embargo_days=7)
+    max_train = max(s.anchor_date for s in splits.train)
+    min_val = min(s.anchor_date for s in splits.val)
+    max_val = max(s.anchor_date for s in splits.val)
+    min_test = min(s.anchor_date for s in splits.test)
+    assert (min_val - max_train).days >= 7
+    assert (min_test - max_val).days >= 7
+
+
 def test_stack_produces_keras_input_dict_and_target_tensor():
     df = _make_station_frame('USGS:A', 1, 1, n_days=120)
     samples = windowing.build_windows(df, encoder_days=60, decoder_days=14)
@@ -295,10 +313,32 @@ def test_basin_precip_known_days_matches_qpf_horizon():
     assert windowing.BASIN_PRECIP_FEATURES == get_basin_precip.FEATURE_COLUMNS
 
 
-def test_upstream_change_is_relative_to_last_encoder_day_on_known_days():
+def test_upstream_change_holds_past_known_days_and_supports_legacy_mode():
+    # Default holds the last known change past known_days (eliminating Day K+1 cliff).
     out = windowing.upstream_change(np.array([2.0, 3.0, 3.0]), np.array([1, 1, 0]), last_value=1.5)
-    np.testing.assert_allclose(out, [0.5, 1.5, 0.0])
+    np.testing.assert_allclose(out, [0.5, 1.5, 1.5])
+    # Legacy mode zeroes past known_days for pre-fix model releases.
+    legacy = windowing.upstream_change(np.array([2.0, 3.0, 3.0]), np.array([1, 1, 0]),
+                                       last_value=1.5, hold_beyond_known=False)
+    np.testing.assert_allclose(legacy, [0.5, 1.5, 0.0])
     assert (windowing.upstream_change(np.ones(3), np.ones(3), 1.0, last_observed=0) == 0).all()
+
+
+def test_upstream_change_mass_balance_converts_cfs_delta_to_target_log_scale():
+    scalers = {
+        'Min Flow': {'mean': 0.0, 'scale': 1.0, 'transform': 'log1p'},
+        'Max Flow': {'mean': 0.0, 'scale': 1.0, 'transform': 'log1p'},
+        'upstream_flow': {'mean': 0.0, 'scale': 1.0, 'transform': 'log1p'},
+    }
+    # Target anchor at 500 cfs; upstream rises from 200 -> 700 cfs (+500 cfs), held on day 2.
+    # Mass-balance expects target flow 500 + 500 = 1000 cfs -> log1p(1000) - log1p(500).
+    u0 = np.log1p(200.0)
+    vals = np.array([np.log1p(700.0), np.log1p(700.0)])
+    anchor = np.array([np.log1p(500.0), np.log1p(500.0)])
+    out = windowing.upstream_change(vals, np.array([1, 0]), u0, scalers=scalers,
+                                    anchor_flow_scaled=anchor)
+    expected = np.log1p(1000.0) - np.log1p(500.0)
+    np.testing.assert_allclose(out, [expected, expected], rtol=1e-6)
 
 
 def test_windows_carry_upstream_change():
@@ -308,7 +348,8 @@ def test_windows_carry_upstream_change():
     up = df['upstream_flow'].to_numpy()
     chg = s.decoder_X[:, windowing.DECODER_FEATURES.index('upstream_change')]
     np.testing.assert_allclose(chg[:3], up[60:63] - up[59])
-    assert (chg[3:] == 0).all()
+    # Held smoothly at the last known day's change instead of snapping to 0 on day 4.
+    np.testing.assert_allclose(chg[3:], up[62] - up[59])
 
 
 def test_water_year_boundaries():

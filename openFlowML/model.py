@@ -116,9 +116,14 @@ class QuantileBand(layers.Layer):
         super().build(input_shape)
 
     def call(self, inputs):
-        point, gaps = inputs
+        if len(inputs) == 3:
+            point, gaps, st_scale = inputs
+            lower = self.gap_scale[..., 0] * st_scale[..., 0]
+            upper = self.gap_scale[..., 1] * st_scale[..., 1]
+        else:
+            point, gaps = inputs
+            lower, upper = self.gap_scale[..., 0], self.gap_scale[..., 1]
         out = {self.mid: tf.stop_gradient(point)}
-        lower, upper = self.gap_scale[..., 0], self.gap_scale[..., 1]
         for k in range(self.mid - 1, -1, -1):
             out[k] = out[k + 1] - gaps[..., k] * lower
         for k in range(self.mid, len(self.quantiles) - 1):
@@ -193,7 +198,7 @@ def build_encoder_decoder(
     lstm_units: int = 64,
     embedding_dim: int = 8,
     dropout: float = 0.2,
-    recurrent_dropout: float = 0.1,
+    recurrent_dropout: float = 0.0,
     station_dropout: float = 0.1,
     learning_rate: float = 1e-3,
     clipnorm: float = 1.0,
@@ -333,7 +338,13 @@ def build_encoder_decoder(
     )(band_hidden)
     gaps = layers.Activation('softplus', name='band_softplus')(
         layers.Reshape((decoder_days, target_features, len(quantiles) - 1))(band_raw))
-    band = QuantileBand(quantiles, name=QUANTILE_OUTPUT)([output, gaps])
+    st_scale_flat = layers.Embedding(
+        input_dim=num_stations + 1, output_dim=decoder_days * target_features * 2,
+        embeddings_initializer='ones', trainable=False, name='band_station_scale',
+    )(station_input)
+    st_scale = layers.Reshape((decoder_days, target_features, 2),
+                              name='band_station_scale_reshape')(st_scale_flat)
+    band = QuantileBand(quantiles, name=QUANTILE_OUTPUT)([output, gaps, st_scale])
 
     model = Model(inputs=inputs, outputs={POINT_OUTPUT: output, QUANTILE_OUTPUT: band},
                   name='flow_seq2seq_residual')
@@ -379,6 +390,17 @@ def band_layers(net):
     return found
 
 
+def band_station_scale_layers(net):
+    """Every per-station conformal multiplier Embedding in `net`."""
+    found = []
+    for layer in net.layers:
+        if layer.name == 'band_station_scale':
+            found.append(layer)
+        elif isinstance(layer, Model):
+            found.extend(band_station_scale_layers(layer))
+    return found
+
+
 def band_calibration(quantiles_pred, point_pred, y, quantiles, lo=0.25, hi=4.0):
     """
     Per-lead, per-target, per-side scale factors (H, T, 2) for the band's gaps
@@ -403,23 +425,54 @@ def band_calibration(quantiles_pred, point_pred, y, quantiles, lo=0.25, hi=4.0):
 
 
 def set_band_scale(net, scale):
-    """Write calibration factors (H, T, 2) into every QuantileBand of `net`."""
+    """Write global calibration factors (H, T, 2) into every QuantileBand of `net`."""
     for layer in band_layers(net):
         layer.gap_scale.assign(np.asarray(scale, dtype='float32'))
 
 
-def calibrate_band(net, inputs, y, quantiles):
+def get_band_station_scale(net):
+    """Return the (num_stations + 1, H * T * 2) per-station multiplier matrix, or None."""
+    st_layers = band_station_scale_layers(net)
+    return st_layers[0].get_weights()[0].copy() if st_layers else None
+
+
+def set_band_station_scale(net, rel_scale):
+    """Write per-station residual calibration multipliers into every member of `net`."""
+    arr = np.asarray(rel_scale, dtype='float32')
+    for layer in band_station_scale_layers(net):
+        layer.set_weights([arr.reshape(layer.input_dim, layer.output_dim)])
+
+
+def calibrate_band(net, inputs, y, quantiles, min_station_windows: int = 50):
     """
-    Calibrate `net`'s band on held-out (inputs, y) and return the factors.
+    Calibrate `net`'s band on held-out (inputs, y) and return global factors (H, T, 2).
 
     Measured on the model's own (averaged) output with unit scale; every
     member gets the same factors, so the ensemble's averaged band scales by
-    them too (the average is linear in the gaps).
+    them too (the average is linear in the gaps). When the model includes
+    per-station multiplier embeddings (`band_station_scale`), each known
+    station with at least `min_station_windows` held-out windows also gets its
+    own split-conformal multiplier relative to the global factor (index 0 keeps
+    1.0 so unseen stations fall back to the global calibration).
     """
     set_band_scale(net, np.ones_like(band_layers(net)[0].gap_scale.numpy()))
+    st_layers = band_station_scale_layers(net)
+    if st_layers:
+        set_band_station_scale(net, np.ones((st_layers[0].input_dim, st_layers[0].output_dim), dtype='float32'))
     pred = net.predict(inputs, verbose=0, batch_size=512)
-    scale = band_calibration(band_forecast(pred), point_forecast(pred), y, quantiles)
+    q_pred, p_pred = band_forecast(pred), point_forecast(pred)
+    scale = band_calibration(q_pred, p_pred, y, quantiles)
     set_band_scale(net, scale)
+    if st_layers and isinstance(inputs, dict) and 'station_input' in inputs:
+        vocab = st_layers[0].input_dim
+        rel = np.ones((vocab,) + scale.shape, dtype='float32')
+        st = np.asarray(inputs['station_input']).reshape(-1)
+        for sid in range(1, vocab):
+            m = st == sid
+            if int(m.sum()) >= min_station_windows:
+                st_scale = band_calibration(q_pred[m], p_pred[m], y[m], quantiles)
+                rel[sid] = st_scale / np.maximum(scale, 1e-6)
+        set_band_station_scale(net, rel)
     return scale
 
 

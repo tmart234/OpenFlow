@@ -5,7 +5,6 @@ from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
 import numpy as np
 import matplotlib.pyplot as plt
-import contextily as ctx
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon as mplPolygon
 
@@ -17,6 +16,8 @@ def visualize_polygon(polygon, lat, lon, huc_level):
     """
     Visualize the polygon using matplotlib with a map overlay.
     """
+    import contextily as ctx
+
     fig, ax = plt.subplots(figsize=(12, 12))
     
     # Extract x and y coordinates
@@ -95,7 +96,7 @@ def get_huc_polygon(lat, lon, huc_level):
     logger.info(f"Requesting HUC{huc_level} polygon from URL: {url}")
 
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=60)
         response.raise_for_status()
         data = response.json()
         

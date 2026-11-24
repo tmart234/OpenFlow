@@ -99,6 +99,7 @@ def test_parse_rdb_flow_extracts_valid_rows_only():
         "5s\t15s\t20d\t6s\t14n\t10s\n"                          # RDB format-spec row
         "USGS\t09114500\t2022-05-01 00:00\tMST\t15.0\tA\n"
         "USGS\t09114500\t2022-05-01 00:15\tMST\t\tA\n"          # missing value -> skipped
+        "USGS\t09114500\t2022-05-01 00:20\tMST\t-999999\tIce\n"   # negative sentinel -> skipped
         "USGS\t09114500\t2022-05-01 00:30\tMST\t25.0\tP\n"
     )
     assert _parse_rdb_flow(text) == [("2022-05-01", 15.0), ("2022-05-01", 25.0)]

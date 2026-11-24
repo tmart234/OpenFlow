@@ -218,3 +218,96 @@ def test_splice_keeps_the_training_scale_and_rescales_nwps_days():
     assert out[days[15]] == pytest.approx(50.0)                  # NWPS rescaled by 0.5
     assert out[days[-1]] == pytest.approx(150.0)                 # the forecast rise keeps its shape
     assert ml_inference.splice_on_training_scale(pd.Series(dtype=float), nwps_days).equals(nwps_days)
+
+
+def test_flow_rescales_nwps_topup_when_rating_curve_offset_exists(monkeypatch):
+    """Regression for Conejos (DWR:CONMOGCO vs NWPS MOGC2 reading +48% higher)."""
+    from data import get_CODWR_flow
+    days = pd.date_range('2026-10-25', '2026-11-01')
+    archive = pd.DataFrame({'Date': days.strftime('%Y-%m-%d'),
+                            'Min Flow': [400.0] * len(days),
+                            'Max Flow': [400.0] * len(days)})
+    monkeypatch.setattr(get_CODWR_flow, 'get_historical_data', lambda *a: archive)
+    # NWPS reads 600 cfs (+50% shift) across all overlap days and on 2026-11-02.
+    obs_t = pd.date_range('2026-10-27T12:00Z', '2026-11-02T19:00Z', freq='6h')
+    payload = {'observed': {'secondaryUnits': 'kcfs', 'data': [
+        {'validTime': t.strftime('%Y-%m-%dT%H:%M:%SZ'), 'primary': 1.0, 'secondary': 0.600}
+        for t in obs_t]}}
+    monkeypatch.setattr(nwps, 'get_stageflow', lambda lid: payload)
+    df = ml_inference._flow('DWR:CONMOGCO', pd.Timestamp('2026-10-01'), TODAY, nws_lid='MOGC2',
+                            tz='America/Denver')
+    assert df.iloc[-1]['Date'] == '2026-11-02'
+    assert df.iloc[-1]['Min Flow'] == pytest.approx(400.0, rel=0.01)
+    assert df.iloc[-1]['Max Flow'] == pytest.approx(400.0, rel=0.01)
+
+
+def test_predict_swaps_quantile_bands_when_min_exceeds_max():
+    """Swapping min_cfs/max_cfs when lo > hi must swap min_q*/max_q* too so quantiles never cross."""
+    art = _artifacts()
+    art['training_config'] = dict(art['training_config'], quantiles=[0.05, 0.25, 0.5, 0.75, 0.95])
+    # Synthetic model whose Min Flow output exceeds Max Flow on day 0.
+    class FakeModel:
+        def predict(self, x, verbose=0):
+            pt = np.zeros((1, 14, 2), dtype=np.float32)
+            pt[0, 0, 0] = 2.0  # Min Flow higher than Max Flow!
+            pt[0, 0, 1] = 1.0
+            band = np.zeros((1, 14, 2, 5), dtype=np.float32)
+            for j in range(2):
+                for k, off in enumerate([-0.4, -0.2, 0.0, 0.2, 0.4]):
+                    band[0, :, j, k] = pt[0, :, j] + off
+            return {'persistence_plus_delta': pt, 'flow_quantiles': band}
+
+    art['model'] = FakeModel()
+    prep = {'inputs': {}, 'dates': pd.date_range(TODAY + pd.Timedelta(days=1), periods=14, name='Date')}
+    df = ml_inference.predict(art, prep)
+    # Day 0 was swapped: min_cfs is the lower branch, and min_q05 <= min_cfs <= min_q95, same for max.
+    assert df.loc[0, 'min_cfs'] < df.loc[0, 'max_cfs']
+    assert df.loc[0, 'min_q05_cfs'] <= df.loc[0, 'min_cfs'] <= df.loc[0, 'min_q95_cfs']
+    assert df.loc[0, 'max_q05_cfs'] <= df.loc[0, 'max_cfs'] <= df.loc[0, 'max_q95_cfs']
+
+
+def test_coords_falls_back_to_cached_coordinates_on_outage(monkeypatch):
+    monkeypatch.setattr(ml_inference, 'get_usgs_coordinates', lambda sid: None)
+    c = ml_inference._coords('USGS:08276500')
+    assert c['lat'] == pytest.approx(36.3200333)
+    with pytest.raises(ml_inference.InferenceError):
+        ml_inference._coords('USGS:99999999')
+
+
+def test_mirror_disabled_sources_guards_constant_zero_scalers(monkeypatch):
+    import os
+    monkeypatch.delenv('OPENFLOW_DISABLE_DROUGHT', raising=False)
+    scalers = {'drought_index': {'mean': 0.0, 'scale': 1.0, 'transform': 'identity'}}
+    ml_inference._mirror_disabled_sources({'disabled_sources': []}, scalers)
+    assert os.environ.get('OPENFLOW_DISABLE_DROUGHT') == '1'
+    monkeypatch.delenv('OPENFLOW_DISABLE_DROUGHT', raising=False)
+    live_scalers = {'drought_index': {'mean': 120.0, 'scale': 95.0, 'transform': 'identity'}}
+    ml_inference._mirror_disabled_sources({'disabled_sources': []}, live_scalers)
+    assert os.environ.get('OPENFLOW_DISABLE_DROUGHT') is None
+
+
+def test_prepare_inputs_mass_balance_hold_upstream_change(fake_sources):
+    art = _artifacts()
+    art['training_config'] = dict(art['training_config'], upstream_change_mode='mass_balance_hold')
+    prep = ml_inference.prepare_inputs(SITE, art, today=TODAY)
+    dec = prep['inputs']['decoder_input'][0]
+    chg = dec[:, windowing.DECODER_FEATURES.index('upstream_change')]
+    # Upstream rises from 200 -> 250 cfs (+50 cfs) on day 1, held across days 2..14.
+    assert chg[0] > 0
+    np.testing.assert_allclose(chg[1:], chg[0], rtol=1e-6)
+
+
+def test_prepare_inputs_forwards_weather_source_and_defaults_legacy_noaa(fake_sources, monkeypatch):
+    seen = []
+    orig = combine_data.fetch_and_process_data
+
+    def spy(*a, **k):
+        seen.append(k.get('weather_source_override'))
+        return orig(*a, **k)
+
+    monkeypatch.setattr(combine_data, 'fetch_and_process_data', spy)
+    ml_inference.prepare_inputs(SITE, _artifacts(), today=TODAY)
+    art_grid = _artifacts()
+    art_grid['training_config'] = dict(art_grid['training_config'], weather_source='gridmet')
+    ml_inference.prepare_inputs(SITE, art_grid, today=TODAY)
+    assert seen == ['noaa', 'gridmet']

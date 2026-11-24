@@ -17,7 +17,7 @@ Other invariants this module is responsible for:
 
 import logging
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -150,18 +150,55 @@ def upstream_decoder_window(future_values: np.ndarray,
     return values, known
 
 
+def _inv_scaled(z, params: dict) -> np.ndarray:
+    """Invert a single column's scaler params back to non-negative raw units."""
+    x = np.asarray(z, dtype=float) * float(params['scale']) + float(params['mean'])
+    if params.get('transform') == 'log1p':
+        return np.maximum(np.expm1(np.clip(x, -10.0, 20.0)), 0.0)
+    return np.maximum(x, 0.0)
+
+
 def upstream_change(values: np.ndarray, known: np.ndarray, last_value: float,
-                    last_observed: float = 1.0) -> np.ndarray:
+                    last_observed: float = 1.0, *,
+                    hold_beyond_known: bool = True,
+                    scalers: Optional[dict] = None,
+                    anchor_flow_scaled: Optional[np.ndarray] = None) -> np.ndarray:
     """
-    Decoder `upstream_change`: routed upstream flow minus its value on the
-    last encoder day (scaled space) on known days, 0 elsewhere or when the
-    last encoder day had no real upstream value.
+    Decoder `upstream_change`: expected log-flow change from routed upstream
+    inflow relative to the last encoder day.
+
+    When `scalers` (with 'Min Flow', 'Max Flow', 'upstream_flow') and
+    `anchor_flow_scaled` (the last encoder day's scaled [Min Flow, Max Flow])
+    are provided, computes the physically consistent additive mass-balance
+    change in scaled log-flow units:
+        (log1p(max(q0 + u_dec - u0, 0)) - log1p(max(q0, 0))) / flow_scale
+    Otherwise falls back to `values - last_value` in scaled space.
+
+    By default (`hold_beyond_known=True`) the last known change is held past
+    `known_days` (matching `upstream_decoder_window` and removing the Day K+1
+    zero-cliff). Pass `hold_beyond_known=False` only for legacy releases
+    trained before this fix.
     """
     values = np.asarray(values, dtype=float)
     known = np.asarray(known, dtype=float) >= 0.5
     if not last_observed or not np.isfinite(last_value):
         return np.zeros_like(values)
-    return np.where(known, values - float(last_value), 0.0)
+    if (scalers and anchor_flow_scaled is not None
+            and all(k in scalers for k in ('Min Flow', 'Max Flow', 'upstream_flow'))):
+        anchor = np.asarray(anchor_flow_scaled, dtype=float)
+        if anchor.size >= 2 and np.isfinite(anchor[:2]).all():
+            u_dec = _inv_scaled(values, scalers['upstream_flow'])
+            u0 = float(_inv_scaled(float(last_value), scalers['upstream_flow']))
+            q0_min = float(_inv_scaled(anchor[0], scalers['Min Flow']))
+            q0_max = float(_inv_scaled(anchor[1], scalers['Max Flow']))
+            q0_mid = 0.5 * (q0_min + q0_max)
+            flow_scale = 0.5 * (float(scalers['Min Flow']['scale'])
+                                + float(scalers['Max Flow']['scale']))
+            delta = (np.log1p(np.maximum(q0_mid + (u_dec - u0), 0.0))
+                     - np.log1p(max(q0_mid, 0.0))) / max(flow_scale, 1e-8)
+            return delta if hold_beyond_known else np.where(known, delta, 0.0)
+    diff = values - float(last_value)
+    return diff if hold_beyond_known else np.where(known, diff, 0.0)
 
 
 def basin_precip_decoder_window(values: np.ndarray, observed: np.ndarray,
@@ -189,7 +226,9 @@ class SplitWindows:
 
 def _build_windows_for_station(station_df: pd.DataFrame,
                                encoder_days: int,
-                               decoder_days: int) -> List[WindowedSample]:
+                               decoder_days: int,
+                               scalers: Optional[dict] = None,
+                               hold_upstream_beyond_known: bool = True) -> List[WindowedSample]:
     """
     Slide windows over a single station's contiguous daily series.
 
@@ -240,17 +279,19 @@ def _build_windows_for_station(station_df: pd.DataFrame,
         dec = dec_matrix[start + encoder_days:start + total].copy()
         tgt = tgt_matrix[start + encoder_days:start + total]
         last = start + encoder_days - 1
+        persistence_anchor = enc[-1, target_indices_in_encoder].astype(float)
         dec[:, dec_up_col], dec[:, dec_known_col] = upstream_decoder_window(
             up_values[start + encoder_days:start + total],
             up_observed[start + encoder_days:start + total],
             known_days, up_values[last], up_observed[last])
         dec[:, dec_change_col] = upstream_change(
-            dec[:, dec_up_col], dec[:, dec_known_col], up_values[last], up_observed[last])
+            dec[:, dec_up_col], dec[:, dec_known_col], up_values[last], up_observed[last],
+            hold_beyond_known=hold_upstream_beyond_known,
+            scalers=scalers, anchor_flow_scaled=persistence_anchor)
         dec[:, bp_cols], dec[:, bp_known_col] = basin_precip_decoder_window(
             dec[:, bp_cols], bp_observed[start + encoder_days:start + total])
         if not (np.isfinite(enc).all() and np.isfinite(dec).all() and np.isfinite(tgt).all()):
             continue
-        persistence_anchor = enc[-1, target_indices_in_encoder].astype(float)
         samples.append(WindowedSample(
             encoder_X=enc,
             decoder_X=dec,
@@ -266,12 +307,15 @@ def _build_windows_for_station(station_df: pd.DataFrame,
 
 def build_windows(df: pd.DataFrame,
                   encoder_days: int = ENCODER_DAYS,
-                  decoder_days: int = DECODER_DAYS) -> List[WindowedSample]:
+                  decoder_days: int = DECODER_DAYS,
+                  scalers: Optional[dict] = None,
+                  hold_upstream_beyond_known: bool = True) -> List[WindowedSample]:
     """
     Build station-aware (encoder, decoder, target) windows from the normalized
     dataset. The caller is expected to pass the output of normalize_data
     (one row per (station, date), with feature columns scaled and station_idx
-    and basin_idx assigned).
+    and basin_idx assigned). Passing `scalers` enables physically consistent
+    mass-balance `upstream_change` in scaled log-flow space.
     """
     required = (set(ENCODER_FEATURES) | set(DECODER_FEATURES) | set(TARGET_FEATURES) | {
         'Date', 'site_id', 'station_idx'}) - set(WINDOW_BUILT_DECODER_FEATURES)
@@ -281,10 +325,27 @@ def build_windows(df: pd.DataFrame,
 
     samples: List[WindowedSample] = []
     for site_id, station_df in df.groupby('site_id'):
-        station_samples = _build_windows_for_station(station_df, encoder_days, decoder_days)
+        station_samples = _build_windows_for_station(
+            station_df, encoder_days, decoder_days,
+            scalers=scalers, hold_upstream_beyond_known=hold_upstream_beyond_known)
         logger.info("Site %s: %d windows", site_id, len(station_samples))
         samples.extend(station_samples)
     return samples
+
+
+def build_windows_for_config(df: pd.DataFrame,
+                             config: Optional[dict] = None,
+                             scalers: Optional[dict] = None) -> List[WindowedSample]:
+    """Build windows matching a saved training_config.json (including legacy releases)."""
+    cfg = config or {}
+    enc_days = int(cfg.get('encoder_days', ENCODER_DAYS))
+    dec_days = int(cfg.get('decoder_days', DECODER_DAYS))
+    mode = cfg.get('upstream_change_mode', 'legacy')
+    if mode == 'mass_balance_hold':
+        return build_windows(df, enc_days, dec_days, scalers=scalers, hold_upstream_beyond_known=True)
+    if mode == 'scaled_hold':
+        return build_windows(df, enc_days, dec_days, scalers=None, hold_upstream_beyond_known=True)
+    return build_windows(df, enc_days, dec_days, scalers=None, hold_upstream_beyond_known=False)
 
 
 def chronological_split(samples: List[WindowedSample],
@@ -292,13 +353,14 @@ def chronological_split(samples: List[WindowedSample],
                         test_frac: float = 0.15,
                         embargo_days: int = DECODER_DAYS) -> SplitWindows:
     """
-    Per-station chronological split with an embargo gap between segments.
+    Global chronological split across all stations with an embargo gap between
+    segments.
 
-    For each station the earliest 70% of anchor dates become train, then an
-    `embargo_days`-wide gap drops samples whose encoder window might overlap
-    val, then val, another embargo, then test. The embargo defaults to the
-    forecast horizon, which is the minimum gap that guarantees no temporal
-    overlap between the input or target windows of adjacent splits.
+    Cutoffs are computed once from the global [min, max] anchor dates across
+    all stations so a station with a shorter record cannot leak future years
+    into training while longer-record stations are in validation or test.
+    The embargo defaults to the forecast horizon, guaranteeing that adjacent
+    splits' target windows never overlap.
     """
     if val_frac + test_frac >= 1.0:
         raise ValueError("val_frac + test_frac must be < 1")
@@ -308,33 +370,37 @@ def chronological_split(samples: List[WindowedSample],
     val: List[WindowedSample] = []
     test: List[WindowedSample] = []
 
-    # Group by station so each station contributes chronologically.
+    if not samples:
+        return SplitWindows(train=train, val=val, test=test)
+
+    all_anchors = [s.anchor_date for s in samples]
+    first_date = min(all_anchors)
+    last_date = max(all_anchors)
+    span = (last_date - first_date).days
+    train_end = first_date + pd.Timedelta(days=int(span * train_frac))
+    val_start = train_end + pd.Timedelta(days=embargo_days)
+    val_end = val_start + pd.Timedelta(days=int(span * val_frac))
+    test_start = val_end + pd.Timedelta(days=embargo_days)
+
     by_station = {}
     for s in samples:
         by_station.setdefault(s.site_id, []).append(s)
 
     for site_id, station_samples in by_station.items():
         station_samples.sort(key=lambda s: s.anchor_date)
-        anchors = [s.anchor_date for s in station_samples]
-        if not anchors:
-            continue
-        span = (anchors[-1] - anchors[0]).days
-        train_end = anchors[0] + pd.Timedelta(days=int(span * train_frac))
-        val_start = train_end + pd.Timedelta(days=embargo_days)
-        val_end = val_start + pd.Timedelta(days=int(span * val_frac))
-        test_start = val_end + pd.Timedelta(days=embargo_days)
+        n_tr = n_va = n_te = 0
         for s in station_samples:
             if s.anchor_date <= train_end:
                 train.append(s)
+                n_tr += 1
             elif val_start <= s.anchor_date <= val_end:
                 val.append(s)
+                n_va += 1
             elif s.anchor_date >= test_start:
                 test.append(s)
+                n_te += 1
             # samples falling into an embargo gap are intentionally dropped
-        logger.info("Site %s split: train=%d val=%d test=%d",
-                    site_id, sum(1 for s in train if s.site_id == site_id),
-                    sum(1 for s in val if s.site_id == site_id),
-                    sum(1 for s in test if s.site_id == site_id))
+        logger.info("Site %s split: train=%d val=%d test=%d", site_id, n_tr, n_va, n_te)
     return SplitWindows(train=train, val=val, test=test)
 
 

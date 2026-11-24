@@ -92,12 +92,31 @@ def load_artifacts(model_dir: str, with_model: bool = True) -> dict:
 # Data assembly helpers
 # --------------------------------------------------------------------------
 
+# Static fallback coordinates for registered stations when USGS/DWR site
+# metadata APIs have a transient outage (e.g. Taos Box 2026-11-16).
+FALLBACK_COORDS = {
+    'USGS:08276500': {'lat': 36.3200333, 'lon': -105.7544444},
+    'USGS:09070500': {'lat': 39.6446111, 'lon': -107.0780139},
+    'USGS:09114500': {'lat': 38.5419357, 'lon': -106.9497661},
+    'USGS:09163500': {'lat': 39.1327420, 'lon': -109.0270750},
+    'USGS:09180000': {'lat': 38.7972081, 'lon': -109.1951142},
+    'DWR:ARKCANCO':  {'lat': 38.4336240, 'lon': -105.2577840},
+    'DWR:CONMOGCO':  {'lat': 37.0539540, 'lon': -106.1871450},
+}
+
+
 def _coords(site_id: str) -> dict:
     prefix, sid = site_id.split(':', 1)
     c = get_usgs_coordinates(sid) if prefix == 'USGS' else get_dwr_coordinates(sid)
-    if not c:
-        raise InferenceError(f"no coordinates for {site_id}")
-    return {'lat': float(c['latitude']), 'lon': float(c['longitude'])}
+    if c:
+        return {'lat': float(c['latitude']), 'lon': float(c['longitude'])}
+    if site_id in FALLBACK_COORDS:
+        logger.warning("Coordinate lookup failed for %s; using cached fallback coordinates", site_id)
+        return dict(FALLBACK_COORDS[site_id])
+    raise InferenceError(f"no coordinates for {site_id}")
+
+
+MIN_FLOW_SPLICE_OVERLAP_DAYS = 3
 
 
 def _flow(site_id: str, start, end, nws_lid: Optional[str] = None,
@@ -126,11 +145,30 @@ def _flow(site_id: str, start, end, nws_lid: Optional[str] = None,
         # The DWR archive the model trained on is one daily mean per day
         # (Min Flow == Max Flow); top-up days must look the same.
         daily['min'] = daily['max'] = daily['mean']
+    # Rescale NWPS top-up days onto the archive's training scale whenever
+    # enough overlapping days exist to measure a rating-curve shift (e.g.
+    # CO DWR CONMOGCO vs NWPS MOGC2 reading +196 cfs higher in Nov 2026).
+    ratio_min = ratio_max = 1.0
+    if df is not None and len(df):
+        arch = df.copy()
+        arch['_d'] = pd.to_datetime(arch['Date']).dt.normalize()
+        arch = arch.groupby('_d')[['Min Flow', 'Max Flow']].mean()
+        both = arch.join(daily[['min', 'max']], how='inner').dropna()
+        both = both[(both['min'] > 0) & (both['max'] > 0)].tail(SPLICE_OVERLAP_DAYS)
+        if len(both) >= MIN_FLOW_SPLICE_OVERLAP_DAYS:
+            ratio_min = float(np.median(both['Min Flow'] / both['min']))
+            ratio_max = float(np.median(both['Max Flow'] / both['max']))
+            if prefix == 'DWR':
+                ratio_min = ratio_max = 0.5 * (ratio_min + ratio_max)
+            if abs(ratio_max - 1.0) > 0.05:
+                logger.info("Rescaling %s NWPS top-up by %.3f (%.0f overlap days)",
+                            site_id, ratio_max, len(both))
     daily = daily[(daily.index > last) & (daily.index <= pd.Timestamp(end).normalize())]
     if daily.empty:
         return df
     extra = pd.DataFrame({'Date': daily.index.strftime('%Y-%m-%d'),
-                          'Min Flow': daily['min'].to_numpy(), 'Max Flow': daily['max'].to_numpy()})
+                          'Min Flow': daily['min'].to_numpy() * ratio_min,
+                          'Max Flow': daily['max'].to_numpy() * ratio_max})
     logger.info("Topped up %s flow with %d NWPS day(s)", site_id, len(extra))
     return pd.concat([df, extra], ignore_index=True)
 
@@ -231,17 +269,31 @@ def _routed_upstream(site_id: str, cfg: Optional[dict], days: pd.DatetimeIndex,
 # Feature assembly
 # --------------------------------------------------------------------------
 
-def _mirror_disabled_sources(cfg_tc: dict) -> None:
+def _mirror_disabled_sources(cfg_tc: dict, scalers: Optional[dict] = None) -> None:
     """
     Switch off the same data sources the model was trained without, so it
     sees the placeholders it learned. Older configs don't record this; SMAP
     then counts as off unless Earthdata credentials are present (it cannot be
-    fetched without them).
+    fetched without them). Also disables any optional source whose scaler is
+    the constant-zero signature (mean == 0.0, scale == 1.0), protecting older
+    model releases if a previously broken source (e.g. USDM drought) starts
+    returning real values before the next retrain.
     """
     disabled = cfg_tc.get('disabled_sources')
     if disabled is None:
         disabled = [] if os.getenv('EARTHDATA_USERNAME') else ['SMAP']
-    for name in disabled:
+    disabled = set(disabled)
+    if scalers:
+        def _is_dead(col: str) -> bool:
+            p = scalers.get(col)
+            return bool(p and p.get('mean') == 0.0 and p.get('scale') == 1.0)
+        if _is_dead('drought_index'):
+            disabled.add('DROUGHT')
+        if _is_dead('soil_moisture'):
+            disabled.add('SMAP')
+        if _is_dead('reservoir_storage') and _is_dead('reservoir_release'):
+            disabled.add('RESERVOIR')
+    for name in sorted(disabled):
         os.environ[f'OPENFLOW_DISABLE_{name}'] = '1'
 
 
@@ -251,7 +303,7 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     Returns {'inputs', 'anchor', 'dates', 'info'}; no TensorFlow needed.
     """
     cfg_tc = art['training_config']
-    _mirror_disabled_sources(cfg_tc)
+    _mirror_disabled_sources(cfg_tc, art.get('scalers'))
     enc_days, dec_days = cfg_tc['encoder_days'], cfg_tc['decoder_days']
     reg = art['registry'].get(site_id)
     tz = tz or (reg or {}).get('timezone', 'America/Denver')
@@ -265,9 +317,11 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
                  nws_lid=(reg or {}).get('nws_lid'), tz=tz)
     if flow is None or flow.empty:
         raise InferenceError(f"no recent flow for {site_id}")
+    wx_source = cfg_tc.get('weather_source', 'noaa')
     fetched = combine_data.fetch_and_process_data(prefix, sid, start.to_pydatetime(),
                                                   today.to_pydatetime(), flow,
-                                                  noaa_fallback=gridmet_point_weather, coords=coords)
+                                                  noaa_fallback=gridmet_point_weather, coords=coords,
+                                                  weather_source_override=wx_source)
     if not fetched or fetched.get('noaa_data') is None or fetched['noaa_data'].empty:
         raise InferenceError(f"no weather data for {site_id} (NOAA GHCND and the gridMET fallback both empty)")
 
@@ -286,7 +340,7 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
         target = weather_fc.reindex([today]).iloc[0] if today in weather_fc.index else noaa.loc[noaa_last]
         last = noaa.loc[noaa_last]
         for i, d in enumerate(gap, start=1):
-            w = i / (len(gap) + 1)
+            w = i / len(gap)
             local = zones_daily.loc[d, ['rain_local', 'snow_local']].sum() \
                 if d in zones_daily.index and zones_daily.loc[d, 'basin_precip_observed'] else 0.0
             noaa.loc[d] = [(1 - w) * last['TMIN'] + w * target['TMIN'],
@@ -328,7 +382,17 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     dec['TMAX'] = wx['TMAX'].fillna(last_known['TMAX']).to_numpy()
     dec['precipitation'] = wx['precipitation'].fillna(0.0).to_numpy()
     up_cfg = get_upstream.upstream_config(site_id, art['registry'])
-    up = _routed_upstream(site_id, up_cfg, dates, start)
+    all_up_days = pd.DatetimeIndex(tail['Date']).union(dates)
+    up_all = _routed_upstream(site_id, up_cfg, all_up_days, start)
+    # Backfill missing recent encoder upstream days (e.g. anchor day when the
+    # upstream archive lags behind target flow) from the spliced NWPS series so
+    # enc['upstream_observed'][-1] stays valid and upstream_change doesn't zero out.
+    up_tail = up_all['upstream_flow'].reindex(pd.DatetimeIndex(tail['Date'])).to_numpy()
+    fill_up = (tail['upstream_observed'].to_numpy() == 0) & np.isfinite(up_tail)
+    if fill_up.any():
+        tail.loc[fill_up, 'upstream_flow'] = up_tail[fill_up]
+        tail.loc[fill_up, 'upstream_observed'] = 1
+    up = up_all.reindex(dates)
     dec['upstream_flow'] = up['upstream_flow'].to_numpy()
     dec['upstream_observed'] = up['upstream_flow'].notna().astype(int).to_numpy()
     zd = zones_daily.reindex(dates)
@@ -356,10 +420,22 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     dec_X[:, up_col], dec_X[:, up_known_col] = windowing.upstream_decoder_window(
         decf['upstream_flow'].to_numpy(dtype=float), decf['upstream_observed'].to_numpy(dtype=float),
         known_days, enc['upstream_flow'].iloc[-1], enc['upstream_observed'].iloc[-1])
+    t_idx = [windowing.ENCODER_FEATURES.index(c) for c in windowing.TARGET_FEATURES]
     if 'upstream_change' in windowing.DECODER_FEATURES:
-        dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
-            dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
-            enc['upstream_observed'].iloc[-1])
+        uc_mode = cfg_tc.get('upstream_change_mode', 'legacy')
+        if uc_mode == 'mass_balance_hold':
+            dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
+                dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+                enc['upstream_observed'].iloc[-1], hold_beyond_known=True,
+                scalers=art.get('scalers'), anchor_flow_scaled=enc_X[-1, t_idx])
+        elif uc_mode == 'scaled_hold':
+            dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
+                dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+                enc['upstream_observed'].iloc[-1], hold_beyond_known=True)
+        else:
+            dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
+                dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+                enc['upstream_observed'].iloc[-1], hold_beyond_known=False)
     bp_cols = [windowing.DECODER_FEATURES.index(c) for c in windowing.BASIN_PRECIP_FEATURES]
     bp_known = windowing.DECODER_FEATURES.index('basin_precip_known')
     dec_X[:, bp_cols], dec_X[:, bp_known] = windowing.basin_precip_decoder_window(
@@ -369,7 +445,6 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     if not (np.isfinite(enc_X).all() and np.isfinite(dec_X).all()):
         bad = [c for c in windowing.ENCODER_FEATURES if not np.isfinite(enc[c].to_numpy(dtype=float)).all()]
         raise InferenceError(f"non-finite model inputs for {site_id}: {bad}")
-    t_idx = [windowing.ENCODER_FEATURES.index(c) for c in windowing.TARGET_FEATURES]
     station_idx = int(art['station_index'].get(site_id, 0))
     basin_idx = int(art['basin_index'].get(str(fetched.get('huc8') or ''), 0))
     inputs = {
@@ -401,10 +476,13 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
     forecast quantiles of the daily low and high, e.g. max_q05_cfs ..
     max_q95_cfs (the 0.5 quantile is min_cfs / max_cfs themselves).
     """
-    import model as model_mod
     pred = art['model'].predict(prepared['inputs'], verbose=0)
-    out = model_mod.point_forecast(pred)[0]
-    band = model_mod.band_forecast(pred)
+    if isinstance(pred, dict):
+        out = pred['persistence_plus_delta'][0]
+        band = pred.get('flow_quantiles')
+    else:
+        out = pred[0]
+        band = None
     tf_ = windowing.TARGET_FEATURES
     sc = art['scalers']
 
@@ -414,12 +492,19 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
         return np.expm1(x) if p.get('transform') == 'log1p' else x
     lo = inv(out[:, tf_.index('Min Flow')], 'Min Flow')
     hi = inv(out[:, tf_.index('Max Flow')], 'Max Flow')
-    frame = pd.DataFrame({'Date': prepared['dates'], 'min_cfs': np.minimum(lo, hi),
-                          'max_cfs': np.maximum(lo, hi)})
+    swapped = lo > hi
+    frame = pd.DataFrame({'Date': prepared['dates'], 'min_cfs': np.where(swapped, hi, lo),
+                          'max_cfs': np.where(swapped, lo, hi)})
     quantiles = (art.get('training_config') or {}).get('quantiles')
     if band is not None and quantiles:
-        for side, col in (('min', 'Min Flow'), ('max', 'Max Flow')):
-            values = inv(band[0][:, tf_.index(col), :], col)
+        min_v = inv(band[0][:, tf_.index('Min Flow'), :], 'Min Flow')
+        max_v = inv(band[0][:, tf_.index('Max Flow'), :], 'Max Flow')
+        side_values = {
+            'min': np.where(swapped[:, None], max_v, min_v),
+            'max': np.where(swapped[:, None], min_v, max_v),
+        }
+        for side in ('min', 'max'):
+            values = side_values[side]
             for i, q in enumerate(quantiles):
                 if q != 0.5:
                     frame[f'{side}_q{round(q * 100):02d}_cfs'] = values[:, i]

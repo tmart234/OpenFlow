@@ -20,7 +20,10 @@ forecast window; this module is what an inference run will call. Importantly,
 this is point data only -- soil moisture / SWE are current-conditions
 features, not things this fetcher produces.
 
-Units: TMIN/TMAX in Fahrenheit (matches GHCND TMIN/TMAX), precipitation in
+Units: TMIN/TMAX default to Fahrenheit for backwards compatibility (NOTE: raw
+GHCND / OpenFlow training data is in tenths of °C, NOT Fahrenheit — callers
+feeding the ML model must pass `temperature_unit='celsius'` and multiply
+TMIN/TMAX by 10, as `ml_inference.forecast_weather` does). Precipitation is in
 millimetres (matches GHCND PRCP after combine_data's tenths-of-mm conversion).
 """
 
@@ -42,10 +45,11 @@ def _empty_forecast():
 def get_open_meteo_forecast(lat, lon, days=DEFAULT_HORIZON_DAYS, temperature_unit='fahrenheit'):
     """
     Fetch a daily TMIN/TMAX + precipitation forecast from Open-Meteo for the
-    next `days` days starting today. Default temperature unit is Fahrenheit to
-    match the GHCND TMIN/TMAX feature scale used during training. Precipitation
-    is in mm (Open-Meteo's `precipitation_sum` default), matching the GHCND
-    PRCP unit after combine_data's tenths-of-mm conversion.
+    next `days` days starting today. Default temperature unit is Fahrenheit for
+    backwards compatibility; note that GHCND / ML training temperatures are in
+    tenths of °C (use `temperature_unit='celsius'` and multiply by 10 for model
+    inputs). Precipitation is in mm (Open-Meteo's `precipitation_sum` default),
+    matching the GHCND PRCP unit after combine_data's tenths-of-mm conversion.
     """
     if days < 1 or days > MAX_HORIZON_DAYS:
         raise ValueError(f"days must be in 1..{MAX_HORIZON_DAYS}")

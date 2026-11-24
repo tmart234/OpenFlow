@@ -54,8 +54,13 @@ INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed', 'upstream_observed',
 # fitting the scaler on those placeholders would make the real values'
 # scale meaningless, and log1p(0) would put the placeholder far out in the
 # tail. The indicator column tells the model the placeholder isn't real.
-SCALER_FIT_MASKS = {'upstream_flow': 'upstream_observed',
-                    **{c: 'basin_precip_observed' for c in BASIN_PRECIP_COLUMNS}}
+SCALER_FIT_MASKS = {
+    'soil_moisture': 'sm_observed',
+    'reservoir_storage': 'reservoir_observed',
+    'reservoir_release': 'reservoir_observed',
+    'upstream_flow': 'upstream_observed',
+    **{c: 'basin_precip_observed' for c in BASIN_PRECIP_COLUMNS},
+}
 # Per-station metadata ints passed through unscaled (not model features).
 PASSTHROUGH_INT_COLUMNS = ['upstream_known_days']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
@@ -156,7 +161,7 @@ def apply_scalers(data, scalers):
     return data
 
 
-def normalize_data(data, artifacts_dir=None):
+def normalize_data(data, artifacts_dir=None, fit_mask=None):
     """
     Feature-engineer and normalize the combined dataset.
 
@@ -167,13 +172,18 @@ def normalize_data(data, artifacts_dir=None):
         artifacts_dir: if given, scalers.json, station_index.json, and
               basin_index.json are written here so inference can reproduce the
               full transform pipeline.
+        fit_mask: optional boolean mask (aligned to `data` rows) restricting
+              scaler fitting to training rows only so val/test statistics do
+              not leak into normalization.
 
     Returns the normalized DataFrame. Date, site_id, huc8, station_idx, and
-    basin_idx are all preserved so Phase 3 can do per-station chronological
-    splitting and station/basin embedding lookup.
+    basin_idx are all preserved so Phase 3 can do chronological splitting and
+    station/basin embedding lookup.
     """
     try:
         data = data.copy()
+        if fit_mask is not None:
+            data['_fit_row'] = np.asarray(fit_mask, dtype=bool)
 
         missing_core = [c for c in CORE_REQUIRED if c not in data.columns]
         if missing_core:
@@ -233,7 +243,15 @@ def normalize_data(data, artifacts_dir=None):
             basin_index = {}
             logger.warning("No 'huc8' column found; basin_idx not added")
 
-        scalers = fit_scalers(data, present_numeric, fit_masks=SCALER_FIT_MASKS)
+        if '_fit_row' in data.columns:
+            fit_frame = data[data['_fit_row']]
+            if fit_frame.empty:
+                fit_frame = data
+            data = data.drop(columns=['_fit_row'])
+        else:
+            fit_frame = data
+
+        scalers = fit_scalers(fit_frame, present_numeric, fit_masks=SCALER_FIT_MASKS)
         data = apply_scalers(data, scalers)
         for column, indicator in SCALER_FIT_MASKS.items():
             if column in data.columns and indicator in data.columns:

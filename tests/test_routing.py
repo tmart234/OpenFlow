@@ -83,6 +83,17 @@ def test_default_fit_only_fits_the_intercept():
     assert f.rmse == pytest.approx(0, abs=1e-6)
 
 
+def test_default_fit_recency_weighting_tracks_recent_baseflow_shift():
+    a = np.full(600, 300.0)
+    # Baseflow gain shifts from +50 cfs early in the 28-day window to +200 cfs recently.
+    offset = np.r_[np.full(480, 50.0), np.full(120, 200.0)]
+    target = offset + routing.route(a, 12, 12)
+    recent = routing.default_fit(target, [a], lags=[12], ks=[12], weights=[1.0])
+    flat = routing.default_fit(target, [a], lags=[12], ks=[12], weights=[1.0], recency_tau_hours=None)
+    assert recent.intercept > flat.intercept + 40.0
+    assert abs(recent.intercept - 200.0) < abs(flat.intercept - 200.0)
+
+
 def test_extend_recession_decays_toward_floor():
     v = np.concatenate([np.linspace(2000, 1500, 48), np.full(100, np.nan)])
     out = routing.extend_recession(v, 47, floor=200.0)
@@ -126,6 +137,8 @@ def test_build_input_without_forecast_recedes_from_last_observation():
     # (the default floor), never below it.
     assert 900.0 < values[30] < 1000.0
     assert values[-1] >= 900.0
+    gentle, _ = routing.build_input(grid, obs, None, max_tau_hours=routing.MAINSTEM_RECESSION_TAU_HOURS)
+    assert values[-1] < gentle[-1] < 1000.0
 
 
 def test_build_input_requires_observations():
@@ -148,6 +161,18 @@ def test_forecast_anchors_to_latest_obs_and_band_brackets_central():
     # Bias toward the latest observation decays: far out, the model shape rules.
     peak_t = int(np.argmax(ef.central))
     assert abs(peak_t - int(np.argmax(truth))) <= 6
+
+
+def test_forecast_survives_nan_at_now_idx():
+    a = _pulse(center=300)
+    truth = 150 + routing.route(a, 24, 12)
+    now = 200
+    obs = truth.copy()
+    obs[now] = np.nan
+    fits = [routing.RoutingFit([24], [12.0], [1.0], 110.0, 10.0)]
+    ef = routing.forecast(fits, [a], obs, now, bias_tau_hours=24, anchor_hours=1)
+    assert np.isfinite(ef.central[now + 1:]).all()
+    assert ef.central[now + 1] == pytest.approx(truth[now + 1], abs=5.0)
 
 
 def test_daily_summary_and_peak():
