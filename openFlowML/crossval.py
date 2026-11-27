@@ -58,13 +58,40 @@ def _concat_forecasts(parts: List[dict]) -> dict:
 
 def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_basins: int,
                    folds: int = DEFAULT_FOLDS, members: int = 1,
-                   raw_data: Optional[pd.DataFrame] = None) -> dict:
-    """Train and score one ensemble of `members` per fold; pooled + per-fold report."""
+                   raw_data: Optional[pd.DataFrame] = None,
+                   mode: str = 'water-year') -> dict:
+    """
+    Train and score one ensemble of `members` per fold; pooled + per-fold report.
+
+    `mode='water-year'` (default): leave-water-years-out CV across all stations.
+    `mode='leave-basin-out'`: holds out entire HUC8 basins / stations with
+    `station_idx=0` at test time to measure zero-shot transfer accuracy.
+    """
     import tempfile
     import combine_data
     import model as model_mod
     import normalize_data
     import train
+    from data import build_station_attributes as bsa
+
+    if mode not in ('water-year', 'leave-basin-out'):
+        raise ValueError(f"Unsupported CV mode {mode!r}; expected 'water-year' or 'leave-basin-out'")
+
+    station_attrs = bsa.load_station_attributes()
+    use_static = bool(train.USE_STATIC_ATTRIBUTES and any(
+        isinstance(station_attrs.get(s), dict) for s in data['site_id'].unique()))
+    static_feature_names = list(bsa.STATIC_FEATURE_NAMES) if use_static else None
+
+    station_areas_km2 = None
+    if train.SPECIFIC_DISCHARGE:
+        all_sites = sorted(data['site_id'].dropna().unique())
+        areas = bsa.station_areas_map(all_sites, station_attrs)
+        if len(areas) == len(all_sites) and areas:
+            station_areas_km2 = areas
+            logger.info("CV using specific discharge (mm/day) across %d sites", len(areas))
+        else:
+            logger.warning("OPENFLOW_SPECIFIC_DISCHARGE=1 requested in CV but area_km2 missing; using cfs")
+
     forecast_table = None
     if train.TRAIN_REAL_FORECASTS:
         fc_dir = os.getenv('OPENFLOW_REFORECAST_DIR', '').strip() or combine_data._resolve_cache_dir()
@@ -76,35 +103,77 @@ def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_bas
                     forecast_table = ft
             except Exception as e:
                 logger.warning("Reforecast table skipped in CV: %s", e)
+
+    all_sites = sorted(data['site_id'].dropna().unique())
+    base_static = None
+    if use_static:
+        base_sc = bsa.fit_static_scalers(station_attrs, all_sites, static_feature_names)
+        base_static = bsa.build_static_vectors(all_sites, station_attrs, base_sc, static_feature_names)
+
     base_samples = windowing.build_windows(
         data, windowing.ENCODER_DAYS, windowing.DECODER_DAYS,
-        scalers=scalers, forecast_table=forecast_table)
-    base_splits = windowing.water_year_folds(base_samples, folds)
+        scalers=scalers, forecast_table=forecast_table, static_vectors=base_static)
+    if mode == 'leave-basin-out':
+        base_splits = windowing.leave_basin_out_folds(base_samples, n_folds=folds)
+    else:
+        base_splits = windowing.water_year_folds(base_samples, folds)
+
     raw_wy = (pd.to_datetime(raw_data['Date']).map(windowing.water_year)
               if raw_data is not None and not raw_data.empty else None)
     fold_fcs: List[dict] = []
     per_fold = []
     total_windows = 0
+    n_static = len(static_feature_names) if static_feature_names else 0
+
     for k, split in enumerate(base_splits):
+        fold_scalers = scalers
+        fold_split = split
+        test_sites = sorted({s.site_id for s in split.test})
         test_years = sorted({windowing.water_year(s.anchor_date + pd.Timedelta(days=windowing.ENCODER_DAYS - 1))
                              for s in split.test})
         val_years = sorted({windowing.water_year(s.anchor_date + pd.Timedelta(days=windowing.ENCODER_DAYS - 1))
                             for s in split.val})
-        fold_scalers = scalers
-        fold_split = split
-        if raw_data is not None and raw_wy is not None:
-            # Refit scalers strictly on this fold's training water years (zero val/test leakage).
-            fit_mask = (~raw_wy.isin(set(test_years) | set(val_years))).to_numpy()
+
+        fold_static = base_static
+        if use_static:
+            fit_sites = [s for s in all_sites if s not in set(test_sites)] if mode == 'leave-basin-out' else all_sites
+            fold_st_sc = bsa.fit_static_scalers(station_attrs, fit_sites, static_feature_names)
+            fold_static = bsa.build_static_vectors(all_sites, station_attrs, fold_st_sc, static_feature_names)
+
+        if raw_data is not None and not raw_data.empty:
+            if mode == 'leave-basin-out':
+                fit_mask = (~raw_data['site_id'].isin(set(test_sites))).to_numpy()
+            else:
+                fit_mask = (~raw_wy.isin(set(test_years) | set(val_years))).to_numpy()
             with tempfile.TemporaryDirectory() as td:
-                fold_df = normalize_data.normalize_data(raw_data, artifacts_dir=td, fit_mask=fit_mask)
+                fold_df = normalize_data.normalize_data(
+                    raw_data, artifacts_dir=td, fit_mask=fit_mask,
+                    station_areas_km2=station_areas_km2)
                 with open(os.path.join(td, 'scalers.json')) as f:
                     fold_scalers = json.load(f)
             fold_samples = windowing.build_windows(
                 fold_df, windowing.ENCODER_DAYS, windowing.DECODER_DAYS,
-                scalers=fold_scalers, forecast_table=forecast_table)
-            fold_split = windowing.water_year_folds(fold_samples, folds)[k]
-        logger.info("Fold %d/%d: test water years %s; train %d, val %d, test %d windows",
-                    k + 1, folds, test_years, len(fold_split.train), len(fold_split.val), len(fold_split.test))
+                scalers=fold_scalers, forecast_table=forecast_table,
+                static_vectors=fold_static)
+            fold_split = (windowing.leave_basin_out_folds(fold_samples, n_folds=folds)[k]
+                          if mode == 'leave-basin-out'
+                          else windowing.water_year_folds(fold_samples, folds)[k])
+        elif mode == 'leave-basin-out' and use_static and fold_static is not None:
+            fold_samples = windowing.build_windows(
+                data, windowing.ENCODER_DAYS, windowing.DECODER_DAYS,
+                scalers=fold_scalers, forecast_table=forecast_table,
+                static_vectors=fold_static)
+            fold_split = windowing.leave_basin_out_folds(fold_samples, n_folds=folds)[k]
+
+        if mode == 'leave-basin-out':
+            logger.info("Fold %d/%d (LBO): test sites %s; train %d, val %d, test %d windows",
+                        k + 1, len(base_splits), test_sites,
+                        len(fold_split.train), len(fold_split.val), len(fold_split.test))
+        else:
+            logger.info("Fold %d/%d: test water years %s; train %d, val %d, test %d windows",
+                        k + 1, len(base_splits), test_years,
+                        len(fold_split.train), len(fold_split.val), len(fold_split.test))
+
         tr_x, tr_y = windowing.stack(fold_split.train)
         va_x, va_y = windowing.stack(fold_split.val)
         te_x, _ = windowing.stack(fold_split.test)
@@ -112,40 +181,67 @@ def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_bas
             num_stations, num_basins,
             (tr_x, tr_y, train.sample_weights(tr_x, tr_y)),
             (va_x, va_y, train.sample_weights(va_x, va_y)),
-            size=members, seed=train.SEED + 100 * k)
+            size=members, seed=train.SEED + 100 * k,
+            static_features=n_static)
         net = model_mod.average_ensemble(nets)
         if model_mod.has_band(net):
             model_mod.calibrate_band(net, va_x, va_y, train.QUANTILES)
         pred = net.predict(te_x, verbose=0, batch_size=512)
         point, band = model_mod.point_forecast(pred), model_mod.band_forecast(pred)
-        fc = evaluate.forecasts(fold_split.test, point, fold_scalers, band=band, quantiles=train.QUANTILES)
+        fc = evaluate.forecasts(
+            fold_split.test, point, fold_scalers, band=band, quantiles=train.QUANTILES,
+            station_areas_km2=station_areas_km2)
         fold_report = evaluate.build_report(fc)
-        per_fold.append({'fold': k, 'test_water_years': test_years, 'windows': len(fold_split.test),
-                         'mean_error_pct': _mean_error(fold_report),
-                         'error_pct': fold_report['all']['error_pct'],
-                         'band': fold_report['all'].get('band')})
+        entry = {
+            'fold': k,
+            'windows': len(fold_split.test),
+            'mean_error_pct': _mean_error(fold_report),
+            'error_pct': fold_report['all']['error_pct'],
+            'band': fold_report['all'].get('band'),
+        }
+        if mode == 'leave-basin-out':
+            entry['test_sites'] = test_sites
+        else:
+            entry['test_water_years'] = test_years
+        per_fold.append(entry)
         logger.info("Fold %d: mean error %.2f%% (persistence %.2f%%)", k + 1,
                     per_fold[-1]['mean_error_pct'], np.mean(fold_report['all']['error_pct']['persistence']))
         fold_fcs.append(fc)
         total_windows += len(fold_split.test)
     pooled = evaluate.build_report(_concat_forecasts(fold_fcs))
-    return {'folds': per_fold, 'pooled': pooled, 'mean_error_pct': _mean_error(pooled),
-            'n_folds': folds, 'members_per_fold': members, 'windows': total_windows,
+    return {'mode': mode, 'folds': per_fold, 'pooled': pooled, 'mean_error_pct': _mean_error(pooled),
+            'n_folds': len(base_splits), 'members_per_fold': members, 'windows': total_windows,
+            'flow_units': 'mm_day' if station_areas_km2 else 'cfs',
+            'static_attributes': use_static,
             'settings': {k: v for k, v in sorted(os.environ.items()) if k.startswith('OPENFLOW_')}}
 
 
+def _fold_label(f: dict) -> str:
+    if 'test_sites' in f:
+        return ', '.join(f['test_sites'])
+    years = f.get('test_water_years') or []
+    return f"{years[0]}–{years[-1]}" if years else '—'
+
+
 def to_markdown(report: dict, names: Optional[dict] = None) -> str:
-    lines = [f"# Cross-validation: {report['n_folds']} leave-water-years-out folds",
-             '',
-             f"Every water year held out once; {report['windows']} forecasts pooled. "
-             f"Mean over lead days of the median absolute % error of the daily maximum: "
-             f"**{report['mean_error_pct']:.2f}%**.",
-             '',
-             '| Fold | Test water years | Windows | Mean error % |',
+    mode = report.get('mode', 'water-year')
+    if mode == 'leave-basin-out':
+        title = f"# Cross-validation: {report['n_folds']} leave-basin-out folds (zero-shot transfer)"
+        subtitle = (f"Every river/basin held out unseen (`station_idx=0`); {report['windows']} forecasts pooled. "
+                    f"Mean over lead days of the median absolute % error of the daily maximum: "
+                    f"**{report['mean_error_pct']:.2f}%**.")
+        col_hdr = 'Held-out sites'
+    else:
+        title = f"# Cross-validation: {report['n_folds']} leave-water-years-out folds"
+        subtitle = (f"Every water year held out once; {report['windows']} forecasts pooled. "
+                    f"Mean over lead days of the median absolute % error of the daily maximum: "
+                    f"**{report['mean_error_pct']:.2f}%**.")
+        col_hdr = 'Test water years'
+    lines = [title, '', subtitle, '',
+             f'| Fold | {col_hdr} | Windows | Mean error % |',
              '|---|---|---|---|']
     for f in report['folds']:
-        years = f['test_water_years']
-        lines.append(f"| {f['fold'] + 1} | {years[0]}–{years[-1]} | {f['windows']} | {f['mean_error_pct']:.2f} |")
+        lines.append(f"| {f['fold'] + 1} | {_fold_label(f)} | {f['windows']} | {f['mean_error_pct']:.2f} |")
     if report.get('settings'):
         lines += ['', 'Settings: ' + ', '.join(f'`{k}={v}`' for k, v in report['settings'].items())]
     return '\n'.join(lines) + '\n\n' + evaluate.to_markdown(report['pooled'], names)
@@ -156,19 +252,19 @@ def compare(path_a: str, path_b: str) -> str:
     a, b = (json.load(open(p)) for p in (path_a, path_b))
     ea, eb = a['pooled']['all']['error_pct']['model'], b['pooled']['all']['error_pct']['model']
     leads = [d for d in evaluate.REPORT_LEADS if d <= len(ea)]
-    lines = [f'# Cross-validation: B vs A', '', f'A: `{path_a}`  ', f'B: `{path_b}`', '',
+    col_hdr = 'Held-out sites' if a.get('mode') == 'leave-basin-out' else 'Test water years'
+    lines = ['# Cross-validation: B vs A', '', f'A: `{path_a}`  ', f'B: `{path_b}`', '',
              '| | ' + ' | '.join(f'Day {d}' for d in leads) + ' | Mean |', '|---|' + '---|' * (len(leads) + 1)]
     for label, e, m in (('A', ea, a['mean_error_pct']), ('B', eb, b['mean_error_pct'])):
         lines.append(f'| {label} | ' + ' | '.join(f'{e[d - 1]:.2f}' for d in leads) + f' | {m:.2f} |')
     lines.append('| B − A | ' + ' | '.join(f'{eb[d - 1] - ea[d - 1]:+.2f}' for d in leads)
                  + f" | {b['mean_error_pct'] - a['mean_error_pct']:+.2f} |")
-    lines += ['', '| Fold | Test water years | A | B | B − A |', '|---|---|---|---|---|']
+    lines += ['', f'| Fold | {col_hdr} | A | B | B − A |', '|---|---|---|---|---|']
     better = 0
     for fa, fb in zip(a['folds'], b['folds']):
         d = fb['mean_error_pct'] - fa['mean_error_pct']
         better += d < 0
-        years = fa['test_water_years']
-        lines.append(f"| {fa['fold'] + 1} | {years[0]}–{years[-1]} | {fa['mean_error_pct']:.2f} | "
+        lines.append(f"| {fa['fold'] + 1} | {_fold_label(fa)} | {fa['mean_error_pct']:.2f} | "
                      f"{fb['mean_error_pct']:.2f} | {d:+.2f} |")
     lines += ['', f"B is better in {better} of {len(a['folds'])} folds (mean error, lower is better)."]
     return '\n'.join(lines) + '\n'
@@ -177,6 +273,8 @@ def compare(path_a: str, path_b: str) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--base-path', help='directory with openFlowML/normalized_data.csv and the index JSONs')
+    parser.add_argument('--mode', choices=('water-year', 'leave-basin-out'), default='water-year',
+                        help='CV split strategy (water-year or leave-basin-out zero-shot transfer)')
     parser.add_argument('--folds', type=int, default=DEFAULT_FOLDS)
     parser.add_argument('--members', type=int, default=1, help='networks per fold (train.py ships 3)')
     parser.add_argument('--fetch', action='store_true', help='run combine_data first (needs network)')
@@ -200,7 +298,9 @@ def main(argv=None) -> int:
     data = pd.read_csv(os.path.join(args.base_path, 'openFlowML', 'normalized_data.csv'), parse_dates=['Date'])
     raw_path = os.path.join(args.base_path, 'openFlowML', 'combined_data_all_sites.csv')
     raw_data = pd.read_csv(raw_path, parse_dates=['Date']) if os.path.exists(raw_path) else None
-    report = cross_validate(data, scalers, num_stations, num_basins, args.folds, args.members, raw_data=raw_data)
+    report = cross_validate(
+        data, scalers, num_stations, num_basins, args.folds, args.members,
+        raw_data=raw_data, mode=args.mode)
     names = {}
     try:
         from data import get_upstream

@@ -52,6 +52,7 @@ MANIFEST_NAME = 'manifest.json'
 TRAINING_CONFIG_NAME = 'training_config.json'
 UPSTREAM_REGISTRY_NAME = 'upstream_gauges.json'
 BASIN_ZONES_NAME = 'basin_zones.json'
+STATION_ATTRIBUTES_NAME = 'station_attributes.json'
 
 # Maximum per-output absolute error (scaled space) the int8-quantized TFLite
 # is allowed to introduce vs the float32 Keras model. Beyond this we ship
@@ -68,9 +69,9 @@ def _load_keras_model(h5_path):
 
 
 def _input_specs_from_config(config):
-    """TensorSpecs for the five model inputs, in the order build_encoder_decoder declares them."""
+    """TensorSpecs for the model inputs (5 base + optional Phase 5 static_input)."""
     import tensorflow as tf
-    return [
+    specs = [
         tf.TensorSpec(shape=(1, config['encoder_days'], len(config['encoder_features'])),
                      dtype=tf.float32, name='encoder_input'),
         tf.TensorSpec(shape=(1, config['decoder_days'], len(config['decoder_features'])),
@@ -80,6 +81,11 @@ def _input_specs_from_config(config):
         tf.TensorSpec(shape=(1,), dtype=tf.int32, name='station_input'),
         tf.TensorSpec(shape=(1,), dtype=tf.int32, name='basin_input'),
     ]
+    static_feats = config.get('static_features') or []
+    if static_feats:
+        specs.append(tf.TensorSpec(shape=(1, len(static_feats)),
+                                   dtype=tf.float32, name='static_input'))
+    return specs
 
 
 def _make_serving_fn(net):
@@ -91,6 +97,25 @@ def _make_serving_fn(net):
     BAND_OUTPUT_NAME.
     """
     import tensorflow as tf
+
+    has_static = isinstance(net.input, dict) and 'static_input' in net.input
+
+    if has_static:
+        @tf.function
+        def serving_fn(encoder_input, decoder_input, persistence_input,
+                       station_input, basin_input, static_input):
+            out = net({
+                'encoder_input': encoder_input,
+                'decoder_input': decoder_input,
+                'persistence_input': persistence_input,
+                'station_input': station_input,
+                'basin_input': basin_input,
+                'static_input': static_input,
+            }, training=False)
+            if isinstance(out, dict):
+                return {OUTPUT_NAME: out[OUTPUT_NAME], BAND_OUTPUT_NAME: out[BAND_OUTPUT_NAME]}
+            return {OUTPUT_NAME: out}
+        return serving_fn
 
     @tf.function
     def serving_fn(encoder_input, decoder_input, persistence_input, station_input, basin_input):
@@ -211,7 +236,7 @@ def _random_sample_inputs(config, n=8, seed=0):
     """Synthetic (Keras-shaped) sample inputs for parity comparisons; CPU-only, no fixtures needed."""
     import numpy as np
     rng = np.random.default_rng(seed)
-    return {
+    sample = {
         'encoder_input': rng.standard_normal(
             (n, config['encoder_days'], len(config['encoder_features']))).astype('float32'),
         'decoder_input': rng.standard_normal(
@@ -223,6 +248,10 @@ def _random_sample_inputs(config, n=8, seed=0):
         'station_input': rng.integers(0, max(2, config['num_stations']), size=(n,)).astype('int32'),
         'basin_input': rng.integers(0, max(2, config['num_basins']), size=(n,)).astype('int32'),
     }
+    static_feats = config.get('static_features') or []
+    if static_feats:
+        sample['static_input'] = rng.standard_normal((n, len(static_feats))).astype('float32')
+    return sample
 
 
 def export_tflite_int8(h5_path, out_path, config):
@@ -383,6 +412,8 @@ def write_manifest(base_path, config, artifact_files, tflite_mode,
             'prior_known_days': config.get('prior_known_days'),
             'hydro_source': config.get('hydro_source'),
             'real_forecast_training': config.get('real_forecast_training'),
+            'static_features': config.get('static_features'),
+            'flow_units': config.get('flow_units', 'cfs'),
             # Output names and, with the probabilistic band, its quantile
             # levels (last axis of BAND_OUTPUT_NAME). Older models: point only.
             'outputs': config.get('outputs', [OUTPUT_NAME]),
@@ -434,7 +465,7 @@ def export_all(base_path):
 
     artifact_files = [H5_NAME, 'scalers.json', 'station_index.json',
                       'basin_index.json', TRAINING_CONFIG_NAME, UPSTREAM_REGISTRY_NAME,
-                      BASIN_ZONES_NAME]
+                      BASIN_ZONES_NAME, STATION_ATTRIBUTES_NAME]
     if mlpackage_zip:
         artifact_files.append(MLPACKAGE_ZIP_NAME)
     if tflite_result:

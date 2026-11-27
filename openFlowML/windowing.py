@@ -16,8 +16,8 @@ Other invariants this module is responsible for:
 """
 
 import logging
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, replace
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -155,6 +155,7 @@ class WindowedSample:
     basin_idx: int
     site_id: str
     anchor_date: pd.Timestamp       # first day of the encoder window
+    static_X: Optional[np.ndarray] = None  # optional (|static_features|,) Phase 5 attributes
 
 
 def upstream_decoder_window(future_values: np.ndarray,
@@ -386,7 +387,8 @@ def _build_windows_for_station(station_df: pd.DataFrame,
                                decoder_days: int,
                                scalers: Optional[dict] = None,
                                hold_upstream_beyond_known: bool = True,
-                               forecast_table: Optional[pd.DataFrame] = None) -> List[WindowedSample]:
+                               forecast_table: Optional[pd.DataFrame] = None,
+                               static_vector: Optional[np.ndarray] = None) -> List[WindowedSample]:
     """
     Slide windows over a single station's contiguous daily series.
 
@@ -451,6 +453,7 @@ def _build_windows_for_station(station_df: pd.DataFrame,
     basin_idx = int(df['basin_idx'].iloc[0]) if 'basin_idx' in df.columns else 0
     site_id = str(df['site_id'].iloc[0])
     site_fc_lookup = _index_reforecast_for_site(forecast_table, site_id)
+    static_arr = np.asarray(static_vector, dtype='float32') if static_vector is not None else None
 
     for start in range(len(df) - total + 1):
         # The window spans [start, start + total). All internal day-to-day
@@ -494,6 +497,7 @@ def _build_windows_for_station(station_df: pd.DataFrame,
             basin_idx=basin_idx,
             site_id=site_id,
             anchor_date=pd.Timestamp(dates[start]),
+            static_X=static_arr,
         ))
     return samples
 
@@ -503,7 +507,8 @@ def build_windows(df: pd.DataFrame,
                   decoder_days: int = DECODER_DAYS,
                   scalers: Optional[dict] = None,
                   hold_upstream_beyond_known: bool = True,
-                  forecast_table: Optional[pd.DataFrame] = None) -> List[WindowedSample]:
+                  forecast_table: Optional[pd.DataFrame] = None,
+                  static_vectors: Optional[Dict[str, np.ndarray]] = None) -> List[WindowedSample]:
     """
     Build station-aware (encoder, decoder, target) windows from the normalized
     dataset. The caller is expected to pass the output of normalize_data
@@ -511,7 +516,9 @@ def build_windows(df: pd.DataFrame,
     and basin_idx assigned). Passing `scalers` enables physically consistent
     mass-balance `upstream_change` in scaled log-flow space; passing
     `forecast_table` (GEFS / Open-Meteo archived forecasts) injects real
-    weather forecasts + ensemble spread into the decoder window.
+    weather forecasts + ensemble spread into the decoder window; passing
+    `static_vectors` ({site_id: float32 (S,)}) attaches Phase 5 static
+    catchment attributes to each sample.
     """
     required = ((set(ENCODER_FEATURES) | set(DECODER_FEATURES) | set(TARGET_FEATURES) | {
         'Date', 'site_id', 'station_idx'})
@@ -521,12 +528,23 @@ def build_windows(df: pd.DataFrame,
     if missing:
         raise ValueError(f"Missing required columns for windowing: {missing}")
 
+    static_dim = None
+    if static_vectors:
+        first_vec = next(iter(static_vectors.values()), None)
+        if first_vec is not None:
+            static_dim = int(np.asarray(first_vec).shape[0])
+
     samples: List[WindowedSample] = []
     for site_id, station_df in df.groupby('site_id'):
+        svec = None
+        if static_vectors is not None:
+            svec = static_vectors.get(site_id)
+            if svec is None and static_dim is not None:
+                svec = np.zeros((static_dim,), dtype='float32')
         station_samples = _build_windows_for_station(
             station_df, encoder_days, decoder_days,
             scalers=scalers, hold_upstream_beyond_known=hold_upstream_beyond_known,
-            forecast_table=forecast_table)
+            forecast_table=forecast_table, static_vector=svec)
         logger.info("Site %s: %d windows", site_id, len(station_samples))
         samples.extend(station_samples)
     return samples
@@ -535,7 +553,8 @@ def build_windows(df: pd.DataFrame,
 def build_windows_for_config(df: pd.DataFrame,
                              config: Optional[dict] = None,
                              scalers: Optional[dict] = None,
-                             forecast_table: Optional[pd.DataFrame] = None) -> List[WindowedSample]:
+                             forecast_table: Optional[pd.DataFrame] = None,
+                             static_vectors: Optional[Dict[str, np.ndarray]] = None) -> List[WindowedSample]:
     """Build windows matching a saved training_config.json (including legacy releases)."""
     cfg = config or {}
     enc_days = int(cfg.get('encoder_days', ENCODER_DAYS))
@@ -543,12 +562,15 @@ def build_windows_for_config(df: pd.DataFrame,
     mode = cfg.get('upstream_change_mode', 'legacy')
     if mode == 'mass_balance_hold':
         return build_windows(df, enc_days, dec_days, scalers=scalers,
-                             hold_upstream_beyond_known=True, forecast_table=forecast_table)
+                             hold_upstream_beyond_known=True, forecast_table=forecast_table,
+                             static_vectors=static_vectors)
     if mode == 'scaled_hold':
         return build_windows(df, enc_days, dec_days, scalers=None,
-                             hold_upstream_beyond_known=True, forecast_table=forecast_table)
+                             hold_upstream_beyond_known=True, forecast_table=forecast_table,
+                             static_vectors=static_vectors)
     return build_windows(df, enc_days, dec_days, scalers=None,
-                         hold_upstream_beyond_known=False, forecast_table=forecast_table)
+                         hold_upstream_beyond_known=False, forecast_table=forecast_table,
+                         static_vectors=static_vectors)
 
 
 def chronological_split(samples: List[WindowedSample],
@@ -657,10 +679,71 @@ def water_year_folds(samples: List[WindowedSample],
     return folds
 
 
+def leave_basin_out_folds(samples: List[WindowedSample],
+                          n_folds: Optional[int] = None,
+                          val_frac: float = 0.15,
+                          embargo_days: int = DECODER_DAYS) -> List[SplitWindows]:
+    """
+    Leave-basin-out (LBO) cross-validation splits for zero-shot river transfer.
+
+    Stations are grouped by `basin_idx` (HUC8) when at least two distinct
+    non-zero basins exist, otherwise by `site_id`. Groups are partitioned into
+    `n_folds` folds (default: `min(len(groups), 5)`). For each fold:
+      - Every station in the held-out group goes exclusively to `test`, with
+        `station_idx` zeroed to `0` (and `basin_idx` zeroed to `0` when that
+        basin has no stations remaining in training) so scoring mirrors true
+        unseen-river inference.
+      - The remaining stations' windows are split chronologically into `train`
+        and `val` (with `embargo_days` gap) for early stopping & band calibration.
+    """
+    if not samples:
+        return []
+    distinct_basins = sorted({s.basin_idx for s in samples if s.basin_idx > 0})
+    group_by_basin = len(distinct_basins) >= 2
+    groups: Dict[object, List[str]] = {}
+    for s in samples:
+        key = s.basin_idx if (group_by_basin and s.basin_idx > 0) else s.site_id
+        groups.setdefault(key, [])
+        if s.site_id not in groups[key]:
+            groups[key].append(s.site_id)
+
+    group_keys = sorted(groups.keys(), key=lambda x: str(x))
+    if len(group_keys) < 2:
+        raise ValueError(f"Need at least 2 distinct stations/basins for leave-basin-out CV, got {len(group_keys)}")
+
+    k_folds = min(len(group_keys), 5) if n_folds is None else int(n_folds)
+    if k_folds < 2 or k_folds > len(group_keys):
+        raise ValueError(f"n_folds={k_folds} invalid for {len(group_keys)} basin/station groups")
+
+    # Round-robin pack sorted groups into k_folds balanced test buckets.
+    buckets: List[List[object]] = [[] for _ in range(k_folds)]
+    for idx, gkey in enumerate(group_keys):
+        buckets[idx % k_folds].append(gkey)
+
+    folds: List[SplitWindows] = []
+    for bucket in buckets:
+        test_sites = {sid for gk in bucket for sid in groups[gk]}
+        kept = [s for s in samples if s.site_id not in test_sites]
+        train_basins = {s.basin_idx for s in kept if s.basin_idx > 0}
+        held_test = [
+            replace(
+                s,
+                station_idx=0,
+                basin_idx=(s.basin_idx if s.basin_idx in train_basins else 0),
+            )
+            for s in samples if s.site_id in test_sites
+        ]
+        # Chronologically split kept stations into train + val (no test slice).
+        tr_va = chronological_split(kept, val_frac=val_frac, test_frac=0.0, embargo_days=embargo_days)
+        folds.append(SplitWindows(train=tr_va.train, val=tr_va.val, test=held_test))
+    return folds
+
+
 def stack(samples: List[WindowedSample]) -> Tuple[dict, np.ndarray]:
     """
     Stack a list of samples into the model-input dict + target tensor expected
-    by the encoder-decoder Keras model.
+    by the encoder-decoder Keras model. Includes `static_input` when samples
+    carry Phase 5 static catchment attributes (`static_X`).
     """
     if not samples:
         empty = np.zeros((0,))
@@ -674,5 +757,7 @@ def stack(samples: List[WindowedSample]) -> Tuple[dict, np.ndarray]:
         'station_input': np.array([s.station_idx for s in samples], dtype='int32'),
         'basin_input': np.array([s.basin_idx for s in samples], dtype='int32'),
     }
+    if samples[0].static_X is not None:
+        inputs['static_input'] = np.stack([s.static_X for s in samples]).astype('float32')
     targets = np.stack([s.target_Y for s in samples]).astype('float32')
     return inputs, targets

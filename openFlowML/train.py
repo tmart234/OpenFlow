@@ -86,6 +86,18 @@ TRAIN_REAL_FORECASTS = os.getenv('OPENFLOW_TRAIN_REAL_FORECASTS', '1').strip() n
 # describes the held-out run of the same recipe. OPENFLOW_FINAL_REFIT=0 ships
 # the evaluated ensemble instead.
 FINAL_REFIT = os.getenv('OPENFLOW_FINAL_REFIT', '1').strip() not in ('0', 'false', 'False')
+# Phase 5 regional scaling & zero-shot transfer levers:
+#   - OPENFLOW_LSTM_UNITS (default 64; recommend 128-256 for 50-100+ river runs)
+#   - OPENFLOW_STATION_DROPOUT (default 0.1; recommend 0.3 for regional transfer)
+#   - OPENFLOW_STATIC_ATTRIBUTES=1 adds 6th `static_input` (18 EPA StreamCat
+#     physical attributes + attribute-gated upstream skip); opt-in while mobile
+#     apps migrate to the Phase 4 Feature Feed / 6-input schema.
+#   - OPENFLOW_SPECIFIC_DISCHARGE=1 normalizes flow to mm/day (area-normalized)
+#     before log1p + z-score and inverts back to cfs for evaluation & inference.
+LSTM_UNITS = int(os.getenv('OPENFLOW_LSTM_UNITS', '') or 64)
+STATION_DROPOUT = float(os.getenv('OPENFLOW_STATION_DROPOUT', '') or 0.1)
+USE_STATIC_ATTRIBUTES = os.getenv('OPENFLOW_STATIC_ATTRIBUTES', '0').strip() in ('1', 'true', 'True')
+SPECIFIC_DISCHARGE = os.getenv('OPENFLOW_SPECIFIC_DISCHARGE', '0').strip() in ('1', 'true', 'True')
 
 
 def _save_keras_model(model_obj, base_path):
@@ -142,7 +154,7 @@ def sample_weights(inputs, targets, lead_power: float = None) -> np.ndarray:
     return (w[:, None] * lead_weights(inputs, targets, power)[None, :]).astype('float32')
 
 
-def _build_member(num_stations, num_basins):
+def _build_member(num_stations, num_basins, static_features: int = 0):
     return model_mod.build_encoder_decoder(
         num_stations=num_stations,
         num_basins=num_basins,
@@ -151,10 +163,13 @@ def _build_member(num_stations, num_basins):
         target_features=len(windowing.TARGET_FEATURES),
         encoder_days=ENCODER_DAYS,
         decoder_days=DECODER_DAYS,
+        lstm_units=LSTM_UNITS,
+        station_dropout=STATION_DROPOUT,
         huber_delta=HUBER_DELTA,
         quantiles=QUANTILES or None,
         upstream_change_index=(windowing.DECODER_FEATURES.index('upstream_change')
                                if RIVER_SKIP else None),
+        static_features=static_features,
     )
 
 
@@ -163,17 +178,20 @@ def _monitor(net):
     return f'val_{model_mod.POINT_OUTPUT}_loss' if model_mod.has_band(net) else 'val_loss'
 
 
-def fit_members(num_stations, num_basins, train_data, val_data, size=None, seed=SEED):
+def fit_members(num_stations, num_basins, train_data, val_data, size=None, seed=SEED,
+                static_features: int = 0):
     """
     Fit `size` members with early stopping on val. Returns (members, schedules):
     schedules[i] is the per-epoch learning rate member i used up to its best
     epoch, which a refit replays.
     """
     size = ENSEMBLE_SIZE if size is None else size
+    if not static_features and isinstance(train_data[0], dict) and 'static_input' in train_data[0]:
+        static_features = int(train_data[0]['static_input'].shape[-1])
     members, schedules = [], []
     for i in range(size):
         tf.keras.utils.set_random_seed(seed + i)
-        net = _build_member(num_stations, num_basins)
+        net = _build_member(num_stations, num_basins, static_features=static_features)
         if i == 0:
             net.summary(print_fn=logger.info)
         monitor = _monitor(net)
@@ -198,12 +216,15 @@ def fit_members(num_stations, num_basins, train_data, val_data, size=None, seed=
     return members, schedules
 
 
-def refit_members(num_stations, num_basins, all_data, schedules, seed=SEED):
+def refit_members(num_stations, num_basins, all_data, schedules, seed=SEED,
+                  static_features: int = 0):
     """Retrain each member from scratch on all windows, replaying its LR schedule."""
+    if not static_features and isinstance(all_data[0], dict) and 'static_input' in all_data[0]:
+        static_features = int(all_data[0]['static_input'].shape[-1])
     members = []
     for i, lrs in enumerate(schedules):
         tf.keras.utils.set_random_seed(seed + 1000 + i)
-        net = _build_member(num_stations, num_basins)
+        net = _build_member(num_stations, num_basins, static_features=static_features)
         sched = tf.keras.callbacks.LearningRateScheduler(lambda epoch, lr, lrs=lrs: lrs[min(epoch, len(lrs) - 1)])
         y, w = model_mod.fit_targets(net, all_data[1], all_data[2])
         net.fit(all_data[0], y, sample_weight=w, epochs=len(lrs),
@@ -234,6 +255,8 @@ def _train_fit_mask(raw: pd.DataFrame, val_frac: float = 0.15, test_frac: float 
 
 def main():
     base_path = combine_data.get_base_path()
+    from data import build_station_attributes as bsa
+    station_attrs = bsa.load_station_attributes()
 
     # 1. Pull and normalize the data spine. (Combine_data is responsible for
     #    fetch + daily indexing + gap handling + SWE wiring + HUC8 tagging;
@@ -242,10 +265,29 @@ def main():
     # OPENFLOW_REUSE_COMBINED=1 re-normalizes the combined CSV a previous run
     # wrote instead of re-fetching every source (model iteration; not for CI).
     cached = os.path.join(base_path, 'openFlowML', 'combined_data_all_sites.csv')
+    flow_units = 'cfs'
+    station_areas_km2 = None
+
+    def _resolve_areas(raw_df):
+        if not SPECIFIC_DISCHARGE or raw_df is None or 'site_id' not in raw_df.columns:
+            return 'cfs', None
+        sites = sorted(raw_df['site_id'].dropna().unique())
+        areas = bsa.station_areas_map(sites, station_attrs)
+        missing_a = [s for s in sites if s not in areas]
+        if missing_a:
+            logger.warning("OPENFLOW_SPECIFIC_DISCHARGE requested but missing area_km2 for %s; falling back to cfs",
+                           missing_a[:5])
+            return 'cfs', None
+        logger.info("Using area-normalized specific discharge (mm/day) across %d sites", len(areas))
+        return 'mm_day', areas
+
     if os.getenv('OPENFLOW_REUSE_COMBINED', '').strip() in ('1', 'true', 'True') and os.path.exists(cached):
         logger.info("Reusing %s (OPENFLOW_REUSE_COMBINED)", cached)
         raw = pd.read_csv(cached)
-        data = normalize_data.normalize_data(raw, artifacts_dir=base_path, fit_mask=_train_fit_mask(raw))
+        flow_units, station_areas_km2 = _resolve_areas(raw)
+        data = normalize_data.normalize_data(
+            raw, artifacts_dir=base_path, fit_mask=_train_fit_mask(raw),
+            station_areas_km2=station_areas_km2)
         if data is not None:
             data.to_csv(os.path.join(base_path, 'openFlowML', 'normalized_data.csv'), index=False)
     else:
@@ -254,8 +296,10 @@ def main():
             # Refit scalers strictly on training-split dates so validation and
             # test statistics cannot leak into normalization or quality_report.
             raw = pd.read_csv(cached)
+            flow_units, station_areas_km2 = _resolve_areas(raw)
             refit_norm = normalize_data.normalize_data(
-                raw, artifacts_dir=base_path, fit_mask=_train_fit_mask(raw))
+                raw, artifacts_dir=base_path, fit_mask=_train_fit_mask(raw),
+                station_areas_km2=station_areas_km2)
             if refit_norm is not None and not refit_norm.empty:
                 data = refit_norm
                 data.to_csv(os.path.join(base_path, 'openFlowML', 'normalized_data.csv'), index=False)
@@ -283,6 +327,22 @@ def main():
     with open(os.path.join(base_path, 'basin_index.json')) as f:
         basin_index = json.load(f)
 
+    # Optional Phase 5 static catchment attributes (`static_input`).
+    static_features = None
+    static_scalers = None
+    static_vectors = None
+    if USE_STATIC_ATTRIBUTES:
+        train_sites = sorted(station_index.keys())
+        covered = [s for s in train_sites if isinstance(station_attrs.get(s), dict)]
+        if covered:
+            static_features = list(bsa.STATIC_FEATURE_NAMES)
+            static_scalers = bsa.fit_static_scalers(station_attrs, train_sites, static_features)
+            static_vectors = bsa.build_static_vectors(train_sites, station_attrs, static_scalers, static_features)
+            logger.info("Enabled Phase 5 static catchment attributes (%d features across %d/%d sites)",
+                        len(static_features), len(covered), len(train_sites))
+        else:
+            logger.warning("OPENFLOW_STATIC_ATTRIBUTES=1 set but no sites found in station_attributes.json")
+
     # 3. Build station-aware windows with no flow leakage in the decoder,
     #    using scalers for physically consistent mass-balance upstream_change.
     #    When cached archived weather forecasts (Open-Meteo Previous Runs /
@@ -303,7 +363,8 @@ def main():
                 logger.warning("Archived forecast table skipped: %s", e)
 
     samples = windowing.build_windows(
-        data, ENCODER_DAYS, DECODER_DAYS, scalers=scalers, forecast_table=forecast_table)
+        data, ENCODER_DAYS, DECODER_DAYS, scalers=scalers,
+        forecast_table=forecast_table, static_vectors=static_vectors)
     if not samples:
         raise ValueError("No usable training windows were produced from the dataset")
     logger.info("Built %d total windows across %d sites",
@@ -324,9 +385,11 @@ def main():
     # 6. Fit an averaged ensemble of members (each early-stopped on val).
     train_w = sample_weights(train_inputs, train_targets)
     val_w = sample_weights(val_inputs, val_targets)
+    n_static = len(static_features) if static_features else 0
     members, schedules = fit_members(
         len(station_index), len(basin_index),
-        (train_inputs, train_targets, train_w), (val_inputs, val_targets, val_w))
+        (train_inputs, train_targets, train_w), (val_inputs, val_targets, val_w),
+        static_features=n_static)
     net = model_mod.average_ensemble(members)
     logger.info("Ensemble of %d member(s)", len(members))
     # Calibrate the band's spread per lead day, per station, and on rising
@@ -395,7 +458,8 @@ def main():
             import evaluate
             report = evaluate.build_report(
                 evaluate.forecasts(splits.test, model_pred, scalers,
-                                   band=band_pred, quantiles=QUANTILES),
+                                   band=band_pred, quantiles=QUANTILES,
+                                   station_areas_km2=station_areas_km2),
                 os.environ.get('OPENFLOW_MODEL_VERSION'))
             if LIVE_FORCING:
                 try:
@@ -433,7 +497,8 @@ def main():
         all_targets = np.concatenate([train_targets, val_targets, test_targets])
         refit = model_mod.average_ensemble(refit_members(
             len(station_index), len(basin_index),
-            (all_inputs, all_targets, sample_weights(all_inputs, all_targets)), schedules))
+            (all_inputs, all_targets, sample_weights(all_inputs, all_targets)),
+            schedules, static_features=n_static))
         if band_scale is not None:
             # No held-out windows remain to calibrate on; the refit is the
             # same recipe, so it keeps the held-out run's calibration.
@@ -461,6 +526,10 @@ def main():
     # Same for the basin zones: inference needs each station's zone sample
     # points (and their NWS gridpoints) to build the rain/snow inputs.
     shutil.copyfile(basin_zones.ZONES_PATH, os.path.join(base_path, 'basin_zones.json'))
+    # Ship static catchment attributes (EPA StreamCat) when present so inference
+    # and unseen-river evaluation need zero runtime API calls.
+    if os.path.exists(bsa.ATTRIBUTES_PATH):
+        shutil.copyfile(bsa.ATTRIBUTES_PATH, os.path.join(base_path, 'station_attributes.json'))
     known = (data.groupby('site_id')[windowing.UPSTREAM_KNOWN_DAYS_COLUMN].first()
              .astype(int).to_dict()
              if windowing.UPSTREAM_KNOWN_DAYS_COLUMN in data.columns else {})
@@ -473,6 +542,8 @@ def main():
         'target_features': windowing.TARGET_FEATURES,
         'num_stations': len(station_index),
         'num_basins': len(basin_index),
+        'lstm_units': LSTM_UNITS,
+        'station_dropout': STATION_DROPOUT,
         # Decoder columns built per forecast (not read from data) and the
         # per-station known-days horizon for the upstream hold rule; see
         # windowing.upstream_decoder_window and docs/INFERENCE.md.
@@ -488,6 +559,11 @@ def main():
         'precip_intensity_known_days': windowing.PRECIP_INTENSITY_KNOWN_DAYS,
         'prior_known_days': windowing.PRIOR_KNOWN_DAYS,
         'basin_zones': 'basin_zones.json',
+        'station_attributes': 'station_attributes.json' if os.path.exists(bsa.ATTRIBUTES_PATH) else None,
+        'static_features': static_features,
+        'static_scalers': static_scalers,
+        'flow_units': flow_units,
+        'station_areas_km2': station_areas_km2,
         'event_weight': EVENT_WEIGHT,
         'lead_weight_power': LEAD_WEIGHT_POWER,
         'huber_delta': HUBER_DELTA,

@@ -46,7 +46,7 @@ def _build_tiny_model():
     )
 
 
-def _write_training_config(base_path, num_stations=3, num_basins=2):
+def _write_training_config(base_path, num_stations=3, num_basins=2, static_features=None):
     config = {
         'encoder_days': windowing.ENCODER_DAYS,
         'decoder_days': windowing.DECODER_DAYS,
@@ -56,6 +56,8 @@ def _write_training_config(base_path, num_stations=3, num_basins=2):
         'num_stations': num_stations,
         'num_basins': num_basins,
     }
+    if static_features:
+        config['static_features'] = list(static_features)
     with open(os.path.join(base_path, 'training_config.json'), 'w') as f:
         json.dump(config, f)
     return config
@@ -68,9 +70,9 @@ def _seed_index_files(base_path):
             json.dump({}, f)
 
 
-def _sample_inputs(n=1):
+def _sample_inputs(n=1, static_dim=0):
     rng = np.random.default_rng(0)
-    return {
+    sample = {
         'encoder_input': rng.standard_normal(
             (n, windowing.ENCODER_DAYS, len(windowing.ENCODER_FEATURES))).astype('float32'),
         'decoder_input': rng.standard_normal(
@@ -80,6 +82,9 @@ def _sample_inputs(n=1):
         'station_input': np.array([1] * n, dtype='int32'),
         'basin_input': np.array([1] * n, dtype='int32'),
     }
+    if static_dim:
+        sample['static_input'] = rng.standard_normal((n, static_dim)).astype('float32')
+    return sample
 
 
 def test_export_round_trips_with_parity(tmp_path):
@@ -98,7 +103,7 @@ def test_export_round_trips_with_parity(tmp_path):
     _assert_mobile_parity(result, base_path, net)
 
 
-def _assert_mobile_parity(result, base_path, net):
+def _assert_mobile_parity(result, base_path, net, static_dim=0):
     """
     Both exports answer to the names the mobile apps use and match Keras:
       - Android runs the TFLite SignatureRunner and reads the output key
@@ -108,7 +113,7 @@ def _assert_mobile_parity(result, base_path, net):
     """
     import sys
     import tensorflow as tf
-    keras_inputs = _sample_inputs(n=4)
+    keras_inputs = _sample_inputs(n=4, static_dim=static_dim)
     keras_pred = net.predict(keras_inputs, verbose=0)
 
     if not isinstance(keras_pred, dict):
@@ -219,3 +224,31 @@ def test_band_model_exports_both_outputs(tmp_path):
 
     assert result['mlpackage_zip'] and result['tflite']
     _assert_mobile_parity(result, base_path, net)
+
+
+def test_static_attribute_band_model_exports_with_builtins_parity(tmp_path):
+    """Phase 5: 6-input model (static_input + attribute-gated skip + QuantileBand) exports cleanly."""
+    from data import build_station_attributes as bsa
+    base_path = str(tmp_path)
+    static_feats = list(bsa.STATIC_FEATURE_NAMES)
+    def member():
+        return model_mod.build_encoder_decoder(
+            num_stations=3, num_basins=2, encoder_features=len(windowing.ENCODER_FEATURES),
+            decoder_features=len(windowing.DECODER_FEATURES),
+            target_features=len(windowing.TARGET_FEATURES), encoder_days=windowing.ENCODER_DAYS,
+            decoder_days=windowing.DECODER_DAYS, lstm_units=8, embedding_dim=4,
+            station_dropout=0.0, dropout=0.0, recurrent_dropout=0.0,
+            quantiles=model_mod.DEFAULT_QUANTILES,
+            upstream_change_index=windowing.DECODER_FEATURES.index('upstream_change'),
+            static_features=len(static_feats))
+    net = model_mod.average_ensemble([member(), member()])
+    net.save(os.path.join(base_path, 'lstm_model.h5'))
+    _write_training_config(base_path, static_features=static_feats)
+    _seed_index_files(base_path)
+
+    result = export_mobile.export_all(base_path)
+
+    assert result['mlpackage_zip'] and result['tflite']
+    assert result['tflite_mode'] == 'builtins'
+    _assert_mobile_parity(result, base_path, net, static_dim=len(static_feats))
+

@@ -338,3 +338,50 @@ def test_quantile_band_remains_compatible_with_legacy_3_input_signature():
     # Legacy 3-input layer must only allocate gap_scale (1 weight, no rise_upper_scale).
     qb = [l for l in legacy.layers if isinstance(l, model.QuantileBand)][0]
     assert len(qb.weights) == 1 and qb.rise_upper_scale is None
+
+
+def test_static_attributes_and_attribute_gated_upstream_skip(tmp_path):
+    """Phase 5: unseen rivers (station_idx=0) get physical conditioning and upstream gain via static_input."""
+    import tensorflow as tf
+    idx = windowing.DECODER_FEATURES.index('upstream_change')
+    static_dim = 6
+    net = model.build_encoder_decoder(
+        num_stations=4, num_basins=3,
+        encoder_features=len(windowing.ENCODER_FEATURES),
+        decoder_features=len(windowing.DECODER_FEATURES),
+        target_features=len(windowing.TARGET_FEATURES),
+        encoder_days=windowing.ENCODER_DAYS, decoder_days=windowing.DECODER_DAYS,
+        lstm_units=8, embedding_dim=4, station_dropout=0.0, dropout=0.0,
+        upstream_change_index=idx, quantiles=model.DEFAULT_QUANTILES,
+        static_features=static_dim,
+    )
+    assert model.has_static_input(net)
+    # Give static_upstream_gain non-zero weights so different static profiles produce distinct upstream gains
+    # even when station_idx == 0 (unseen river!).
+    sg = net.get_layer('static_upstream_gain')
+    sg.set_weights([np.ones_like(sg.get_weights()[0]) * 0.5, np.zeros_like(sg.get_weights()[1])])
+
+    x = _smoke_inputs(n=2, station_ids=[0, 0])
+    # Identical dynamic inputs; only static_input differs (river 0 positive, river 1 negative).
+    x['encoder_input'][1] = x['encoder_input'][0]
+    x['decoder_input'][1] = x['decoder_input'][0]
+    x['persistence_input'][1] = x['persistence_input'][0]
+    x['basin_input'][:] = 0
+    x['static_input'] = np.array([[1.5] * static_dim, [-1.5] * static_dim], dtype='float32')
+
+    bumped = {k: v.copy() for k, v in x.items()}
+    bumped['decoder_input'][..., idx] += 1.0
+    diff = (model.point_forecast(net.predict(bumped, verbose=0))
+            - model.point_forecast(net.predict(x, verbose=0)))
+    # Unseen rivers with different physical attributes respond differently to upstream_change!
+    assert float(diff[0, 0, 1]) > float(diff[1, 0, 1]) + 0.5
+
+    # Round-trips through ensemble + h5 identically.
+    ens = model.average_ensemble([net])
+    path = str(tmp_path / 'static_band.h5')
+    ens.save(path)
+    loaded = tf.keras.models.load_model(path, custom_objects=model.CUSTOM_OBJECTS, compile=False)
+    want, got = ens.predict(x, verbose=0), loaded.predict(x, verbose=0)
+    for k in want:
+        np.testing.assert_allclose(got[k], want[k], rtol=1e-5, atol=1e-6)
+

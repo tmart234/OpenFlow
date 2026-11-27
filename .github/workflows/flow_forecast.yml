@@ -106,6 +106,18 @@ jobs:
         done
         { echo '```'; cat forecast_out/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Build mobile feature feed
+      if: steps.model.outputs.dir != ''
+      shell: bash
+      env:
+        SITES: ${{ inputs.sites || 'taos-box,royal-gorge,conejos,dolores,westwater,clear-creek' }}
+        MODEL_DIR: ${{ steps.model.outputs.dir }}
+        EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+        EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+      run: |
+        python openFlowML/feature_feed.py --model-dir "$MODEL_DIR" \
+          --out-dir forecast_out/feed --sites "$SITES"
+
     - name: Upload forecast
       if: always()
       uses: actions/upload-artifact@v4
@@ -132,6 +144,11 @@ jobs:
         mkdir -p "archive/$DAY"
         cp ../forecast_out/*_forecast.json ../forecast_out/*_forecast.csv "archive/$DAY/"
         git add archive
+        if [ -d "../forecast_out/feed" ]; then
+          rm -rf feed
+          cp -r ../forecast_out/feed feed
+          git add feed
+        fi
         git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
           commit -qm "Forecasts $DAY" || echo "Nothing new to archive"
         git push -q origin forecast-archive

@@ -69,13 +69,16 @@ GATE = {
 
 
 def forecasts(samples: Sequence, model_pred, scalers: dict, band=None,
-              quantiles: Optional[Sequence[float]] = None) -> dict:
+              quantiles: Optional[Sequence[float]] = None,
+              station_areas_km2: Optional[Dict[str, float]] = None) -> dict:
     """
     Unscaled (cfs) daily-max forecasts and observations for each window:
     obs, model, persistence, upstream as (n, H) arrays, plus q0 (flow at issue
     time), falling (bool, issue-time trend), site and issue date per window.
     model_pred is the (n, H, T) point forecast or a model.predict() dict;
     band (n, H, T, Q), at `quantiles`, adds 'band' (n, H, Q) in cfs.
+    When `station_areas_km2` is provided (model trained in mm/day specific
+    discharge), converts every station's inverted mm/day arrays back to cfs.
     """
     if isinstance(model_pred, dict):
         band = model_pred.get('flow_quantiles') if band is None else band
@@ -97,18 +100,35 @@ def forecasts(samples: Sequence, model_pred, scalers: dict, band=None,
         up0 = invert(x['encoder_input'][:, -1, enc.index('upstream_flow')], scalers['upstream_flow'])
         known = x['decoder_input'][..., dec.index('upstream_known')] > 0.5
         obs0 = x['encoder_input'][:, -1, enc.index('upstream_observed')] > 0.5
-        step = np.where(known & obs0[:, None], np.maximum(q0[:, None] + up - up0[:, None], 1.0), np.nan)
+        step = np.where(known & obs0[:, None], np.maximum(q0[:, None] + up - up0[:, None], 1e-6), np.nan)
         step = pd.DataFrame(step.T).ffill().to_numpy().T          # hold the last known value
         upstream = np.where(np.isfinite(step), step, persistence)
 
     extra = {}
     if band is not None and quantiles:
         extra = {'band': q(np.asarray(band)[..., t, :]), 'quantiles': [float(v) for v in quantiles]}
+
+    sites = np.array([s.site_id for s in samples])
+    if station_areas_km2:
+        import normalize_data
+        scale = np.array([
+            float(station_areas_km2[s]) / normalize_data.CFS_TO_MM_DAY_PER_KM2
+            if s in station_areas_km2 and float(station_areas_km2[s]) > 0.0 else 1.0
+            for s in sites
+        ], dtype='float64')
+        obs = obs * scale[:, None]
+        model = model * scale[:, None]
+        persistence = persistence * scale[:, None]
+        upstream = upstream * scale[:, None]
+        q0 = q0 * scale
+        if 'band' in extra:
+            extra['band'] = extra['band'] * scale[:, None, None]
+
     return {
         **extra,
         'obs': obs, 'model': model, 'persistence': persistence, 'upstream': upstream,
         'q0': q0, 'falling': enc_q[:, -1] < enc_q[:, -3],
-        'site': np.array([s.site_id for s in samples]),
+        'site': sites,
         'issued': np.array([s.anchor_date + pd.Timedelta(days=x['encoder_input'].shape[1] - 1)
                             for s in samples]),
     }
@@ -300,14 +320,24 @@ def main(argv=None):
 
     import ml_inference
     art = ml_inference.load_artifacts(args.base_path, with_model=True)
+    tc = art['training_config']
     data = pd.read_csv(os.path.join(args.base_path, 'openFlowML', 'normalized_data.csv'),
                        parse_dates=['Date'])
-    samples = windowing.build_windows_for_config(data, art['training_config'], art['scalers'])
+    static_vectors = None
+    if tc.get('static_features'):
+        from data import build_station_attributes as bsa
+        static_vectors = bsa.build_static_vectors(
+            data['site_id'].unique(), art.get('station_attributes'),
+            tc.get('static_scalers'), tc['static_features'])
+    samples = windowing.build_windows_for_config(
+        data, tc, art['scalers'], static_vectors=static_vectors)
     split = windowing.chronological_split(samples, 0.15, 0.15, windowing.DECODER_DAYS)
     x, _ = windowing.stack(split.test)
     pred = art['model'].predict(x, verbose=0, batch_size=512)
-    quantiles = art['training_config'].get('quantiles')
-    report = build_report(forecasts(split.test, pred, art['scalers'], quantiles=quantiles),
+    quantiles = tc.get('quantiles')
+    areas = tc.get('station_areas_km2') if tc.get('flow_units') == 'mm_day' else None
+    report = build_report(forecasts(split.test, pred, art['scalers'], quantiles=quantiles,
+                                    station_areas_km2=areas),
                           art.get('version'))
     for p in write_report(report, args.base_path):
         print('wrote', p)
