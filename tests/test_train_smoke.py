@@ -68,16 +68,17 @@ def test_train_main_end_to_end_with_upstream_station(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(base, 'lstm_model.h5'))
     with open(os.path.join(base, 'training_config.json')) as f:
         config = json.load(f)
+    import windowing
     assert 'upstream_flow' in config['encoder_features']
     assert 'upstream_known' in config['decoder_features']
-    assert config['window_built_decoder_features'] == ['upstream_known', 'upstream_change',
-                                                        'basin_precip_known']
+    assert config['window_built_decoder_features'] == windowing.WINDOW_BUILT_DECODER_FEATURES
     assert config['event_weight'] == train.EVENT_WEIGHT and config['linear_skip'] is True
     assert config['ensemble_size'] == 2 and isinstance(config['final_refit'], bool)
     assert config['outputs'] == ['persistence_plus_delta', 'flow_quantiles']
     assert config['river_upstream_gain'] is True
     assert config['quantiles'] == list(train.QUANTILES)
     assert np.asarray(config['band_calibration']).shape == (14, 2, 2)
+    assert np.asarray(config['band_rise_calibration']).shape == (14, 2)
     with open(os.path.join(base, 'quality_report.json')) as f:
         report = json.load(f)
     assert set(report['stations']) == {'USGS:08276500', 'USGS:09114500'}

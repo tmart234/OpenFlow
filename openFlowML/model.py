@@ -90,33 +90,54 @@ class QuantileBand(layers.Layer):
     """
     Non-crossing forecast quantiles around the point forecast.
 
-    Inputs [point (N, H, T), gaps (N, H, T, Q-1) >= 0], where gaps[..., k] is
-    quantile k+1 minus quantile k. The 0.5 slot is the point forecast itself
-    (through a stop-gradient, so the band's loss cannot move it). Every
-    other quantile sits a non-negative gap beyond its neighbour, so the
-    quantiles can never cross. The gaps below / above the median are then
-    multiplied by `gap_scale[h, t, 0 / 1]`, a fixed (non-trainable) per-lead
-    calibration factor that calibrate_band sets after training. It is 1
-    until then. Only adds and multiplies, so CoreML and TFLite convert it as
-    builtins.
+    Inputs:
+      - legacy 2-input: [point (N, H, T), gaps (N, H, T, Q-1) >= 0]
+      - legacy 3-input: [point, gaps, st_scale (N, H, T, 2)]
+      - 4-input (Phase 2): [point, gaps, st_scale, persistence_broadcast (N, H, T)]
+
+    The 0.5 slot is the point forecast itself (through a stop-gradient, so the
+    band's loss cannot move it). Every other quantile sits a non-negative gap
+    beyond its neighbour, so quantiles never cross. Gaps below/above the median
+    are multiplied by global `gap_scale[h, t, 0/1]` and per-station `st_scale`.
+    When the 4th persistence input is connected, predicted rising limbs
+    (`point > persistence`) get an additional upper-tail multiplier
+    `rise_upper_scale[h, t]` (>= 1.0) fitted by `calibrate_band` so 90% flood-
+    rise coverage reaches nominal levels without widening steady/receding days.
+    Uses only elementwise builtins (relu, minimum, add, mul) so CoreML and
+    TFLite convert cleanly without Flex ops.
     """
 
-    def __init__(self, quantiles=DEFAULT_QUANTILES, **kwargs):
+    def __init__(self, quantiles=DEFAULT_QUANTILES, rise_threshold: float = 0.15, **kwargs):
         super().__init__(**kwargs)
         self.quantiles = [float(q) for q in quantiles]
         if 0.5 not in self.quantiles or sorted(self.quantiles) != self.quantiles:
             raise ValueError("quantiles must be ascending and include 0.5")
         self.mid = self.quantiles.index(0.5)
+        self.rise_threshold = float(rise_threshold)
+        self.rise_upper_scale = None
 
     def build(self, input_shape):
         _, horizon, targets = input_shape[0]
         self.gap_scale = self.add_weight(
             name='gap_scale', shape=(horizon, targets, 2),
             initializer='ones', trainable=False)
+        if len(input_shape) == 4:
+            self.rise_upper_scale = self.add_weight(
+                name='rise_upper_scale', shape=(horizon, targets),
+                initializer='ones', trainable=False)
         super().build(input_shape)
 
     def call(self, inputs):
-        if len(inputs) == 3:
+        if len(inputs) == 4:
+            point, gaps, st_scale, persistence = inputs
+            lower = self.gap_scale[..., 0] * st_scale[..., 0]
+            rise_w = tf.minimum(
+                tf.nn.relu(tf.stop_gradient(point) - persistence) / self.rise_threshold,
+                1.0,
+            )
+            rise_mult = 1.0 + rise_w * (self.rise_upper_scale - 1.0)
+            upper = self.gap_scale[..., 1] * st_scale[..., 1] * rise_mult
+        elif len(inputs) == 3:
             point, gaps, st_scale = inputs
             lower = self.gap_scale[..., 0] * st_scale[..., 0]
             upper = self.gap_scale[..., 1] * st_scale[..., 1]
@@ -133,6 +154,7 @@ class QuantileBand(layers.Layer):
     def get_config(self):
         config = super().get_config()
         config['quantiles'] = self.quantiles
+        config['rise_threshold'] = self.rise_threshold
         return config
 
 
@@ -344,7 +366,7 @@ def build_encoder_decoder(
     )(station_input)
     st_scale = layers.Reshape((decoder_days, target_features, 2),
                               name='band_station_scale_reshape')(st_scale_flat)
-    band = QuantileBand(quantiles, name=QUANTILE_OUTPUT)([output, gaps, st_scale])
+    band = QuantileBand(quantiles, name=QUANTILE_OUTPUT)([output, gaps, st_scale, persistence_broadcast])
 
     model = Model(inputs=inputs, outputs={POINT_OUTPUT: output, QUANTILE_OUTPUT: band},
                   name='flow_seq2seq_residual')
@@ -443,22 +465,43 @@ def set_band_station_scale(net, rel_scale):
         layer.set_weights([arr.reshape(layer.input_dim, layer.output_dim)])
 
 
-def calibrate_band(net, inputs, y, quantiles, min_station_windows: int = 50):
+def get_rise_upper_scale(net):
+    """Return the (H, T) rising-limb upper-tail multiplier matrix, or None."""
+    for layer in band_layers(net):
+        if getattr(layer, 'rise_upper_scale', None) is not None:
+            return layer.rise_upper_scale.numpy().copy()
+    return None
+
+
+def set_rise_upper_scale(net, scale):
+    """Write (H, T) rising-limb upper-tail multipliers into every QuantileBand of `net`."""
+    arr = np.asarray(scale, dtype='float32')
+    for layer in band_layers(net):
+        if getattr(layer, 'rise_upper_scale', None) is not None:
+            layer.rise_upper_scale.assign(arr)
+
+
+def calibrate_band(net, inputs, y, quantiles, min_station_windows: int = 50,
+                   min_rise_windows: int = 25, rise_upper_max: float = 2.5):
     """
     Calibrate `net`'s band on held-out (inputs, y) and return global factors (H, T, 2).
 
-    Measured on the model's own (averaged) output with unit scale; every
-    member gets the same factors, so the ensemble's averaged band scales by
-    them too (the average is linear in the gaps). When the model includes
-    per-station multiplier embeddings (`band_station_scale`), each known
-    station with at least `min_station_windows` held-out windows also gets its
-    own split-conformal multiplier relative to the global factor (index 0 keeps
-    1.0 so unseen stations fall back to the global calibration).
+    1. Fit global per-lead, per-target, per-side split-conformal `gap_scale`.
+    2. Fit per-station multipliers (`band_station_scale`) for stations with
+       at least `min_station_windows` held-out windows (index 0 stays 1.0).
+    3. When `QuantileBand` carries `rise_upper_scale`, fit an upper-tail
+       multiplier (>= 1.0) on predicted rising limbs (`point > persistence`)
+       so 90% coverage during floods reaches nominal level without widening
+       steady or receding days.
     """
-    set_band_scale(net, np.ones_like(band_layers(net)[0].gap_scale.numpy()))
+    blayers = band_layers(net)
+    set_band_scale(net, np.ones_like(blayers[0].gap_scale.numpy()))
     st_layers = band_station_scale_layers(net)
     if st_layers:
         set_band_station_scale(net, np.ones((st_layers[0].input_dim, st_layers[0].output_dim), dtype='float32'))
+    has_rise = getattr(blayers[0], 'rise_upper_scale', None) is not None
+    if has_rise:
+        set_rise_upper_scale(net, np.ones_like(blayers[0].rise_upper_scale.numpy()))
     pred = net.predict(inputs, verbose=0, batch_size=512)
     q_pred, p_pred = band_forecast(pred), point_forecast(pred)
     scale = band_calibration(q_pred, p_pred, y, quantiles)
@@ -473,6 +516,27 @@ def calibrate_band(net, inputs, y, quantiles, min_station_windows: int = 50):
                 st_scale = band_calibration(q_pred[m], p_pred[m], y[m], quantiles)
                 rel[sid] = st_scale / np.maximum(scale, 1e-6)
         set_band_station_scale(net, rel)
+    if has_rise and isinstance(inputs, dict) and 'persistence_input' in inputs:
+        # Evaluate post-global + post-station band, then calibrate upper tail on
+        # predicted rising limbs only.
+        pred2 = net.predict(inputs, verbose=0, batch_size=512)
+        q2, p2 = band_forecast(pred2), point_forecast(pred2)
+        pers = np.asarray(inputs['persistence_input'], dtype='float64')[:, None, :]
+        thresh = max(float(getattr(blayers[0], 'rise_threshold', 0.15)), 1e-6)
+        rise_w = np.clip((np.asarray(p2, dtype='float64') - pers) / thresh, 0.0, 1.0)
+        y_arr = np.asarray(y, dtype='float64')
+        r_hi = (y_arr - p2) / np.maximum(q2[..., -1] - p2, 1e-6)
+        horizon, targets = scale.shape[0], scale.shape[1]
+        rise_scale = np.ones((horizon, targets), dtype='float32')
+        for h in range(horizon):
+            for t in range(targets):
+                active = rise_w[:, h, t] >= 0.3
+                if int(active.sum()) >= min_rise_windows:
+                    needed = float(np.quantile(r_hi[active, h, t], quantiles[-1]))
+                    med_w = float(np.median(rise_w[active, h, t]))
+                    mult = 1.0 + (needed - 1.0) / max(med_w, 0.5)
+                    rise_scale[h, t] = float(np.clip(mult, 1.0, rise_upper_max))
+        set_rise_upper_scale(net, rise_scale)
     return scale
 
 

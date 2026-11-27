@@ -283,3 +283,58 @@ def test_per_station_band_calibration_tailors_spread_and_keeps_unseen_global(tmp
     np.testing.assert_allclose(
         loaded.predict(x, verbose=0)[model.QUANTILE_OUTPUT],
         net.predict(x, verbose=0)[model.QUANTILE_OUTPUT], rtol=1e-5, atol=1e-6)
+
+
+def test_rising_limb_band_calibration_widens_rises_without_widening_recessions(tmp_path):
+    import tensorflow as tf
+    net = _build_band_model()
+    rng = np.random.default_rng(11)
+    n = 120
+    # Make persistence low on the first half (so point > persistence -> predicted rise)
+    # and high on the second half (so point <= persistence -> predicted recession).
+    x = _smoke_inputs(n=n)
+    p0 = model.point_forecast(net.predict(x, verbose=0))
+    pers = x['persistence_input'].copy()
+    pers[:60] = p0[:60, 0, :] - 0.5   # strong predicted rise
+    pers[60:] = p0[60:, 0, :] + 0.5   # predicted recession
+    x['persistence_input'] = pers.astype('float32')
+
+    # Recompute point prediction with updated persistence and construct targets:
+    # rising samples have large positive upside errors; receding samples are tight.
+    p = model.point_forecast(net.predict(x, verbose=0))
+    y = p.copy()
+    y[:60] += np.abs(rng.normal(0.0, 0.8, y[:60].shape)).astype('float32')
+    y[60:] += rng.normal(0.0, 0.05, y[60:].shape).astype('float32')
+
+    model.calibrate_band(net, x, y, model.DEFAULT_QUANTILES, min_station_windows=999, min_rise_windows=20)
+    rise_scale = model.get_rise_upper_scale(net)
+    assert rise_scale is not None
+    assert rise_scale.shape == (windowing.DECODER_DAYS, len(windowing.TARGET_FEATURES))
+    assert float(rise_scale.mean()) > 1.05
+
+    # Verify steady/receding samples (point <= persistence) are unaffected by rise_upper_scale!
+    pred_with = net.predict(x, verbose=0)[model.QUANTILE_OUTPUT]
+    model.set_rise_upper_scale(net, np.ones_like(rise_scale))
+    pred_unit = net.predict(x, verbose=0)[model.QUANTILE_OUTPUT]
+    # On receding samples where point <= persistence, upper quantiles match identically.
+    rec_mask = p[60:] <= pers[60:, None, :]
+    if rec_mask.any():
+        np.testing.assert_allclose(pred_with[60:][rec_mask], pred_unit[60:][rec_mask], atol=1e-5)
+    # Restore and verify h5 round-trip preserves rise_upper_scale.
+    model.set_rise_upper_scale(net, rise_scale)
+    path = str(tmp_path / 'rise_band.h5')
+    net.save(path)
+    loaded = tf.keras.models.load_model(path, custom_objects=model.CUSTOM_OBJECTS, compile=False)
+    np.testing.assert_allclose(model.get_rise_upper_scale(loaded), rise_scale, atol=1e-6)
+
+
+def test_quantile_band_remains_compatible_with_legacy_3_input_signature():
+    import tensorflow as tf
+    pt = tf.keras.Input(shape=(4, 2))
+    gaps = tf.keras.Input(shape=(4, 2, 4))
+    st = tf.keras.Input(shape=(4, 2, 2))
+    out = model.QuantileBand(model.DEFAULT_QUANTILES)([pt, gaps, st])
+    legacy = tf.keras.Model([pt, gaps, st], out)
+    # Legacy 3-input layer must only allocate gap_scale (1 weight, no rise_upper_scale).
+    qb = [l for l in legacy.layers if isinstance(l, model.QuantileBand)][0]
+    assert len(qb.weights) == 1 and qb.rise_upper_scale is None

@@ -36,40 +36,44 @@ CORE_REQUIRED = ['TMIN', 'TMAX', 'Min Flow', 'Max Flow']
 # heavy-tailed and the same rationale that justifies log1p for streamflow
 # (spread error across base/peak regimes) applies here.
 BASIN_PRECIP_COLUMNS = list(windowing.BASIN_PRECIP_FEATURES)
+ENERGY_COLUMNS = list(windowing.ENERGY_FEATURES)
+INTENSITY_COLUMNS = list(windowing.INTENSITY_FEATURES)
+HYDRO_SM_COLUMNS = list(windowing.HYDRO_SM_FEATURES)
+GRIDDED_SWE_COLUMNS = list(windowing.GRIDDED_SWE_FEATURES)
 OPTIONAL_NUMERIC = ['SWE', 'soil_moisture', 'drought_index',
                     'reservoir_storage', 'reservoir_release',
-                    'precipitation', 'upstream_flow', *BASIN_PRECIP_COLUMNS]
+                    'precipitation', 'upstream_flow', *BASIN_PRECIP_COLUMNS,
+                    *ENERGY_COLUMNS, *INTENSITY_COLUMNS, *HYDRO_SM_COLUMNS,
+                    *GRIDDED_SWE_COLUMNS, 'prior_flow']
 # Binary indicator columns: included as model inputs but NOT z-scored. Scaling
 # a 0/1 indicator destroys the semantics (the model needs to see 0 vs 1 as
 # distinct cases, not as samples from a centered normal).
-#   sm_observed         -- 1 = real / short-gap-interpolated SMAP retrieval
-#   reservoir_observed  -- 1 = station has a USBR mapping AND fetch succeeded
-#   upstream_observed   -- 1 = station has upstream gauges AND the routed value is real
-#   basin_precip_observed -- 1 = station has basin zones AND gridMET had the day
 INDICATOR_COLUMNS = ['sm_observed', 'reservoir_observed', 'upstream_observed',
-                     'basin_precip_observed']
+                     'basin_precip_observed', 'energy_observed',
+                     'precip_intensity_observed', 'hydro_sm_observed',
+                     'gridded_swe_observed', 'prior_observed']
 # Columns whose scaler is fit ONLY on rows where the paired indicator is 1,
-# and whose unobserved rows are set to 0.0 (the observed mean) after
-# scaling. Upstream flow is 0 cfs for every station without upstream gauges;
-# fitting the scaler on those placeholders would make the real values'
-# scale meaningless, and log1p(0) would put the placeholder far out in the
-# tail. The indicator column tells the model the placeholder isn't real.
+# and whose unobserved rows are set to 0.0 (the observed mean) after scaling.
 SCALER_FIT_MASKS = {
     'soil_moisture': 'sm_observed',
     'reservoir_storage': 'reservoir_observed',
     'reservoir_release': 'reservoir_observed',
     'upstream_flow': 'upstream_observed',
     **{c: 'basin_precip_observed' for c in BASIN_PRECIP_COLUMNS},
+    **{c: 'energy_observed' for c in ENERGY_COLUMNS},
+    **{c: 'precip_intensity_observed' for c in INTENSITY_COLUMNS},
+    **{c: 'hydro_sm_observed' for c in HYDRO_SM_COLUMNS},
+    **{c: 'gridded_swe_observed' for c in GRIDDED_SWE_COLUMNS},
+    'prior_flow': 'prior_observed',
 }
 # Per-station metadata ints passed through unscaled (not model features).
 PASSTHROUGH_INT_COLUMNS = ['upstream_known_days']
 NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
-# Streamflow is log-normal -- log1p before z-scoring is standard hydrology
-# practice. Temperature/SWE stay linear. Precipitation is also heavy-tailed
-# (most days zero, occasional storms in the 99th percentile dominate the
-# raw scale), so it gets the same log1p treatment as flow.
+# Streamflow and precipitation intensities are heavy-tailed -> log1p before z-score.
+# Temperature, radiation/PET/VPD, SWE, delta_swe, soil moisture stay linear.
 LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow', 'precipitation', 'upstream_flow',
-                         *BASIN_PRECIP_COLUMNS}
+                         *BASIN_PRECIP_COLUMNS, 'precip_max1h', 'precip_max3h',
+                         'prior_flow'}
 
 
 def add_day_of_year_features(data):
@@ -205,9 +209,7 @@ def normalize_data(data, artifacts_dir=None, fit_mask=None):
         # default (unlike soil moisture, which gets median imputation in
         # combine_data); the model can treat "no observation today" the
         # same as "no rain today" without much harm.
-        for column in ('SWE', 'soil_moisture', 'drought_index',
-                       'reservoir_storage', 'reservoir_release',
-                       'precipitation', 'upstream_flow', *BASIN_PRECIP_COLUMNS):
+        for column in OPTIONAL_NUMERIC:
             if column in data.columns:
                 data[column] = data[column].fillna(0.0)
         # Indicators default to 0 ("not observed") when missing.

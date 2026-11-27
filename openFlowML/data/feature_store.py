@@ -48,7 +48,7 @@ from data import basin_zones, get_upstream  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_CACHE_DIR = os.path.expanduser('~/.cache/openflow/dataset')
 DEFAULT_REFRESH_DAYS = 14
 # Boundary buffer on incremental splices: keep freshly fetched rows starting
@@ -64,6 +64,10 @@ _FEATURE_TOGGLE_VARS = (
     'OPENFLOW_DISABLE_UPSTREAM',
     'OPENFLOW_DISABLE_BASIN_PRECIP',
     'OPENFLOW_DISABLE_WEATHER_FILL',
+    'OPENFLOW_DISABLE_ENERGY',
+    'OPENFLOW_DISABLE_HYDRO_FORCING',
+    'OPENFLOW_DISABLE_GRIDDED_SWE',
+    'OPENFLOW_DISABLE_PRIOR',
 )
 
 
@@ -91,15 +95,20 @@ def _norm_day(d) -> pd.Timestamp:
 def station_fingerprint(site_id: str,
                         weather_source: Optional[str] = None,
                         registry: Optional[dict] = None,
-                        zones: Optional[dict] = None) -> str:
+                        zones: Optional[dict] = None,
+                        hydro_source: Optional[str] = None) -> str:
     """
     Deterministic hash of every setting that affects a station's cached raw
     feature table. Changing a station's upstream gauges, basin zones, weather
-    source, or disabled-source flags invalidates only the affected station(s).
+    source, hydro forcing source, or disabled-source flags invalidates only
+    the affected station(s).
     """
     if weather_source is None:
         import combine_data
         weather_source = combine_data.weather_source()
+    if hydro_source is None:
+        from data import get_hydro_forcing
+        hydro_source = get_hydro_forcing.hydro_source()
     disabled = sorted(
         var for var in _FEATURE_TOGGLE_VARS
         if os.getenv(var, '').strip() in ('1', 'true', 'True')
@@ -119,6 +128,7 @@ def station_fingerprint(site_id: str,
         'schema_version': SCHEMA_VERSION,
         'site_id': site_id,
         'weather_source': weather_source,
+        'hydro_source': hydro_source,
         'disabled': disabled,
         'upstream': up_cfg,
         'basin_zones': z_meta,

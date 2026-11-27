@@ -74,6 +74,11 @@ RIVER_SKIP = os.getenv('OPENFLOW_RIVER_SKIP', '1').strip() not in ('0', 'false',
 # weather, and add that to quality_report. Off by default: it downloads the
 # archive (~70 requests) and the free API can rate-limit.
 LIVE_FORCING = os.getenv('OPENFLOW_LIVE_FORCING', '').strip() in ('1', 'true', 'True')
+# Inject archived real weather forecasts (Open-Meteo Previous Runs 2024+ /
+# NOAA GEFS v12 reforecasts 2000-2019) from the feature-store cache into the
+# decoder window during training when available, closing the observed-vs-live
+# forcing gap. OPENFLOW_TRAIN_REAL_FORECASTS=0 reverts to observed-only decoder.
+TRAIN_REAL_FORECASTS = os.getenv('OPENFLOW_TRAIN_REAL_FORECASTS', '1').strip() not in ('0', 'false', 'False')
 # After the held-out evaluation, retrain every member on ALL windows (train +
 # val + test) for the epochs and learning-rate schedule early stopping chose,
 # so the published model has also learned from the most recent years (the
@@ -280,7 +285,25 @@ def main():
 
     # 3. Build station-aware windows with no flow leakage in the decoder,
     #    using scalers for physically consistent mass-balance upstream_change.
-    samples = windowing.build_windows(data, ENCODER_DAYS, DECODER_DAYS, scalers=scalers)
+    #    When cached archived weather forecasts (Open-Meteo Previous Runs /
+    #    GEFS v12) are available and TRAIN_REAL_FORECASTS is enabled, inject
+    #    real forecasts + ensemble spread into the decoder.
+    forecast_table = None
+    if TRAIN_REAL_FORECASTS:
+        fc_dir = os.getenv('OPENFLOW_REFORECAST_DIR', '').strip() or combine_data._resolve_cache_dir()
+        if fc_dir:
+            try:
+                from data import get_gefs_reforecast
+                ft = get_gefs_reforecast.load_reforecast_table(fc_dir)
+                if ft is not None and not ft.empty:
+                    forecast_table = ft
+                    logger.info("Loaded %d archived weather forecast rows from %s for real-forecast decoder training",
+                                len(forecast_table), fc_dir)
+            except Exception as e:
+                logger.warning("Archived forecast table skipped: %s", e)
+
+    samples = windowing.build_windows(
+        data, ENCODER_DAYS, DECODER_DAYS, scalers=scalers, forecast_table=forecast_table)
     if not samples:
         raise ValueError("No usable training windows were produced from the dataset")
     logger.info("Built %d total windows across %d sites",
@@ -306,15 +329,15 @@ def main():
         (train_inputs, train_targets, train_w), (val_inputs, val_targets, val_w))
     net = model_mod.average_ensemble(members)
     logger.info("Ensemble of %d member(s)", len(members))
-    # Calibrate the band's spread per lead day (and per station) on the
-    # validation windows (split-conformal; model.calibrate_band). Early
-    # stopping already used val, but only for the point forecast, which the
-    # band cannot move.
+    # Calibrate the band's spread per lead day, per station, and on rising
+    # limbs on the validation windows (split-conformal; model.calibrate_band).
     band_scale = None
     band_station_scale = None
+    band_rise_scale = None
     if model_mod.has_band(net):
         band_scale = model_mod.calibrate_band(net, val_inputs, val_targets, QUANTILES)
         band_station_scale = model_mod.get_band_station_scale(net)
+        band_rise_scale = model_mod.get_rise_upper_scale(net)
         logger.info("Band calibration (daily max, lower / upper factor by lead day):\n%s",
                     np.round(band_scale[:, windowing.TARGET_FEATURES.index('Max Flow')], 2).T)
 
@@ -417,6 +440,8 @@ def main():
             model_mod.set_band_scale(refit, band_scale)
             if band_station_scale is not None:
                 model_mod.set_band_station_scale(refit, band_station_scale)
+            if band_rise_scale is not None:
+                model_mod.set_rise_upper_scale(refit, band_rise_scale)
         held_out = float(np.mean(_summarize_per_horizon(test_targets, model_pred)))
         in_sample = float(np.mean(_summarize_per_horizon(
             test_targets, model_mod.point_forecast(refit.predict(test_inputs, verbose=0)))))
@@ -439,6 +464,7 @@ def main():
     known = (data.groupby('site_id')[windowing.UPSTREAM_KNOWN_DAYS_COLUMN].first()
              .astype(int).to_dict()
              if windowing.UPSTREAM_KNOWN_DAYS_COLUMN in data.columns else {})
+    from data import get_hydro_forcing
     config = {
         'encoder_days': ENCODER_DAYS,
         'decoder_days': DECODER_DAYS,
@@ -455,7 +481,12 @@ def main():
         'upstream_change_mode': 'mass_balance_hold',
         'upstream_registry': 'upstream_gauges.json',
         'weather_source': combine_data.weather_source(),
+        'hydro_source': get_hydro_forcing.hydro_source(),
+        'real_forecast_training': bool(forecast_table is not None and not forecast_table.empty),
         'basin_precip_known_days': windowing.BASIN_PRECIP_KNOWN_DAYS,
+        'energy_known_days': windowing.ENERGY_KNOWN_DAYS,
+        'precip_intensity_known_days': windowing.PRECIP_INTENSITY_KNOWN_DAYS,
+        'prior_known_days': windowing.PRIOR_KNOWN_DAYS,
         'basin_zones': 'basin_zones.json',
         'event_weight': EVENT_WEIGHT,
         'lead_weight_power': LEAD_WEIGHT_POWER,
@@ -469,6 +500,7 @@ def main():
         'quantiles': list(QUANTILES) if band_scale is not None else None,
         'band_calibration': band_scale.round(4).tolist() if band_scale is not None else None,
         'band_station_calibration': band_station_scale is not None,
+        'band_rise_calibration': band_rise_scale.round(4).tolist() if band_rise_scale is not None else None,
         'ensemble_size': len(members),
         'final_refit': refit_done,
         'training_years': int(os.getenv('OPENFLOW_TRAINING_YEARS', '') or combine_data.TRAINING_YEARS),
@@ -476,7 +508,8 @@ def main():
         # credentials). Inference must switch off the same ones so it sees
         # the placeholders the model was trained on.
         'disabled_sources': sorted(
-            name for name in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP')
+            name for name in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP',
+                              'ENERGY', 'HYDRO_FORCING', 'GRIDDED_SWE', 'PRIOR')
             if os.getenv(f'OPENFLOW_DISABLE_{name}', '').strip() in ('1', 'true', 'True')),
     }
     with open(os.path.join(base_path, 'training_config.json'), 'w') as f:

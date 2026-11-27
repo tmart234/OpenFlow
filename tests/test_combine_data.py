@@ -407,11 +407,9 @@ def test_fetch_fills_a_missing_station_from_gridmet(monkeypatch):
     monkeypatch.setattr(combine_data.get_noaa, 'main', lambda *a: (None, pd.DataFrame()))
     monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather', lambda *a: pd.DataFrame(
         {'Date': days, 'TMIN': -10.0, 'TMAX': 50.0, 'precipitation': 0.0}))
-    monkeypatch.setenv('OPENFLOW_DISABLE_SMAP', '1')
-    monkeypatch.setenv('OPENFLOW_DISABLE_DROUGHT', '1')
-    monkeypatch.setenv('OPENFLOW_DISABLE_RESERVOIR', '1')
-    monkeypatch.setenv('OPENFLOW_DISABLE_UPSTREAM', '1')
-    monkeypatch.setenv('OPENFLOW_DISABLE_BASIN_PRECIP', '1')
+    for v in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP',
+              'ENERGY', 'HYDRO_FORCING', 'GRIDDED_SWE', 'PRIOR'):
+        monkeypatch.setenv(f'OPENFLOW_DISABLE_{v}', '1')
     monkeypatch.setattr(combine_data.get_swe, 'get_huc_id', lambda *a, **k: None)
     monkeypatch.setattr(combine_data.get_swe, 'get_swe', lambda *a: pd.DataFrame(columns=['Date', 'SWE']))
     out = combine_data.fetch_and_process_data(
@@ -460,7 +458,8 @@ def test_fetch_prefers_gridmet_by_default_and_supports_legacy_noaa(monkeypatch):
         {'Date': days, 'TMIN': -50.0, 'TMAX': 10.0, 'precipitation': 0.0})))
     monkeypatch.setattr(combine_data.get_basin_precip, 'gridmet_point_weather', lambda *a: pd.DataFrame(
         {'Date': days, 'TMIN': -10.0, 'TMAX': 50.0, 'precipitation': 1.0}))
-    for v in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP'):
+    for v in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP',
+              'ENERGY', 'HYDRO_FORCING', 'GRIDDED_SWE', 'PRIOR'):
         monkeypatch.setenv(f'OPENFLOW_DISABLE_{v}', '1')
     monkeypatch.delenv('OPENFLOW_WEATHER_SOURCE', raising=False)
     monkeypatch.setattr(combine_data.get_swe, 'get_huc_id', lambda *a, **k: None)

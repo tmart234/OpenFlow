@@ -80,6 +80,20 @@ def test_decoder_features_carry_no_flow_information():
     assert 'upstream_observed' not in windowing.DECODER_FEATURES
     assert 'upstream_known' in windowing.DECODER_FEATURES
     assert 'upstream_known' not in windowing.ENCODER_FEATURES
+    # Phase 1-3: continuous soil moisture and elevation-band SWE are strictly
+    # encoder-only (no 14-day forecast); energy, rainfall intensity, ensemble
+    # spread, forcing flags, and RFC/NWM prior are forecast-available.
+    for c in (*windowing.HYDRO_SM_FEATURES, 'hydro_sm_observed',
+              *windowing.GRIDDED_SWE_FEATURES, 'gridded_swe_observed',
+              'energy_observed', 'precip_intensity_observed', 'prior_observed'):
+        assert c in windowing.ENCODER_FEATURES
+        assert c not in windowing.DECODER_FEATURES
+    for c in (*windowing.ENERGY_FEATURES, 'energy_known',
+              *windowing.INTENSITY_FEATURES, 'precip_intensity_known',
+              *windowing.ENSEMBLE_SPREAD_FEATURES, 'ens_spread_known',
+              'forcing_is_forecast', 'lead_day_norm',
+              'prior_flow', 'prior_known', 'prior_change'):
+        assert c in windowing.DECODER_FEATURES
 
 
 def test_build_windows_shapes_are_correct():

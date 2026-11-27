@@ -199,14 +199,32 @@ def nws_point_daily(lat: float, lon: float, tz: str) -> pd.DataFrame:
 
 
 def forecast_weather(lat: float, lon: float, tz: str, days: int = 16) -> pd.DataFrame:
-    """Daily forecast weather in training units; Open-Meteo first, NWS gridpoint fallback."""
+    """
+    Daily forecast weather in training units; Open-Meteo extended forecast
+    (TMIN/TMAX tenths deg C, precipitation mm, srad MJ/m^2/day, pet mm/day,
+    vpd kPa, precip_max1h/max3h/wet_hours) + 31-member ensemble spread when
+    available, falling back cleanly to basic Open-Meteo or NWS gridpoints.
+    """
     try:
         from data import get_forecast
-        om = get_forecast.get_open_meteo_forecast(lat, lon, days=days, temperature_unit='celsius')
+        om = get_forecast.get_open_meteo_extended_forecast(
+            lat, lon, days=days, temperature_unit='celsius', timezone=tz)
+        if om is None or om.empty:
+            om = get_forecast.get_open_meteo_forecast(lat, lon, days=days, temperature_unit='celsius')
         if om is not None and not om.empty:
             om = om.set_index(pd.DatetimeIndex(pd.to_datetime(om['Date']), name='Date'))
+            om = om.drop(columns=['Date'], errors='ignore')
             om[['TMIN', 'TMAX']] = om[['TMIN', 'TMAX']].astype(float) * 10.0
-            return om[['TMIN', 'TMAX', 'precipitation']].astype(float)
+            try:
+                ens = get_forecast.get_open_meteo_ensemble(lat, lon, days=days, timezone=tz)
+                if ens is not None and not ens.empty:
+                    ens = ens.set_index(pd.DatetimeIndex(pd.to_datetime(ens['Date']), name='Date'))
+                    for c in windowing.ENSEMBLE_SPREAD_FEATURES:
+                        if c in ens.columns:
+                            om[c] = ens[c].reindex(om.index)
+            except Exception as e:
+                logger.debug("Open-Meteo ensemble spread unavailable (%s)", e)
+            return om.apply(pd.to_numeric, errors='coerce')
     except Exception as e:
         logger.info("Open-Meteo forecast unavailable (%s); using NWS", e)
     return nws_point_daily(lat, lon, tz)
@@ -276,9 +294,8 @@ def _mirror_disabled_sources(cfg_tc: dict, scalers: Optional[dict] = None) -> No
     sees the placeholders it learned. Older configs don't record this; SMAP
     then counts as off unless Earthdata credentials are present (it cannot be
     fetched without them). Also disables any optional source whose scaler is
-    the constant-zero signature (mean == 0.0, scale == 1.0), protecting older
-    model releases if a previously broken source (e.g. USDM drought) starts
-    returning real values before the next retrain.
+    the constant-zero signature (mean == 0.0, scale == 1.0), and skips new
+    Phase 1-3 fetches when loading a legacy release whose schema omits them.
     """
     disabled = cfg_tc.get('disabled_sources')
     if disabled is None:
@@ -294,6 +311,26 @@ def _mirror_disabled_sources(cfg_tc: dict, scalers: Optional[dict] = None) -> No
             disabled.add('SMAP')
         if _is_dead('reservoir_storage') and _is_dead('reservoir_release'):
             disabled.add('RESERVOIR')
+        if _is_dead('srad') and _is_dead('pet'):
+            disabled.add('ENERGY')
+        if _is_dead('sm_surface') and _is_dead('precip_max1h'):
+            disabled.add('HYDRO_FORCING')
+        if _is_dead('swe_mid') and _is_dead('swe_high'):
+            disabled.add('GRIDDED_SWE')
+        if _is_dead('prior_flow'):
+            disabled.add('PRIOR')
+    enc_cols = cfg_tc.get('encoder_features')
+    dec_cols = cfg_tc.get('decoder_features')
+    if enc_cols is not None or dec_cols is not None:
+        all_cols = set(enc_cols or ()) | set(dec_cols or ())
+        if not (all_cols & set(windowing.ENERGY_FEATURES)):
+            disabled.add('ENERGY')
+        if not (all_cols & (set(windowing.INTENSITY_FEATURES) | set(windowing.HYDRO_SM_FEATURES))):
+            disabled.add('HYDRO_FORCING')
+        if not (all_cols & set(windowing.GRIDDED_SWE_FEATURES)):
+            disabled.add('GRIDDED_SWE')
+        if 'prior_flow' not in all_cols:
+            disabled.add('PRIOR')
     for name in sorted(disabled):
         os.environ[f'OPENFLOW_DISABLE_{name}'] = '1'
 
@@ -301,166 +338,298 @@ def _mirror_disabled_sources(cfg_tc: dict, scalers: Optional[dict] = None) -> No
 def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None) -> dict:
     """
     Build the five model inputs for `site_id` as of `today` (local date).
+    Schema-driven from `art['training_config']` so both legacy releases
+    (e.g. model-219) and Phase 1-3 models run seamlessly.
     Returns {'inputs', 'anchor', 'dates', 'info'}; no TensorFlow needed.
     """
     cfg_tc = art['training_config']
-    _mirror_disabled_sources(cfg_tc, art.get('scalers'))
-    enc_days, dec_days = cfg_tc['encoder_days'], cfg_tc['decoder_days']
-    reg = art['registry'].get(site_id)
-    tz = tz or (reg or {}).get('timezone', 'America/Denver')
-    now = pd.Timestamp.now(tz=tz) if today is None else pd.Timestamp(today)
-    today = (now.tz_convert(tz).tz_localize(None) if now.tzinfo else now).normalize()
-    start = today - pd.Timedelta(days=enc_days + HISTORY_PAD_DAYS)
-    prefix, sid = site_id.split(':', 1)
-    coords = _coords(site_id)
+    scalers = art.get('scalers') or {}
+    enc_cols = list(cfg_tc.get('encoder_features') or windowing.ENCODER_FEATURES)
+    dec_cols = list(cfg_tc.get('decoder_features') or windowing.DECODER_FEATURES)
+    target_cols = list(cfg_tc.get('target_features') or windowing.TARGET_FEATURES)
+    all_model_cols = set(enc_cols) | set(dec_cols)
 
-    flow = _flow(site_id, start.to_pydatetime(), today.to_pydatetime(),
-                 nws_lid=(reg or {}).get('nws_lid'), tz=tz)
-    if flow is None or flow.empty:
-        raise InferenceError(f"no recent flow for {site_id}")
-    wx_source = cfg_tc.get('weather_source', 'noaa')
-    fetched = combine_data.fetch_and_process_data(prefix, sid, start.to_pydatetime(),
-                                                  today.to_pydatetime(), flow,
-                                                  noaa_fallback=gridmet_point_weather, coords=coords,
-                                                  weather_source_override=wx_source)
-    if not fetched or fetched.get('noaa_data') is None or fetched['noaa_data'].empty:
-        raise InferenceError(f"no weather data for {site_id} (NOAA GHCND and the gridMET fallback both empty)")
+    # Save/restore env vars for Phase 1-3 sources so alternating legacy and
+    # new models within one process never leaks disable flags across calls.
+    saved_env = {f'OPENFLOW_DISABLE_{k}': os.environ.get(f'OPENFLOW_DISABLE_{k}')
+                 for k in ('ENERGY', 'HYDRO_FORCING', 'GRIDDED_SWE', 'PRIOR')}
+    _mirror_disabled_sources(cfg_tc, scalers)
+    try:
+        enc_days, dec_days = cfg_tc['encoder_days'], cfg_tc['decoder_days']
+        reg = art['registry'].get(site_id)
+        tz = tz or (reg or {}).get('timezone', 'America/Denver')
+        now = pd.Timestamp.now(tz=tz) if today is None else pd.Timestamp(today)
+        today = (now.tz_convert(tz).tz_localize(None) if now.tzinfo else now).normalize()
+        start = today - pd.Timedelta(days=enc_days + HISTORY_PAD_DAYS)
+        prefix, sid = site_id.split(':', 1)
+        coords = _coords(site_id)
 
-    # Bridge the NOAA reporting lag up to the last flow day.
-    flow_last = pd.to_datetime(flow['Date']).max().normalize()
-    noaa = fetched['noaa_data'].copy()
-    noaa['Date'] = pd.to_datetime(noaa['Date'])
-    noaa = noaa.groupby('Date')[['TMIN', 'TMAX', 'precipitation']].mean()
-    noaa_last = noaa.dropna(subset=['TMIN', 'TMAX']).index.max()
-    weather_fc = forecast_weather(coords['lat'], coords['lon'], tz)
-    zones_daily = get_basin_precip.inference_daily(site_id, today=today, encoder_days=enc_days,
-                                                   decoder_days=dec_days, tz=tz)
-    bridged = []
-    if pd.notna(noaa_last) and noaa_last < flow_last:
-        gap = pd.date_range(noaa_last + pd.Timedelta(days=1), flow_last)
-        target = weather_fc.reindex([today]).iloc[0] if today in weather_fc.index else noaa.loc[noaa_last]
-        last = noaa.loc[noaa_last]
-        for i, d in enumerate(gap, start=1):
-            w = i / len(gap)
-            local = zones_daily.loc[d, ['rain_local', 'snow_local']].sum() \
-                if d in zones_daily.index and zones_daily.loc[d, 'basin_precip_observed'] else 0.0
-            noaa.loc[d] = [(1 - w) * last['TMIN'] + w * target['TMIN'],
-                           (1 - w) * last['TMAX'] + w * target['TMAX'], float(local)]
-            bridged.append(str(d.date()))
-    noaa_df = noaa.reset_index()
+        flow = _flow(site_id, start.to_pydatetime(), today.to_pydatetime(),
+                     nws_lid=(reg or {}).get('nws_lid'), tz=tz)
+        if flow is None or flow.empty:
+            raise InferenceError(f"no recent flow for {site_id}")
+        wx_source = cfg_tc.get('weather_source', 'noaa')
+        hydro_source = cfg_tc.get('hydro_source')
+        fetched = combine_data.fetch_and_process_data(
+            prefix, sid, start.to_pydatetime(), today.to_pydatetime(), flow,
+            noaa_fallback=gridmet_point_weather, coords=coords,
+            weather_source_override=wx_source,
+            hydro_source_override=hydro_source,
+            include_historical_prior=False)
+        if not fetched or fetched.get('noaa_data') is None or fetched['noaa_data'].empty:
+            raise InferenceError(f"no weather data for {site_id} (NOAA GHCND and the gridMET fallback both empty)")
 
-    merged = combine_data.merge_dataframes(
-        noaa_df, flow, site_id, start.to_pydatetime(), today.to_pydatetime(),
-        swe_data=fetched['swe_data'], sm_data=fetched['sm_data'],
-        drought_data=fetched['drought_data'], reservoir_data=fetched['reservoir_data'],
-        huc8=fetched['huc8'], upstream_data=fetched.get('upstream_data'),
-        upstream_known_days=fetched.get('upstream_known_days', 0),
-        basin_precip_data=fetched.get('basin_precip_data'))
-    if merged.empty:
-        raise InferenceError(f"no usable merged rows for {site_id}")
-    merged['Date'] = pd.to_datetime(merged['Date'])
-    merged = merged.sort_values('Date').reset_index(drop=True)
-    # The most recent contiguous encoder window.
-    tail = merged.iloc[-enc_days:]
-    if len(tail) < enc_days or (tail['Date'].diff().dropna() != pd.Timedelta(days=1)).any():
-        raise InferenceError(f"{site_id}: last {enc_days} days are not contiguous after gap handling")
-    anchor = tail['Date'].iloc[-1]
-    # Latest basin precip (gridMET lags; Stage IV fills) for encoder rows.
-    tail = tail.copy()
-    zd = zones_daily.reindex(tail['Date'])
-    fill = (tail['basin_precip_observed'].to_numpy() == 0) & (zd['basin_precip_observed'].to_numpy() == 1)
-    for c in get_basin_precip.FEATURE_COLUMNS:
-        tail.loc[fill, c] = zd[c].to_numpy()[fill]
-    tail.loc[fill, 'basin_precip_observed'] = 1
+        # Bridge the NOAA/gridMET reporting lag up to the last flow day.
+        flow_last = pd.to_datetime(flow['Date']).max().normalize()
+        noaa = fetched['noaa_data'].copy()
+        noaa['Date'] = pd.to_datetime(noaa['Date'])
+        noaa = noaa.groupby('Date')[['TMIN', 'TMAX', 'precipitation']].mean()
+        noaa_last = noaa.dropna(subset=['TMIN', 'TMAX']).index.max()
+        weather_fc = forecast_weather(coords['lat'], coords['lon'], tz)
+        zones_daily = get_basin_precip.inference_daily(site_id, today=today, encoder_days=enc_days,
+                                                       decoder_days=dec_days, tz=tz)
+        bridged = []
+        if pd.notna(noaa_last) and noaa_last < flow_last:
+            gap = pd.date_range(noaa_last + pd.Timedelta(days=1), flow_last)
+            target = weather_fc.reindex([today]).iloc[0] if today in weather_fc.index else noaa.loc[noaa_last]
+            last = noaa.loc[noaa_last]
+            for i, d in enumerate(gap, start=1):
+                w = i / len(gap)
+                local = zones_daily.loc[d, ['rain_local', 'snow_local']].sum() \
+                    if d in zones_daily.index and zones_daily.loc[d, 'basin_precip_observed'] else 0.0
+                noaa.loc[d] = [(1 - w) * last['TMIN'] + w * target['TMIN'],
+                               (1 - w) * last['TMAX'] + w * target['TMAX'], float(local)]
+                bridged.append(str(d.date()))
+        noaa_df = noaa.reset_index()
 
-    # Decoder rows.
-    dates = pd.date_range(anchor + pd.Timedelta(days=1), periods=dec_days, name='Date')
-    dec = pd.DataFrame({'Date': dates})
-    wx = weather_fc.reindex(dates)
-    known_wx = wx[['TMIN', 'TMAX']].notna().all(axis=1)
-    last_known = wx[known_wx].iloc[-1] if known_wx.any() else tail.iloc[-1]
-    dec['TMIN'] = wx['TMIN'].fillna(last_known['TMIN']).to_numpy()
-    dec['TMAX'] = wx['TMAX'].fillna(last_known['TMAX']).to_numpy()
-    dec['precipitation'] = wx['precipitation'].fillna(0.0).to_numpy()
-    up_cfg = get_upstream.upstream_config(site_id, art['registry'])
-    all_up_days = pd.DatetimeIndex(tail['Date']).union(dates)
-    up_all = _routed_upstream(site_id, up_cfg, all_up_days, start)
-    # Backfill missing recent encoder upstream days (e.g. anchor day when the
-    # upstream archive lags behind target flow) from the spliced NWPS series so
-    # enc['upstream_observed'][-1] stays valid and upstream_change doesn't zero out.
-    up_tail = up_all['upstream_flow'].reindex(pd.DatetimeIndex(tail['Date'])).to_numpy()
-    fill_up = (tail['upstream_observed'].to_numpy() == 0) & np.isfinite(up_tail)
-    if fill_up.any():
-        tail.loc[fill_up, 'upstream_flow'] = up_tail[fill_up]
-        tail.loc[fill_up, 'upstream_observed'] = 1
-    up = up_all.reindex(dates)
-    dec['upstream_flow'] = up['upstream_flow'].to_numpy()
-    dec['upstream_observed'] = up['upstream_flow'].notna().astype(int).to_numpy()
-    zd = zones_daily.reindex(dates)
-    for c in get_basin_precip.FEATURE_COLUMNS:
-        dec[c] = zd[c].to_numpy()
-    dec['basin_precip_observed'] = zd['basin_precip_observed'].fillna(0).astype(int).to_numpy()
+        # Live RFC / NWM prior when the loaded model was trained with prior_flow.
+        prior_live = pd.DataFrame(columns=['Date', 'prior_flow'])
+        want_prior = ('prior_flow' in all_model_cols and 'prior_flow' in scalers
+                      and not combine_data._disabled('OPENFLOW_DISABLE_PRIOR'))
+        if want_prior:
+            try:
+                from data import get_nwm_prior
+                prior_live = get_nwm_prior.fetch_live_prior(
+                    site_id, nws_lid=(reg or {}).get('nws_lid'),
+                    usgs_id=(reg or {}).get('usgs_id'), tz=tz)
+            except Exception as e:
+                logger.warning("Live RFC/NWM prior unavailable for %s: %s", site_id, e)
 
-    # Scale exactly like training.
-    frame = pd.concat([tail, dec], ignore_index=True)
-    frame = normalize_data.add_day_of_year_features(frame)
-    for c in ('upstream_flow', *get_basin_precip.FEATURE_COLUMNS):
-        frame[c] = pd.to_numeric(frame[c], errors='coerce')
-    frame = normalize_data.apply_scalers(frame, art['scalers'])
-    for col, ind in normalize_data.SCALER_FIT_MASKS.items():
-        if col in frame and ind in frame:
-            frame.loc[frame[ind].fillna(0) == 0, col] = 0.0
-    enc = frame.iloc[:enc_days]
-    decf = frame.iloc[enc_days:].reset_index(drop=True)
+        merged = combine_data.merge_dataframes(
+            noaa_df, flow, site_id, start.to_pydatetime(), today.to_pydatetime(),
+            swe_data=fetched['swe_data'], sm_data=fetched['sm_data'],
+            drought_data=fetched['drought_data'], reservoir_data=fetched['reservoir_data'],
+            huc8=fetched['huc8'], upstream_data=fetched.get('upstream_data'),
+            upstream_known_days=fetched.get('upstream_known_days', 0),
+            basin_precip_data=fetched.get('basin_precip_data'),
+            energy_data=fetched.get('energy_data'),
+            hydro_data=fetched.get('hydro_data'),
+            gridded_swe_data=fetched.get('gridded_swe_data'),
+            prior_data=prior_live if not prior_live.empty else fetched.get('prior_data'))
+        if merged.empty:
+            raise InferenceError(f"no usable merged rows for {site_id}")
+        merged['Date'] = pd.to_datetime(merged['Date'])
+        merged = merged.sort_values('Date').reset_index(drop=True)
+        # The most recent contiguous encoder window.
+        tail = merged.iloc[-enc_days:]
+        if len(tail) < enc_days or (tail['Date'].diff().dropna() != pd.Timedelta(days=1)).any():
+            raise InferenceError(f"{site_id}: last {enc_days} days are not contiguous after gap handling")
+        anchor = tail['Date'].iloc[-1]
+        # Latest basin precip (gridMET lags; Stage IV fills) for encoder rows.
+        tail = tail.copy()
+        zd = zones_daily.reindex(tail['Date'])
+        fill = (tail['basin_precip_observed'].to_numpy() == 0) & (zd['basin_precip_observed'].to_numpy() == 1)
+        for c in get_basin_precip.FEATURE_COLUMNS:
+            tail.loc[fill, c] = zd[c].to_numpy()[fill]
+        tail.loc[fill, 'basin_precip_observed'] = 1
 
-    enc_X = enc[windowing.ENCODER_FEATURES].to_numpy(dtype=float)
-    dec_X = decf.reindex(columns=windowing.DECODER_FEATURES).to_numpy(dtype=float)
-    up_col = windowing.DECODER_FEATURES.index('upstream_flow')
-    up_known_col = windowing.DECODER_FEATURES.index('upstream_known')
-    known_days = int(cfg_tc.get('upstream_known_days', {}).get(site_id, 0))
-    dec_X[:, up_col], dec_X[:, up_known_col] = windowing.upstream_decoder_window(
-        decf['upstream_flow'].to_numpy(dtype=float), decf['upstream_observed'].to_numpy(dtype=float),
-        known_days, enc['upstream_flow'].iloc[-1], enc['upstream_observed'].iloc[-1])
-    t_idx = [windowing.ENCODER_FEATURES.index(c) for c in windowing.TARGET_FEATURES]
-    if 'upstream_change' in windowing.DECODER_FEATURES:
-        uc_mode = cfg_tc.get('upstream_change_mode', 'legacy')
-        if uc_mode == 'mass_balance_hold':
-            dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
-                dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
-                enc['upstream_observed'].iloc[-1], hold_beyond_known=True,
-                scalers=art.get('scalers'), anchor_flow_scaled=enc_X[-1, t_idx])
-        elif uc_mode == 'scaled_hold':
-            dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
-                dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
-                enc['upstream_observed'].iloc[-1], hold_beyond_known=True)
+        # Decoder rows.
+        dates = pd.date_range(anchor + pd.Timedelta(days=1), periods=dec_days, name='Date')
+        dec = pd.DataFrame({'Date': dates})
+        wx = weather_fc.reindex(dates)
+        known_wx = wx[['TMIN', 'TMAX']].notna().all(axis=1)
+        last_known = wx[known_wx].iloc[-1] if known_wx.any() else tail.iloc[-1]
+        dec['TMIN'] = wx['TMIN'].fillna(last_known['TMIN']).to_numpy()
+        dec['TMAX'] = wx['TMAX'].fillna(last_known['TMAX']).to_numpy()
+        dec['precipitation'] = wx['precipitation'].fillna(0.0).to_numpy()
+
+        # Extended energy & sub-daily precip intensity from weather_fc.
+        for group, obs_col in ((windowing.ENERGY_FEATURES, 'energy_observed'),
+                               (windowing.INTENSITY_FEATURES, 'precip_intensity_observed')):
+            if all(c in wx.columns for c in group):
+                sub = wx[group].apply(pd.to_numeric, errors='coerce')
+                ok_mask = sub.notna().all(axis=1)
+                for c in group:
+                    dec[c] = sub[c].fillna(0.0).to_numpy()
+                dec[obs_col] = ok_mask.astype(int).to_numpy()
+            else:
+                for c in group:
+                    dec[c] = 0.0
+                dec[obs_col] = 0
+
+        up_cfg = get_upstream.upstream_config(site_id, art['registry'])
+        all_up_days = pd.DatetimeIndex(tail['Date']).union(dates)
+        up_all = _routed_upstream(site_id, up_cfg, all_up_days, start)
+        # Backfill missing recent encoder upstream days (e.g. anchor day when the
+        # upstream archive lags behind target flow) from the spliced NWPS series so
+        # enc['upstream_observed'][-1] stays valid and upstream_change doesn't zero out.
+        up_tail = up_all['upstream_flow'].reindex(pd.DatetimeIndex(tail['Date'])).to_numpy()
+        fill_up = (tail['upstream_observed'].to_numpy() == 0) & np.isfinite(up_tail)
+        if fill_up.any():
+            tail.loc[fill_up, 'upstream_flow'] = up_tail[fill_up]
+            tail.loc[fill_up, 'upstream_observed'] = 1
+        up = up_all.reindex(dates)
+        dec['upstream_flow'] = up['upstream_flow'].to_numpy()
+        dec['upstream_observed'] = up['upstream_flow'].notna().astype(int).to_numpy()
+
+        zd = zones_daily.reindex(dates)
+        for c in get_basin_precip.FEATURE_COLUMNS:
+            dec[c] = zd[c].to_numpy()
+        dec['basin_precip_observed'] = zd['basin_precip_observed'].fillna(0).astype(int).to_numpy()
+
+        # Decoder physics/operator prior (RFC + NWM).
+        if not prior_live.empty:
+            pr_s = (prior_live.assign(Date=pd.to_datetime(prior_live['Date']).dt.normalize())
+                    .groupby('Date')['prior_flow'].mean().reindex(dates))
+            dec['prior_flow'] = pr_s.to_numpy(dtype=float)
+            dec['prior_observed'] = pr_s.notna().astype(int).to_numpy()
         else:
-            dec_X[:, windowing.DECODER_FEATURES.index('upstream_change')] = windowing.upstream_change(
-                dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
-                enc['upstream_observed'].iloc[-1], hold_beyond_known=False)
-    bp_cols = [windowing.DECODER_FEATURES.index(c) for c in windowing.BASIN_PRECIP_FEATURES]
-    bp_known = windowing.DECODER_FEATURES.index('basin_precip_known')
-    dec_X[:, bp_cols], dec_X[:, bp_known] = windowing.basin_precip_decoder_window(
-        decf[windowing.BASIN_PRECIP_FEATURES].to_numpy(dtype=float),
-        decf['basin_precip_observed'].to_numpy(dtype=float),
-        int(cfg_tc.get('basin_precip_known_days', windowing.BASIN_PRECIP_KNOWN_DAYS)))
-    if not (np.isfinite(enc_X).all() and np.isfinite(dec_X).all()):
-        bad = [c for c in windowing.ENCODER_FEATURES if not np.isfinite(enc[c].to_numpy(dtype=float)).all()]
-        raise InferenceError(f"non-finite model inputs for {site_id}: {bad}")
-    station_idx = int(art['station_index'].get(site_id, 0))
-    basin_idx = int(art['basin_index'].get(str(fetched.get('huc8') or ''), 0))
-    inputs = {
-        'encoder_input': enc_X[None].astype('float32'),
-        'decoder_input': dec_X[None].astype('float32'),
-        'persistence_input': enc_X[-1, t_idx][None].astype('float32'),
-        'station_input': np.array([station_idx], dtype='int32'),
-        'basin_input': np.array([basin_idx], dtype='int32'),
-    }
-    info = {'anchor': str(anchor.date()), 'today': str(today.date()),
-            'station_idx': station_idx, 'basin_idx': basin_idx,
-            'trained_station': station_idx > 0, 'bridged_weather_days': bridged,
-            'weather_forecast_days': int(known_wx.sum()),
-            'upstream_known_days': known_days}
-    return {'inputs': inputs, 'anchor': anchor, 'dates': dates, 'info': info}
+            dec['prior_flow'] = np.nan
+            dec['prior_observed'] = 0
+
+        # Scale exactly like training.
+        frame = pd.concat([tail, dec], ignore_index=True)
+        frame = normalize_data.add_day_of_year_features(frame)
+        for c in ('upstream_flow', 'prior_flow', *get_basin_precip.FEATURE_COLUMNS,
+                  *windowing.ENERGY_FEATURES, *windowing.INTENSITY_FEATURES):
+            if c in frame.columns:
+                frame[c] = pd.to_numeric(frame[c], errors='coerce')
+        frame = normalize_data.apply_scalers(frame, scalers)
+        # Any optional Phase 1-3 column absent from scalers stays neutral 0.0.
+        for col in windowing.OPTIONAL_DATASET_FEATURES:
+            if col in frame.columns and col not in scalers and not col.endswith('_observed'):
+                frame[col] = 0.0
+                ind = normalize_data.SCALER_FIT_MASKS.get(col)
+                if ind and ind in frame.columns:
+                    frame[ind] = 0
+        for col, ind in normalize_data.SCALER_FIT_MASKS.items():
+            if col in frame and ind in frame:
+                frame.loc[frame[ind].fillna(0) == 0, col] = 0.0
+        enc = frame.iloc[:enc_days]
+        decf = frame.iloc[enc_days:].reset_index(drop=True)
+
+        enc_X = enc.reindex(columns=enc_cols, fill_value=0.0).to_numpy(dtype=float)
+        dec_df = decf.reindex(columns=dec_cols, fill_value=0.0).copy()
+        for col in windowing.WINDOW_BUILT_DECODER_FEATURES:
+            if col in dec_df.columns:
+                dec_df[col] = 0.0
+        dec_X = dec_df.to_numpy(dtype=float)
+
+        t_idx = [enc_cols.index(c) for c in target_cols]
+        known_days = int(cfg_tc.get('upstream_known_days', {}).get(site_id, 0))
+        if 'upstream_flow' in dec_cols and 'upstream_known' in dec_cols:
+            up_col = dec_cols.index('upstream_flow')
+            up_known_col = dec_cols.index('upstream_known')
+            dec_X[:, up_col], dec_X[:, up_known_col] = windowing.upstream_decoder_window(
+                decf['upstream_flow'].to_numpy(dtype=float), decf['upstream_observed'].to_numpy(dtype=float),
+                known_days, enc['upstream_flow'].iloc[-1], enc['upstream_observed'].iloc[-1])
+            if 'upstream_change' in dec_cols:
+                uc_mode = cfg_tc.get('upstream_change_mode', 'legacy')
+                if uc_mode == 'mass_balance_hold':
+                    dec_X[:, dec_cols.index('upstream_change')] = windowing.upstream_change(
+                        dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+                        enc['upstream_observed'].iloc[-1], hold_beyond_known=True,
+                        scalers=scalers, anchor_flow_scaled=enc_X[-1, t_idx])
+                elif uc_mode == 'scaled_hold':
+                    dec_X[:, dec_cols.index('upstream_change')] = windowing.upstream_change(
+                        dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+                        enc['upstream_observed'].iloc[-1], hold_beyond_known=True)
+                else:
+                    dec_X[:, dec_cols.index('upstream_change')] = windowing.upstream_change(
+                        dec_X[:, up_col], dec_X[:, up_known_col], enc['upstream_flow'].iloc[-1],
+                        enc['upstream_observed'].iloc[-1], hold_beyond_known=False)
+
+        if all(c in dec_cols for c in windowing.BASIN_PRECIP_FEATURES) and 'basin_precip_known' in dec_cols:
+            bp_cols = [dec_cols.index(c) for c in windowing.BASIN_PRECIP_FEATURES]
+            bp_known = dec_cols.index('basin_precip_known')
+            dec_X[:, bp_cols], dec_X[:, bp_known] = windowing.basin_precip_decoder_window(
+                decf[windowing.BASIN_PRECIP_FEATURES].to_numpy(dtype=float),
+                decf['basin_precip_observed'].to_numpy(dtype=float),
+                int(cfg_tc.get('basin_precip_known_days', windowing.BASIN_PRECIP_KNOWN_DAYS)))
+
+        if all(c in dec_cols for c in windowing.ENERGY_FEATURES) and 'energy_known' in dec_cols:
+            en_cols_idx = [dec_cols.index(c) for c in windowing.ENERGY_FEATURES]
+            en_known_idx = dec_cols.index('energy_known')
+            dec_X[:, en_cols_idx], dec_X[:, en_known_idx] = windowing.masked_decoder_window(
+                decf[windowing.ENERGY_FEATURES].to_numpy(dtype=float),
+                decf['energy_observed'].to_numpy(dtype=float),
+                int(cfg_tc.get('energy_known_days', windowing.ENERGY_KNOWN_DAYS)))
+
+        if all(c in dec_cols for c in windowing.INTENSITY_FEATURES) and 'precip_intensity_known' in dec_cols:
+            int_cols_idx = [dec_cols.index(c) for c in windowing.INTENSITY_FEATURES]
+            int_known_idx = dec_cols.index('precip_intensity_known')
+            dec_X[:, int_cols_idx], dec_X[:, int_known_idx] = windowing.masked_decoder_window(
+                decf[windowing.INTENSITY_FEATURES].to_numpy(dtype=float),
+                decf['precip_intensity_observed'].to_numpy(dtype=float),
+                int(cfg_tc.get('precip_intensity_known_days', windowing.PRECIP_INTENSITY_KNOWN_DAYS)))
+
+        if all(c in dec_cols for c in windowing.ENSEMBLE_SPREAD_FEATURES) and all(c in wx.columns for c in windowing.ENSEMBLE_SPREAD_FEATURES):
+            pstd_i = dec_cols.index('precip_ens_std')
+            pp90_i = dec_cols.index('precip_ens_p90')
+            tstd_i = dec_cols.index('temp_ens_std')
+            ek_i = dec_cols.index('ens_spread_known') if 'ens_spread_known' in dec_cols else None
+            for d_i in range(dec_days):
+                v_pstd = wx['precip_ens_std'].iloc[d_i]
+                v_pp90 = wx['precip_ens_p90'].iloc[d_i]
+                v_tstd = wx['temp_ens_std'].iloc[d_i]
+                if np.isfinite(v_pstd) and np.isfinite(v_pp90) and np.isfinite(v_tstd):
+                    s1, s2, s3 = windowing.scale_ensemble_spread(v_pstd, v_pp90, v_tstd, scalers)
+                    dec_X[d_i, pstd_i] = s1
+                    dec_X[d_i, pp90_i] = s2
+                    dec_X[d_i, tstd_i] = s3
+                    if ek_i is not None:
+                        dec_X[d_i, ek_i] = 1.0
+
+        if 'forcing_is_forecast' in dec_cols:
+            dec_X[:, dec_cols.index('forcing_is_forecast')] = 1.0
+        if 'lead_day_norm' in dec_cols:
+            dec_X[:, dec_cols.index('lead_day_norm')] = np.arange(1, dec_days + 1, dtype=float) / float(dec_days)
+
+        if all(c in dec_cols for c in ('prior_flow', 'prior_known', 'prior_change')):
+            pr_col = dec_cols.index('prior_flow')
+            pr_known = dec_cols.index('prior_known')
+            pr_chg = dec_cols.index('prior_change')
+            dec_X[:, pr_col], dec_X[:, pr_known], dec_X[:, pr_chg] = windowing.prior_decoder_window(
+                decf['prior_flow'].to_numpy(dtype=float),
+                decf['prior_observed'].to_numpy(dtype=float),
+                float(enc['prior_flow'].iloc[-1]) if 'prior_flow' in enc.columns else 0.0,
+                float(enc['prior_observed'].iloc[-1]) if 'prior_observed' in enc.columns else 0.0,
+                known_days=int(cfg_tc.get('prior_known_days', windowing.PRIOR_KNOWN_DAYS)))
+
+        if not (np.isfinite(enc_X).all() and np.isfinite(dec_X).all()):
+            bad = [c for c in enc_cols if c in enc.columns and not np.isfinite(enc[c].to_numpy(dtype=float)).all()]
+            raise InferenceError(f"non-finite model inputs for {site_id}: {bad}")
+        station_idx = int(art['station_index'].get(site_id, 0))
+        basin_idx = int(art['basin_index'].get(str(fetched.get('huc8') or ''), 0))
+        inputs = {
+            'encoder_input': enc_X[None].astype('float32'),
+            'decoder_input': dec_X[None].astype('float32'),
+            'persistence_input': enc_X[-1, t_idx][None].astype('float32'),
+            'station_input': np.array([station_idx], dtype='int32'),
+            'basin_input': np.array([basin_idx], dtype='int32'),
+        }
+        info = {'anchor': str(anchor.date()), 'today': str(today.date()),
+                'station_idx': station_idx, 'basin_idx': basin_idx,
+                'trained_station': station_idx > 0, 'bridged_weather_days': bridged,
+                'weather_forecast_days': int(known_wx.sum()),
+                'upstream_known_days': known_days}
+        return {'inputs': inputs, 'anchor': anchor, 'dates': dates, 'info': info}
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def band_columns(quantiles) -> list:

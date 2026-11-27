@@ -224,6 +224,34 @@ def _default_ensemble(gauges, target, inputs):
     return fits
 
 
+def _hydro_rain_context(zcfg: dict, calib_days: int = DEFAULT_CALIB_DAYS,
+                        tz: str = 'America/Denver'):
+    """
+    Fetch recent hourly observed rain (mm/h) and latest root-zone soil moisture
+    (m^3/m^3) for the heaviest ungauged basin sample point so routing_rain_flux
+    can disaggregate daily totals into actual storm hours and modulate initial
+    abstraction by antecedent wetness. Degrades cleanly to (None, None).
+    """
+    pts = [p for p in (zcfg.get('points') or []) if p.get('ungauged')] or list(zcfg.get('points') or [])
+    if not pts:
+        return None, None
+    rep = max(pts, key=lambda p: float(p.get('w', 0.0)))
+    lat, lon = float(rep['lat']), float(rep['lon'])
+    hourly_past = None
+    soil_moisture = None
+    try:
+        from data import get_hydro_forcing
+        if not get_hydro_forcing._disabled():
+            hourly_past = get_hydro_forcing.get_recent_hourly_rain(
+                lat, lon, past_days=max(int(calib_days) + 2, 14), tz=tz)
+            if hourly_past is not None and hourly_past.empty:
+                hourly_past = None
+            soil_moisture = get_hydro_forcing.get_latest_soil_moisture(lat, lon)
+    except Exception as e:
+        logger.debug("Hourly hydro context skipped (%s)", e)
+    return hourly_past, soil_moisture
+
+
 def _rain_input(site_id: str, grid: pd.DatetimeIndex, inow: int, tz: str, zones=None):
     """
     Hourly rain flux (cfs) on the station's ungauged area over `grid`, plus
@@ -243,7 +271,11 @@ def _rain_input(site_id: str, grid: pd.DatetimeIndex, inow: int, tz: str, zones=
            'forecast_points': forecast_points, 'cfg': zcfg}
     if not (zcfg.get('ungauged') or {}).get('area_km2'):
         return out
-    flux, info = get_basin_precip.routing_rain_flux(zcfg, grid, observed, forecast_points)
+    calib_days = max(1, int(round((grid[inow] - grid[0]) / pd.Timedelta(days=1))))
+    hourly_past, soil_moisture = _hydro_rain_context(zcfg, calib_days=calib_days, tz=tz)
+    flux, info = get_basin_precip.routing_rain_flux(
+        zcfg, grid, observed, forecast_points,
+        hourly_past=hourly_past, soil_moisture=soil_moisture)
     rate = info.pop('rate_mm_per_hour')
     info['calib_mm'] = round(float(rate.iloc[:inow + 1].sum()), 1)
     info['next_mm'] = round(float(rate.iloc[inow + 1:].sum()), 1)
@@ -673,16 +705,6 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
     start_out = max(0, inow - CHART_HISTORY_DAYS * 24)
     times = grid[start_out:]
     after = np.arange(start_out, len(grid)) > inow
-    csv = pd.DataFrame({
-        'time_utc': times.strftime('%Y-%m-%dT%H:%MZ'),
-        'time_local': times.tz_convert(tz).strftime('%Y-%m-%d %H:%M %Z'),
-        'observed_cfs': np.round(tgt[start_out:], 0),
-        'forecast_cfs': np.where(after, np.round(ef.central[start_out:], 0), np.nan),
-        'band_low_cfs': np.where(after & has_band, np.round(ef.low[start_out:], 0), np.nan),
-        'band_high_cfs': np.where(after & has_band, np.round(ef.high[start_out:], 0), np.nan),
-        'nws_official_cfs': np.round(official.reindex(times).to_numpy(dtype=float), 0),
-    })
-    csv.to_csv(base + '.csv', index=False)
 
     issued = [s['forecast_issued_utc'] for s in upstream_status if s['forecast_issued_utc']]
     summary = {
@@ -715,9 +737,11 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
         'flood_thresholds_cfs': thresholds,
         'basin_rain': None,
         'ml': None,
+        'fused': None,
         'files': {'csv': base + '.csv', 'json': base + '.json'},
     }
     ml_daily = None
+    fused = None
     if model_dir or model_artifacts:
         try:
             import ml_inference
@@ -733,9 +757,44 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                            **{k: round(float(v)) for k, v in r.items() if k.endswith('_cfs')}}
                           for r in ml_daily.to_dict('records')],
             }
+            if len(ml_daily):
+                try:
+                    import fusion
+                    min_lag_h = (min((_lag_hours(g) for g in cfg.get('upstream', [])), default=None)
+                                 if mode == 'routing' else None)
+                    fused = fusion.blend_forecasts(
+                        grid, inow, ef, ml_daily, tz,
+                        mode=mode, min_lag_hours=min_lag_h,
+                        has_rfc=bool(issued), has_routing_band=has_band,
+                    )
+                    if fused is not None:
+                        summary['fused'] = {
+                            'tau_hours': fused['tau_hours'],
+                            'peak': fused['peak'],
+                            'daily': [{'date': str(d), **{k: round(float(v)) for k, v in row.items()}}
+                                      for d, row in fused['daily'].iloc[:days].iterrows()],
+                        }
+                except Exception as e:
+                    logger.warning("Routing-ML fusion skipped for %s: %s", site_id, e)
         except Exception as e:  # the ML overlay must never break the forecast
             logger.warning("ML forecast unavailable for %s: %s", site_id, e)
             summary['ml'] = {'error': str(e)}
+
+    csv_cols = {
+        'time_utc': times.strftime('%Y-%m-%dT%H:%MZ'),
+        'time_local': times.tz_convert(tz).strftime('%Y-%m-%d %H:%M %Z'),
+        'observed_cfs': np.round(tgt[start_out:], 0),
+        'forecast_cfs': np.where(after, np.round(ef.central[start_out:], 0), np.nan),
+        'band_low_cfs': np.where(after & has_band, np.round(ef.low[start_out:], 0), np.nan),
+        'band_high_cfs': np.where(after & has_band, np.round(ef.high[start_out:], 0), np.nan),
+        'nws_official_cfs': np.round(official.reindex(times).to_numpy(dtype=float), 0),
+    }
+    if fused is not None:
+        csv_cols['fused_cfs'] = np.where(after, np.round(fused['central'][start_out:], 0), np.nan)
+        csv_cols['fused_low_cfs'] = np.where(after, np.round(fused['low'][start_out:], 0), np.nan)
+        csv_cols['fused_high_cfs'] = np.where(after, np.round(fused['high'][start_out:], 0), np.nan)
+    pd.DataFrame(csv_cols).to_csv(base + '.csv', index=False)
+
     if rain is not None:
         info = rain.get('info') or {}
         summary['basin_rain'] = {
@@ -746,6 +805,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
                                  'forecast': info.get('next_mm')},
             'sources': info.get('sources'), 'missing_hours': info.get('missing_hours'),
             'rain_term': rain_mode,
+            'abstraction_mm': info.get('abstraction_mm'),
+            'soil_moisture': info.get('soil_moisture'),
             'runoff_ratio': (round(float(fits[0].coefs[-1]), 3) if rain_mode != 'off' else None),
         }
 
@@ -903,6 +964,11 @@ def format_summary(s: dict) -> str:
                                      zip(v['leads'], v['model_error_pct'], v['persistence_error_pct'])))
     elif m and m.get('error'):
         lines.append(f"  ML model: unavailable ({m['error']})")
+    f = s.get('fused')
+    if f and f.get('daily'):
+        lines.append(f"  Fused (routing + ML, tau={f['tau_hours']:.0f} h): "
+                     + ', '.join(f"{pd.Timestamp(d['date']):%a} {d['mean_cfs']:,} ({d['band_low_cfs']:,}–{d['band_high_cfs']:,})"
+                                 for d in f['daily']))
     if s.get('nws_official_forecast_issued_utc'):
         lines.append(f"  NWS official forecast for this gauge issued {s['nws_official_forecast_issued_utc']}")
     for k, v in s['files'].items():
