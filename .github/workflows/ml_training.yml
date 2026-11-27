@@ -36,6 +36,10 @@ on:
         description: 'Also score the held-out model on archived real forecasts (Open-Meteo, 2024 on)'
         type: boolean
         default: false
+      training_years:
+        description: 'Years of historical data to train on'
+        type: string
+        default: '25'
 
 concurrency:
   group: ml-training-${{ github.ref }}
@@ -72,8 +76,22 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r openFlowML/requirements.txt -c openFlowML/constraints-train.txt
-        pip install earthaccess h5py shapely -c openFlowML/constraints-train.txt
+        pip install earthaccess h5py shapely pyarrow -c openFlowML/constraints-train.txt
         python -c "import numpy, tensorflow as tf; print('numpy', numpy.__version__, 'tensorflow', tf.__version__)"
+
+    - name: Restore feature store cache (if available)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        CACHE_DIR="$RUNNER_TEMP/openflow_dataset_cache"
+        mkdir -p "$CACHE_DIR"
+        if gh release download dataset-cache --repo "$GITHUB_REPOSITORY" \
+            --pattern dataset_cache.tar.gz --dir "$RUNNER_TEMP" 2>/dev/null; then
+          tar -xzf "$RUNNER_TEMP/dataset_cache.tar.gz" -C "$CACHE_DIR"
+          echo "Restored dataset-cache release into $CACHE_DIR"
+        else
+          echo "No dataset-cache release yet; fetching fresh data"
+        fi
 
     - name: Train model
       env:
@@ -87,6 +105,8 @@ jobs:
         OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
         OPENFLOW_DISABLE_BASIN_PRECIP: ${{ inputs.disable_basin_precip && '1' || '' }}
         OPENFLOW_LIVE_FORCING: ${{ inputs.live_forcing && '1' || '' }}
+        OPENFLOW_TRAINING_YEARS: ${{ inputs.training_years || '25' }}
+        OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
         OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
       run: python openFlowML/train.py
 

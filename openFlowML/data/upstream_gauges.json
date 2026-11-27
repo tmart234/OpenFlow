@@ -315,7 +315,14 @@
   "USGS:09163500": {
     "name": "Colorado River near Colorado-Utah State Line",
     "short_name": "Colorado River (State Line)",
-    "reach": "Colorado River, Grand Junction to the Utah line (Ruby-Horsethief)",
+    "reach": "Colorado River, Grand Junction to the Utah line (Ruby-Horsethief / Westwater)",
+    "aliases": [
+      "westwater",
+      "state-line",
+      "ruby-horsethief",
+      "colorado-state-line",
+      "CCUC2"
+    ],
     "nws_lid": "CCUC2",
     "timezone": "America/Denver",
     "forecast_days": 5,
@@ -337,5 +344,44 @@
         "weight": 1.0
       }
     ]
+  },
+  "USGS:06719505": {
+    "name": "Clear Creek at Golden, CO",
+    "short_name": "Clear Creek",
+    "reach": "Clear Creek Canyon (Lawson / Idaho Springs to Golden)",
+    "aliases": [
+      "clear-creek",
+      "clear-creek-golden",
+      "golden",
+      "GLDC2"
+    ],
+    "nws_lid": "GLDC2",
+    "timezone": "America/Denver",
+    "forecast_days": 0,
+    "upstream": [
+      {
+        "name": "Clear Creek near Lawson, CO",
+        "site_id": "USGS:06716500",
+        "usgs_id": "06716500",
+        "nws_lid": "IDOC2",
+        "lag_days": 0,
+        "weight": 1.0,
+        "lag_hours": 4,
+        "k_hours": 3
+      }
+    ],
+    "context_gauges": [
+      {
+        "name": "Clear Creek above West Fork near Empire, CO",
+        "nws_lid": "CWCC2"
+      }
+    ],
+    "rain": {
+      "_doc": "Local inflow from Clear Creek Canyon and North Clear Creek between Lawson and Golden.",
+      "lag_hours": 3,
+      "k_hours": 12,
+      "runoff_ratio": 0.03
+    },
+    "_doc_gauge": "Forecast point: USGS 06719505 (NWS GLDC2) at Golden, CO. NWPS GLDC2 currently publishes stage only (no flow), so flow_forecast.py falls back to USGS IV discharge for target observations while routing from Clear Creek near Lawson (USGS 06716500 / NWS IDOC2)."
   }
 }

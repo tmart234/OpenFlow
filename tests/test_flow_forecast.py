@@ -425,3 +425,33 @@ def test_storm_test_looks_at_the_72_hours_before_the_crest():
     assert flow_forecast.storm_mm(rate, 150) == pytest.approx(16.0)
     assert flow_forecast.storm_mm(rate, 200) == 0.0           # > 72 h before this crest
     assert flow_forecast.storm_mm(rate, 101) == pytest.approx(8.0)
+
+
+def test_stage_only_nwps_target_falls_back_to_usgs_iv(tmp_path, fake_nwps, monkeypatch):
+    obs_slice = slice(0, INOW + 1)
+    lawson = _pulse(NOW - pd.Timedelta(days=5), 120, 12, 30)
+    golden = 15 + 1.0 * routing.route(lawson, 4, 3)
+    stage_only_gldc2 = {
+        'observed': {
+            'issuedTime': '2026-11-02T17:30:00Z', 'secondaryUnits': 'kcfs',
+            'data': [{'validTime': t.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                      'primary': 3.5, 'secondary': -999} for t in GRID[obs_slice]],
+        },
+        'forecast': {'data': []},
+    }
+    payloads = {
+        'GLDC2': stage_only_gldc2,
+        'IDOC2': {'observed': _block(GRID[obs_slice], lawson[obs_slice]), 'forecast': {'data': []}},
+    }
+    fake_nwps(payloads)
+    import backtest_routing
+    usgs_series = pd.Series(golden[obs_slice], index=GRID[obs_slice])
+    monkeypatch.setattr(backtest_routing, 'usgs_hourly',
+                        lambda site, a, b: usgs_series if site == '06719505' else pd.Series(dtype=float))
+
+    summary = flow_forecast.run('clear-creek', days=5, out_dir=str(tmp_path), make_chart=False)
+    assert summary['site_id'] == 'USGS:06719505'
+    assert summary['mode'] == 'routing'
+    assert summary['latest_observation']['cfs'] == pytest.approx(float(golden[INOW]), rel=1e-3)
+    assert len(summary['daily']) == 5
+

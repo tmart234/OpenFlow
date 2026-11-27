@@ -24,7 +24,7 @@ on:
       sites:
         description: 'Comma-separated stations: alias, site id, or NWS LID'
         type: string
-        default: taos-box,royal-gorge,conejos,dolores
+        default: taos-box,royal-gorge,conejos,dolores,westwater,clear-creek
       days:
         description: 'Local calendar days to forecast'
         type: string
@@ -61,7 +61,9 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir model_release \
             --pattern lstm_model.h5 --pattern '*.json'
           echo "dir=model_release" >> "$GITHUB_OUTPUT"
-          echo "Using model release $TAG"
+          NEEDS_SMAP=$(python -c "import json; cfg=json.load(open('model_release/training_config.json')); print('1' if 'SMAP' not in (cfg.get('disabled_sources') or []) else '')")
+          echo "needs_smap=$NEEDS_SMAP" >> "$GITHUB_OUTPUT"
+          echo "Using model release $TAG (needs_smap=${NEEDS_SMAP:-0})"
         else
           echo "No model-* release yet: charts show the routing / NWS forecast only"
         fi
@@ -69,11 +71,16 @@ jobs:
     - name: Install dependencies
       env:
         HAS_MODEL: ${{ steps.model.outputs.dir }}
+        NEEDS_SMAP: ${{ steps.model.outputs.needs_smap }}
+        HAS_EARTHDATA: ${{ secrets.EARTHDATA_USERNAME != '' && '1' || '' }}
       run: |
         python -m pip install --upgrade pip
         if [ -n "$HAS_MODEL" ]; then
           # Full training env (tensorflow) to run the ML model for the overlay.
           pip install -r openFlowML/requirements.txt scipy h5py -c openFlowML/constraints-train.txt
+          if [ -n "$NEEDS_SMAP" ] && [ -n "$HAS_EARTHDATA" ]; then
+            pip install earthaccess shapely -c openFlowML/constraints-train.txt
+          fi
         else
           # scipy reads gridMET (NetCDF-3); h5py reads the NWS Stage IV analysis.
           pip install "requests>=2.31.0" "pandas>=2.1.1" "numpy>=1.23" "matplotlib>=3.7" scipy h5py
@@ -84,9 +91,11 @@ jobs:
       # fails the step even though its output is piped through tee.
       shell: bash
       env:
-        SITES: ${{ inputs.sites || 'taos-box,royal-gorge,conejos,dolores' }}
+        SITES: ${{ inputs.sites || 'taos-box,royal-gorge,conejos,dolores,westwater,clear-creek' }}
         MODEL_DIR: ${{ steps.model.outputs.dir }}
         DAYS: ${{ inputs.days || '7' }}
+        EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+        EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
       run: |
         mkdir -p forecast_out
         IFS=',' read -ra LIST <<< "$SITES"

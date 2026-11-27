@@ -157,6 +157,34 @@ def _align_dwr_target(site_id: str, lid: str, target: dict) -> dict:
     return {**target, 'obs': aligned_obs, 'fc': aligned_fc}
 
 
+def _fallback_usgs_obs(site_id: str, lid: str, series: dict, calib_days: int,
+                       usgs_id: Optional[str] = None) -> dict:
+    """
+    When NWPS publishes stage only for a USGS gauge (e.g. Clear Creek at Golden
+    GLDC2 reports stage_ft with secondary=-999), fall back to USGS IV hourly
+    discharge while keeping any NWPS forecast / stage metadata intact.
+    """
+    if not series['obs'].dropna().empty:
+        return series
+    if not usgs_id and site_id and site_id.startswith('USGS:'):
+        usgs_id = site_id.split(':', 1)[1]
+    if not usgs_id:
+        return series
+    try:
+        from backtest_routing import usgs_hourly
+        now_utc = pd.Timestamp.now(tz='UTC').tz_convert(None)
+        obs = usgs_hourly(usgs_id, now_utc - pd.Timedelta(days=calib_days + 2),
+                          now_utc + pd.Timedelta(days=1)).dropna()
+    except Exception as e:
+        logger.warning("USGS IV fallback failed for %s (%s): %s", site_id or lid, usgs_id, e)
+        return series
+    if obs.empty:
+        return series
+    logger.info("NWPS %s published no flow (stage-only); using USGS %s IV discharge (%d h)",
+                lid, usgs_id, len(obs))
+    return {**series, 'obs': obs}
+
+
 def _gauge_label(g: dict) -> str:
     return g.get('nws_lid') or f"USGS {g.get('usgs_id')}"
 
@@ -520,6 +548,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
     slug = (cfg.get('aliases') or [site_id.replace(':', '_')])[0]
 
     target = _align_dwr_target(site_id, cfg['nws_lid'], _gauge_series(cfg['nws_lid']))
+    target = _fallback_usgs_obs(site_id, cfg['nws_lid'], target, calib_days,
+                                usgs_id=cfg.get('usgs_id'))
     target_obs = target['obs'].dropna()
     if target_obs.empty:
         raise ForecastError(f"No recent observations at {cfg['nws_lid']}")
@@ -542,7 +572,8 @@ def run(site: str, days: int = DEFAULT_DAYS, calib_days: int = DEFAULT_CALIB_DAY
 
     inputs, upstream_status = [], []
     for g in cfg.get('upstream', []):
-        s = _gauge_series(g['nws_lid'])
+        s = _fallback_usgs_obs(g.get('site_id', ''), g['nws_lid'], _gauge_series(g['nws_lid']),
+                               calib_days, usgs_id=g.get('usgs_id'))
         if s['obs'].dropna().empty:
             raise ForecastError(f"No recent observations at upstream gauge {g['nws_lid']}")
         values, info = routing.build_input(grid, s['obs'], s['fc'],

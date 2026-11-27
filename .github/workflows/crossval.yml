@@ -55,7 +55,21 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r openFlowML/requirements.txt -c openFlowML/constraints-train.txt
-        pip install earthaccess h5py shapely -c openFlowML/constraints-train.txt
+        pip install earthaccess h5py shapely pyarrow -c openFlowML/constraints-train.txt
+
+    - name: Restore feature store cache (if available)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        CACHE_DIR="$RUNNER_TEMP/openflow_dataset_cache"
+        mkdir -p "$CACHE_DIR"
+        if gh release download dataset-cache --repo "$GITHUB_REPOSITORY" \
+            --pattern dataset_cache.tar.gz --dir "$RUNNER_TEMP" 2>/dev/null; then
+          tar -xzf "$RUNNER_TEMP/dataset_cache.tar.gz" -C "$CACHE_DIR"
+          echo "Restored dataset-cache release into $CACHE_DIR"
+        else
+          echo "No dataset-cache release yet; fetching fresh data"
+        fi
 
     - name: Cross-validate
       env:
@@ -66,6 +80,7 @@ jobs:
         OPENFLOW_DISABLE_BASIN_PRECIP: ${{ inputs.disable_basin_precip && '1' || '' }}
         OPENFLOW_BAND: ${{ inputs.disable_band && '0' || '1' }}
         OPENFLOW_RIVER_SKIP: ${{ inputs.disable_river_skip && '0' || '1' }}
+        OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
       working-directory: openFlowML
       run: |
         python crossval.py --fetch --base-path "$GITHUB_WORKSPACE" \

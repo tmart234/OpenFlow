@@ -186,3 +186,17 @@ def test_passed_change_diverts_small_rises_and_passes_floods():
     assert pc(2500.0, 0.9) == pytest.approx(0.9 * 2500)              # winter: ratio already high
     assert pc(2500.0, 0.2, {'divert_capacity_cfs': 1000, 'flood_pass_through': 1.0}) == \
         pytest.approx(0.2 * 1000 + 1500)
+
+
+@pytest.mark.parametrize('alias,expected_id,expected_lid', [
+    ('westwater', 'USGS:09163500', 'CCUC2'),
+    ('ruby-horsethief', 'USGS:09163500', 'CCUC2'),
+    ('clear-creek', 'USGS:06719505', 'GLDC2'),
+    ('GLDC2', 'USGS:06719505', 'GLDC2'),
+])
+def test_resolve_site_supports_westwater_and_clear_creek(alias, expected_id, expected_lid):
+    site_id, cfg = get_upstream.resolve_site(alias)
+    assert site_id == expected_id
+    assert cfg['nws_lid'] == expected_lid
+    assert cfg['upstream']
+

@@ -1,0 +1,106 @@
+name: Sync Dataset Cache
+
+# Incrementally refreshes the per-station Feature Store cache
+# (openFlowML/data/feature_store.py) and publishes it as a GitHub Release
+# asset (`dataset-cache`), so Weekly ML Training and Cross-validate Model
+# start from warm 25-year history instead of re-fetching every API from scratch.
+on:
+  schedule:
+    - cron: '0 22 * * 0'  # Sunday 22:00 UTC (2 h before Weekly ML Training)
+  workflow_dispatch:
+    inputs:
+      training_years:
+        description: 'Years of history to cover'
+        type: string
+        default: '25'
+      refresh_days:
+        description: 'Trailing days to re-fetch for provisional/lag catch-up'
+        type: string
+        default: '14'
+      force_rebuild:
+        description: 'Rebuild every station from scratch (ignore cached rows)'
+        type: boolean
+        default: false
+      disable_smap:
+        description: 'Skip SMAP soil moisture even when Earthdata secrets are set'
+        type: boolean
+        default: false
+
+concurrency:
+  group: sync-dataset-cache
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install "requests>=2.31.0" "pandas>=2.1.1" "scikit-learn>=1.3.2" \
+          "numpy>=1.23,<1.25" "scipy>=1.5.0" pyarrow earthaccess h5py shapely \
+          -c openFlowML/constraints-train.txt
+
+    - name: Restore previous dataset cache (if any)
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        CACHE_DIR="$RUNNER_TEMP/openflow_dataset_cache"
+        mkdir -p "$CACHE_DIR"
+        if gh release download dataset-cache --repo "$GITHUB_REPOSITORY" \
+            --pattern dataset_cache.tar.gz --dir "$RUNNER_TEMP" 2>/dev/null; then
+          tar -xzf "$RUNNER_TEMP/dataset_cache.tar.gz" -C "$CACHE_DIR"
+          echo "Restored previous dataset-cache release"
+        else
+          echo "No existing dataset-cache release; performing initial build"
+        fi
+
+    - name: Sync feature store
+      env:
+        EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
+        EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        OPENFLOW_DISABLE_SMAP: ${{ (inputs.disable_smap || secrets.EARTHDATA_USERNAME == '') && '1' || '' }}
+        OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
+      run: |
+        python openFlowML/data/feature_store.py \
+          --cache-dir "$OPENFLOW_CACHE_DIR" \
+          --years "${{ inputs.training_years || '25' }}" \
+          --refresh-days "${{ inputs.refresh_days || '14' }}" \
+          ${{ inputs.force_rebuild && '--force' || '' }} | tee "$RUNNER_TEMP/sync_summary.txt"
+        {
+          echo "## Feature Store Sync"
+          echo '```'
+          cat "$RUNNER_TEMP/sync_summary.txt"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Publish updated dataset-cache release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        CACHE_DIR="$RUNNER_TEMP/openflow_dataset_cache"
+        ARCHIVE="$RUNNER_TEMP/dataset_cache.tar.gz"
+        tar -czf "$ARCHIVE" -C "$CACHE_DIR" .
+        ls -lh "$ARCHIVE"
+        NOTES="Incremental OpenFlow Feature Store snapshot updated $(date -u +%Y-%m-%dT%H:%M:%SZ) from commit \`${GITHUB_SHA::12}\`."
+        if gh release view dataset-cache --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          gh release upload dataset-cache "$ARCHIVE" "$CACHE_DIR/manifest.json" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit dataset-cache --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
+        else
+          gh release create dataset-cache "$ARCHIVE" "$CACHE_DIR/manifest.json" \
+            --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "Dataset Cache (Feature Store)" --notes "$NOTES"
+        fi
