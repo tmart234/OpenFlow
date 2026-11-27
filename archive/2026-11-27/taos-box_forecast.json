@@ -1,0 +1,504 @@
+{
+  "site_id": "USGS:08276500",
+  "name": "Rio Grande below Taos Junction Bridge near Taos, NM",
+  "reach": "Lower Taos Box (John Dunn Bridge to Taos Junction Bridge)",
+  "nws_lid": "TJBN5",
+  "usgs_id": "08276500",
+  "timezone": "America/Denver",
+  "mode": "routing",
+  "generated_utc": "2026-11-27T21:59:48Z",
+  "latest_observation": {
+    "time_utc": "2026-11-27T21:00:00+00:00",
+    "time_local": "2026-11-27T14:00:00-07:00",
+    "cfs": 1643.3333333333333
+  },
+  "peak": {
+    "time_utc": "2026-11-28T10:00:00+00:00",
+    "time_local": "2026-11-28T03:00:00-07:00",
+    "cfs": 1640,
+    "ahead": false,
+    "end_cfs": 1476,
+    "band_low_cfs": 1608,
+    "band_high_cfs": 1667
+  },
+  "daily": [
+    {
+      "date": "2026-11-27",
+      "min_cfs": 1631,
+      "mean_cfs": 1635,
+      "max_cfs": 1643,
+      "band_low_cfs": 1604,
+      "band_high_cfs": 1655
+    },
+    {
+      "date": "2026-11-28",
+      "min_cfs": 1599,
+      "mean_cfs": 1624,
+      "max_cfs": 1640,
+      "band_low_cfs": 1547,
+      "band_high_cfs": 1667
+    },
+    {
+      "date": "2026-11-29",
+      "min_cfs": 1583,
+      "mean_cfs": 1589,
+      "max_cfs": 1597,
+      "band_low_cfs": 1527,
+      "band_high_cfs": 1642
+    },
+    {
+      "date": "2026-11-30",
+      "min_cfs": 1558,
+      "mean_cfs": 1570,
+      "max_cfs": 1582,
+      "band_low_cfs": 1502,
+      "band_high_cfs": 1629
+    },
+    {
+      "date": "2026-12-01",
+      "min_cfs": 1530,
+      "mean_cfs": 1543,
+      "max_cfs": 1556,
+      "band_low_cfs": 1474,
+      "band_high_cfs": 1604
+    },
+    {
+      "date": "2026-12-02",
+      "min_cfs": 1503,
+      "mean_cfs": 1516,
+      "max_cfs": 1529,
+      "band_low_cfs": 1446,
+      "band_high_cfs": 1577
+    },
+    {
+      "date": "2026-12-03",
+      "min_cfs": 1477,
+      "mean_cfs": 1490,
+      "max_cfs": 1502,
+      "band_low_cfs": 1420,
+      "band_high_cfs": 1550
+    }
+  ],
+  "routing": {
+    "mode": "calibrated",
+    "calibration_days": 28,
+    "fits": [
+      {
+        "lags_hours": [
+          6,
+          0
+        ],
+        "k_hours": [
+          3.0,
+          120.0
+        ],
+        "coefs": [
+          1.189887334788693,
+          0.010735851461665544
+        ],
+        "intercept": -179.19833151919252,
+        "rmse": 44.17956361181927,
+        "source": "calibrated",
+        "timing_mae_hours": null,
+        "celerity": [
+          [
+            0.3,
+            1000.0
+          ],
+          null
+        ]
+      },
+      {
+        "lags_hours": [
+          10,
+          42
+        ],
+        "k_hours": [
+          1.0,
+          120.0
+        ],
+        "coefs": [
+          1.1832927321857116,
+          0.013198928314513246
+        ],
+        "intercept": -176.38048543861262,
+        "rmse": 44.50297545055219,
+        "source": "calibrated",
+        "timing_mae_hours": null,
+        "celerity": [
+          [
+            0.3,
+            1000.0
+          ],
+          null
+        ]
+      },
+      {
+        "lags_hours": [
+          2,
+          0
+        ],
+        "k_hours": [
+          6.0,
+          120.0
+        ],
+        "coefs": [
+          1.2038502367245367,
+          0.008434518945966103
+        ],
+        "intercept": -203.69712882570022,
+        "rmse": 45.87923661081928,
+        "source": "calibrated",
+        "timing_mae_hours": null,
+        "celerity": [
+          [
+            0.3,
+            1000.0
+          ],
+          null
+        ]
+      },
+      {
+        "lags_hours": [
+          4,
+          24
+        ],
+        "k_hours": [
+          6.0,
+          120.0
+        ],
+        "coefs": [
+          1.1999566365127408,
+          0.012388956463400247
+        ],
+        "intercept": -206.2419427621668,
+        "rmse": 49.65639381671586,
+        "source": "calibrated",
+        "timing_mae_hours": null,
+        "celerity": [
+          [
+            0.3,
+            1000.0
+          ],
+          null
+        ]
+      },
+      {
+        "lags_hours": [
+          8,
+          0
+        ],
+        "k_hours": [
+          1.0,
+          120.0
+        ],
+        "coefs": [
+          1.186440159456877,
+          0.009650715978732759
+        ],
+        "intercept": -170.42401938897197,
+        "rmse": 49.89462057843377,
+        "source": "calibrated",
+        "timing_mae_hours": null,
+        "celerity": [
+          [
+            0.3,
+            1000.0
+          ],
+          null
+        ]
+      }
+    ],
+    "routed_from": "routing anchor"
+  },
+  "anchor": {
+    "name": "Rio Grande near Lobatos, CO (state line)",
+    "nws_lid": "LOBC2",
+    "latest_time_utc": "2026-11-27T20:00:00+00:00",
+    "latest_cfs": 1350.0,
+    "forecast_issued_utc": null,
+    "latest_stage_ft": 3.1300000000000003,
+    "forecast_peak_cfs": null,
+    "forecast_peak_time_utc": null,
+    "pass_through_ratio": 0.956
+  },
+  "routing_anchor": {
+    "name": "Rio Grande near Cerro, NM",
+    "nws_lid": "CERN5",
+    "latest_time_utc": "2026-11-27T21:00:00+00:00",
+    "latest_cfs": 1420.0,
+    "forecast_issued_utc": null,
+    "latest_stage_ft": 7.305,
+    "forecast_peak_cfs": null,
+    "forecast_peak_time_utc": null,
+    "used": true,
+    "from_anchor": {
+      "lag_hours": 12,
+      "k_hours": 3.0,
+      "refitted": false
+    }
+  },
+  "tributaries": [
+    {
+      "name": "Rio Pueblo de Taos below Los Cordovas, NM",
+      "nws_lid": "TBCN5",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 84.9,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 7.080000000000001,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    },
+    {
+      "name": "Red River below Fish Hatchery near Questa, NM",
+      "nws_lid": "USGS 08266820",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 50.475,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": null,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    }
+  ],
+  "nws_forecast_end_utc": null,
+  "upstream": [
+    {
+      "name": "Rio Grande at Alamosa, CO",
+      "nws_lid": "ALAC2",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 812.0,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 5.54,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null,
+      "forecast_end_utc": null
+    },
+    {
+      "name": "Conejos River near Mogote, CO",
+      "nws_lid": "MOGC2",
+      "latest_time_utc": "2026-11-27T21:00:00+00:00",
+      "latest_cfs": 594.5,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 3.4450000000000003,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null,
+      "forecast_end_utc": null
+    }
+  ],
+  "context_gauges": [
+    {
+      "name": "Rio Grande near Del Norte, CO",
+      "nws_lid": "DNRC2",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 731.0,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 1.85,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    },
+    {
+      "name": "Rio Grande near Lobatos, CO (state line)",
+      "nws_lid": "LOBC2",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 1350.0,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 3.1300000000000003,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    },
+    {
+      "name": "Rio Grande near Cerro, NM",
+      "nws_lid": "CERN5",
+      "latest_time_utc": "2026-11-27T21:00:00+00:00",
+      "latest_cfs": 1420.0,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 7.305,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    },
+    {
+      "name": "Costilla Creek at Costilla, NM",
+      "nws_lid": "COSN5",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 16.75,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 1.7975,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    },
+    {
+      "name": "Rio Pueblo de Taos below Los Cordovas, NM",
+      "nws_lid": "TBCN5",
+      "latest_time_utc": "2026-11-27T20:00:00+00:00",
+      "latest_cfs": 84.9,
+      "forecast_issued_utc": null,
+      "latest_stage_ft": 7.080000000000001,
+      "forecast_peak_cfs": null,
+      "forecast_peak_time_utc": null
+    }
+  ],
+  "nws_official_forecast_issued_utc": null,
+  "flood_thresholds_cfs": {
+    "action": 7750.0,
+    "minor": 9800.0,
+    "moderate": 15000.0,
+    "major": 25000.0
+  },
+  "basin_rain": {
+    "zone_totals_mm": {
+      "past": {
+        "rain_local": 0.1,
+        "rain_mid": 0.0,
+        "rain_far": 0.0,
+        "snow_local": 2.9,
+        "snow_mid": 3.1,
+        "snow_far": 8.3
+      },
+      "next": {
+        "rain_local": 1.0,
+        "rain_mid": 0.6,
+        "rain_far": 0.3,
+        "snow_local": 1.4,
+        "snow_mid": 2.4,
+        "snow_far": 8.0
+      },
+      "past_through": "2026-11-26"
+    },
+    "ungauged_area_km2": 11748.6,
+    "ungauged_rain_mm": {
+      "calibration_window": 28.1,
+      "past_7_days": 0.0,
+      "forecast": 0.6
+    },
+    "sources": [
+      "gridmet",
+      "stage4",
+      "nws"
+    ],
+    "missing_hours": 15,
+    "rain_term": "calibrated",
+    "runoff_ratio": 0.011
+  },
+  "ml": {
+    "version": "model-219",
+    "anchor": "2026-11-27",
+    "today": "2026-11-27",
+    "station_idx": 3,
+    "basin_idx": 3,
+    "trained_station": true,
+    "bridged_weather_days": [
+      "2026-11-26",
+      "2026-11-27"
+    ],
+    "weather_forecast_days": 14,
+    "upstream_known_days": 7,
+    "verified": {
+      "windows": 784,
+      "issued": [
+        "2024-09-16",
+        "2026-11-08"
+      ],
+      "leads": [
+        1,
+        3,
+        7
+      ],
+      "model_error_pct": [
+        2.57,
+        3.5,
+        4.42
+      ],
+      "persistence_error_pct": [
+        2.84,
+        6.59,
+        10.4
+      ],
+      "rise_peak_ratio": 0.789
+    },
+    "daily": [
+      {
+        "date": "2026-11-28",
+        "min_cfs": 1630,
+        "max_cfs": 1676,
+        "min_q05_cfs": 1520,
+        "min_q25_cfs": 1598,
+        "min_q75_cfs": 1665,
+        "min_q95_cfs": 1753,
+        "max_q05_cfs": 1557,
+        "max_q25_cfs": 1639,
+        "max_q75_cfs": 1704,
+        "max_q95_cfs": 1779
+      },
+      {
+        "date": "2026-11-29",
+        "min_cfs": 1612,
+        "max_cfs": 1662,
+        "min_q05_cfs": 1461,
+        "min_q25_cfs": 1569,
+        "min_q75_cfs": 1656,
+        "min_q95_cfs": 1760,
+        "max_q05_cfs": 1528,
+        "max_q25_cfs": 1622,
+        "max_q75_cfs": 1694,
+        "max_q95_cfs": 1772
+      },
+      {
+        "date": "2026-11-30",
+        "min_cfs": 1605,
+        "max_cfs": 1645,
+        "min_q05_cfs": 1444,
+        "min_q25_cfs": 1559,
+        "min_q75_cfs": 1657,
+        "min_q95_cfs": 1775,
+        "max_q05_cfs": 1507,
+        "max_q25_cfs": 1604,
+        "max_q75_cfs": 1682,
+        "max_q95_cfs": 1764
+      },
+      {
+        "date": "2026-12-01",
+        "min_cfs": 1604,
+        "max_cfs": 1643,
+        "min_q05_cfs": 1428,
+        "min_q25_cfs": 1553,
+        "min_q75_cfs": 1666,
+        "min_q95_cfs": 1806,
+        "max_q05_cfs": 1489,
+        "max_q25_cfs": 1597,
+        "max_q75_cfs": 1683,
+        "max_q95_cfs": 1771
+      },
+      {
+        "date": "2026-12-02",
+        "min_cfs": 1571,
+        "max_cfs": 1603,
+        "min_q05_cfs": 1410,
+        "min_q25_cfs": 1522,
+        "min_q75_cfs": 1632,
+        "min_q95_cfs": 1780,
+        "max_q05_cfs": 1462,
+        "max_q25_cfs": 1559,
+        "max_q75_cfs": 1646,
+        "max_q95_cfs": 1744
+      },
+      {
+        "date": "2026-12-03",
+        "min_cfs": 1594,
+        "max_cfs": 1609,
+        "min_q05_cfs": 1398,
+        "min_q25_cfs": 1534,
+        "min_q75_cfs": 1658,
+        "min_q95_cfs": 1807,
+        "max_q05_cfs": 1450,
+        "max_q25_cfs": 1560,
+        "max_q75_cfs": 1659,
+        "max_q95_cfs": 1764
+      }
+    ]
+  },
+  "files": {
+    "csv": "forecast_out/taos-box_forecast.csv",
+    "json": "forecast_out/taos-box_forecast.json",
+    "png": "forecast_out/taos-box_forecast.png"
+  }
+}
