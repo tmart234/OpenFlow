@@ -34,3 +34,15 @@ It also marks the **ungauged** area, the part not upstream of the station's `ups
 - **NWS gridpoint forecast rain** (about 7 days): forecasts.
 
 The ML model gets `rain_/snow_{local,mid,far}`. The routing CLI turns rain on the ungauged area into a calibrated local-inflow term and draws daily zone rain under the hydrograph.
+
+### Incremental Feature Store (`feature_store.py`)
+
+`feature_store.py` caches each station's pre-normalized daily merged DataFrame as Parquet (with automatic `.csv.gz` fallback when `pyarrow` isn't installed) under `OPENFLOW_CACHE_DIR` (default `~/.cache/openflow/dataset`). On later runs it only backfills newly requested older years or refreshes the trailing 14 days (picking up USGS provisional revisions and gridMET's ~2-day lag), and automatically invalidates a station whenever its `upstream_gauges.json`, `basin_zones.json`, weather source, or `OPENFLOW_DISABLE_*` settings change.
+
+```bash
+python openFlowML/data/feature_store.py --cache-dir ~/.cache/openflow/dataset --years 25
+python openFlowML/data/feature_store.py --cache-dir ~/.cache/openflow/dataset --info
+```
+
+In CI, `.github/workflows/sync_dataset.yml` updates the `dataset-cache` GitHub Release weekly so `ml_training.yml` and `crossval.yml` start warm instead of re-downloading 25 years of APIs every run.
+

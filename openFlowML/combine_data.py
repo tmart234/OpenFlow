@@ -578,12 +578,60 @@ def get_base_path():
 # Years of history to train on. Longer records span more wet and dry snow
 # years, so the model learns the snowpack -> runoff link instead of the
 # seasonal cycle of a few particular years. OPENFLOW_TRAINING_YEARS overrides.
-TRAINING_YEARS = 15
+TRAINING_YEARS = 25
 
 
-def main(training_num_years=None):
+def fetch_station_merged(site_id, start_date, end_date):
+    """Fetch flow + auxiliary sources for one station and merge onto a daily index."""
+    prefix, sid = site_id.split(':', 1)
+    logger.info(f"Consuming {prefix}:{sid}")
+    if prefix == "DWR":
+        flow_dataframe = get_CODWR_flow.main(sid, start_date, end_date)
+    elif prefix == "USGS":
+        flow_dataframe = get_flow.main(sid, start_date, end_date)
+    else:
+        logger.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
+        return pd.DataFrame()
+
+    fetched = fetch_and_process_data(
+        prefix, sid, start_date, end_date, flow_dataframe)
+    if (fetched is None
+            or fetched['noaa_data'] is None
+            or fetched['noaa_data'].empty
+            or flow_dataframe.empty):
+        logger.warning(f"No usable data for site ID {site_id}. Skipping...")
+        return pd.DataFrame()
+
+    return merge_dataframes(
+        fetched['noaa_data'], flow_dataframe, site_id, start_date, end_date,
+        swe_data=fetched['swe_data'],
+        sm_data=fetched['sm_data'],
+        drought_data=fetched['drought_data'],
+        reservoir_data=fetched['reservoir_data'],
+        huc8=fetched['huc8'],
+        upstream_data=fetched.get('upstream_data'),
+        upstream_known_days=fetched.get('upstream_known_days', 0),
+        basin_precip_data=fetched.get('basin_precip_data'))
+
+
+def _resolve_cache_dir(cache_dir=None):
+    if cache_dir:
+        return os.path.expanduser(cache_dir)
+    env_dir = os.getenv('OPENFLOW_CACHE_DIR', '').strip()
+    if env_dir:
+        return os.path.expanduser(env_dir)
+    if _disabled('OPENFLOW_USE_CACHE'):
+        from data import feature_store
+        return feature_store.DEFAULT_CACHE_DIR
+    return None
+
+
+def main(training_num_years=None, cache_dir=None):
     if training_num_years is None:
         training_num_years = int(os.getenv('OPENFLOW_TRAINING_YEARS', '') or TRAINING_YEARS)
+    resolved_cache = _resolve_cache_dir(cache_dir)
+    refresh_days = int(os.getenv('OPENFLOW_CACHE_REFRESH_DAYS', '') or 14)
+    force_rebuild = _disabled('OPENFLOW_CACHE_FORCE_REBUILD')
     all_data = {}
     site_ids = get_site_ids()
     base_path = get_base_path()
@@ -592,35 +640,19 @@ def main(training_num_years=None):
 
     for site_id in site_ids:
         try:
-            prefix, id = site_id.split(':')
-            logger.info(f"Consuming {prefix}:{id}")
-            if prefix == "DWR":
-                flow_dataframe = get_CODWR_flow.main(id, start_date, end_date)
-            elif prefix == "USGS":
-                flow_dataframe = get_flow.main(id, start_date, end_date)
+            if resolved_cache:
+                from data import feature_store
+                merged, status = feature_store.load_or_update_station(
+                    site_id, start_date, end_date,
+                    fetch_station_merged,
+                    resolved_cache,
+                    refresh_days=refresh_days,
+                    force_rebuild=force_rebuild,
+                )
+                logger.info("Station %s loaded via feature store (%s, %d rows)",
+                            site_id, status, len(merged))
             else:
-                logger.warning(f"Unrecognized prefix for site ID {site_id}. Skipping...")
-                continue
-
-            fetched = fetch_and_process_data(
-                prefix, id, start_date, end_date, flow_dataframe)
-            if (fetched is None
-                    or fetched['noaa_data'] is None
-                    or fetched['noaa_data'].empty
-                    or flow_dataframe.empty):
-                logger.warning(f"No usable data for site ID {site_id}. Skipping...")
-                continue
-
-            merged = merge_dataframes(
-                fetched['noaa_data'], flow_dataframe, site_id, start_date, end_date,
-                swe_data=fetched['swe_data'],
-                sm_data=fetched['sm_data'],
-                drought_data=fetched['drought_data'],
-                reservoir_data=fetched['reservoir_data'],
-                huc8=fetched['huc8'],
-                upstream_data=fetched.get('upstream_data'),
-                upstream_known_days=fetched.get('upstream_known_days', 0),
-                basin_precip_data=fetched.get('basin_precip_data'))
+                merged = fetch_station_merged(site_id, start_date, end_date)
             if merged.empty:
                 logger.warning(f"No usable merged data for site ID {site_id}. Skipping...")
                 continue
