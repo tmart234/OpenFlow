@@ -56,3 +56,33 @@ def test_cross_validation_end_to_end_on_synthetic_years(tmp_path, monkeypatch):
     assert set(report['pooled']['stations']) == {'USGS:08276500', 'USGS:09114500'}
     assert 'band' in report['pooled']['all']            # the band is cross-validated too
     assert 'Cross-validation: 3 leave-water-years-out folds' in open(os.path.join(base, 'cv_report.md')).read()
+
+
+def test_leave_basin_out_cv_end_to_end_with_static_attributes(tmp_path, monkeypatch):
+    pytest.importorskip('tensorflow')
+    import normalize_data
+    import train
+    from test_train_smoke import _station
+    monkeypatch.setattr(train, 'EPOCHS', 1)
+    monkeypatch.setattr(train, 'USE_STATIC_ATTRIBUTES', True)
+    monkeypatch.setattr(train, 'SPECIFIC_DISCHARGE', True)
+    frame = pd.concat([_station('USGS:08276500', '13020101', True, n_days=400, seed=1),
+                       _station('USGS:09114500', '14020002', False, n_days=400, seed=2)],
+                      ignore_index=True)
+    base = str(tmp_path)
+    os.makedirs(os.path.join(base, 'openFlowML'))
+    frame.to_csv(os.path.join(base, 'openFlowML', 'combined_data_all_sites.csv'), index=False)
+    data = normalize_data.normalize_data(frame, artifacts_dir=base)
+    data.to_csv(os.path.join(base, 'openFlowML', 'normalized_data.csv'), index=False)
+
+    assert crossval.main(['--base-path', base, '--mode', 'leave-basin-out', '--folds', '2']) == 0
+
+    report = json.loads(open(os.path.join(base, 'cv_report.json')).read())
+    assert report['mode'] == 'leave-basin-out'
+    assert report['static_attributes'] is True
+    assert report['flow_units'] == 'mm_day'
+    assert report['n_folds'] == 2
+    held_sites = [s for fold in report['folds'] for s in fold['test_sites']]
+    assert sorted(held_sites) == ['USGS:08276500', 'USGS:09114500']
+    assert 'leave-basin-out folds (zero-shot transfer)' in open(os.path.join(base, 'cv_report.md')).read()
+

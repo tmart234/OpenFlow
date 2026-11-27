@@ -74,6 +74,49 @@ NUMERIC_COLUMNS = CORE_REQUIRED + OPTIONAL_NUMERIC
 LOG_TRANSFORM_COLUMNS = {'Min Flow', 'Max Flow', 'precipitation', 'upstream_flow',
                          *BASIN_PRECIP_COLUMNS, 'precip_max1h', 'precip_max3h',
                          'prior_flow'}
+# 1 cfs = 0.028316846592 m^3/s -> * 86400 s/day / 1e6 m^2/km^2 * 1000 mm/m
+CFS_TO_MM_DAY_PER_KM2 = 2.446575545
+SPECIFIC_DISCHARGE_COLUMNS = ('Min Flow', 'Max Flow', 'upstream_flow', 'prior_flow')
+
+
+def cfs_to_specific(q_cfs, area_km2: float):
+    """Convert streamflow from cfs to area-normalized specific discharge (mm/day)."""
+    area = float(area_km2)
+    if area <= 0.0:
+        raise ValueError(f"area_km2 must be positive, got {area_km2}")
+    return np.asarray(q_cfs, dtype='float64') * (CFS_TO_MM_DAY_PER_KM2 / area)
+
+
+def specific_to_cfs(q_mm_day, area_km2: float):
+    """Convert specific discharge (mm/day) back to volumetric streamflow (cfs)."""
+    area = float(area_km2)
+    if area <= 0.0:
+        raise ValueError(f"area_km2 must be positive, got {area_km2}")
+    return np.asarray(q_mm_day, dtype='float64') * (area / CFS_TO_MM_DAY_PER_KM2)
+
+
+def convert_frame_to_specific_discharge(df: pd.DataFrame,
+                                        station_areas_km2: dict,
+                                        columns=SPECIFIC_DISCHARGE_COLUMNS) -> pd.DataFrame:
+    """
+    Convert flow columns in a per-station DataFrame from cfs to mm/day using
+    each row's target station drainage area (`station_areas_km2[site_id]`).
+    Dividing `upstream_flow` by the TARGET station's area keeps volumetric
+    mass balance exact (`dQ_target / A_target == dQ_upstream / A_target`).
+    """
+    out = df.copy()
+    if 'site_id' not in out.columns or not station_areas_km2:
+        return out
+    areas = out['site_id'].map(station_areas_km2).astype('float64')
+    valid = areas.notna() & (areas > 0.0)
+    if not valid.any():
+        return out
+    factor = CFS_TO_MM_DAY_PER_KM2 / areas[valid].to_numpy()
+    for col in columns:
+        if col in out.columns:
+            vals = pd.to_numeric(out.loc[valid, col], errors='coerce').to_numpy(dtype='float64')
+            out.loc[valid, col] = vals * factor
+    return out
 
 
 def add_day_of_year_features(data):
@@ -165,7 +208,7 @@ def apply_scalers(data, scalers):
     return data
 
 
-def normalize_data(data, artifacts_dir=None, fit_mask=None):
+def normalize_data(data, artifacts_dir=None, fit_mask=None, station_areas_km2=None):
     """
     Feature-engineer and normalize the combined dataset.
 
@@ -179,6 +222,9 @@ def normalize_data(data, artifacts_dir=None, fit_mask=None):
         fit_mask: optional boolean mask (aligned to `data` rows) restricting
               scaler fitting to training rows only so val/test statistics do
               not leak into normalization.
+        station_areas_km2: optional {site_id: area_km2} map. When provided,
+              flow columns (Min Flow, Max Flow, upstream_flow, prior_flow) are
+              converted to specific discharge (mm/day) before log1p + z-score.
 
     Returns the normalized DataFrame. Date, site_id, huc8, station_idx, and
     basin_idx are all preserved so Phase 3 can do chronological splitting and
@@ -226,6 +272,9 @@ def normalize_data(data, artifacts_dir=None, fit_mask=None):
         data = data.dropna(subset=CORE_REQUIRED).reset_index(drop=True)
         if len(data) < before:
             logger.warning("Dropped %d rows with missing core values", before - len(data))
+
+        if station_areas_km2:
+            data = convert_frame_to_specific_discharge(data, station_areas_km2)
 
         data = add_day_of_year_features(data)
 

@@ -67,6 +67,10 @@ def load_artifacts(model_dir: str, with_model: bool = True) -> dict:
             art[name] = json.load(f)
     reg = os.path.join(model_dir, 'upstream_gauges.json')
     art['registry'] = get_upstream.load_registry(reg if os.path.exists(reg) else None)
+    from data import build_station_attributes as bsa
+    attr_path = os.path.join(model_dir, 'station_attributes.json')
+    art['station_attributes'] = bsa.load_station_attributes(
+        attr_path if os.path.exists(attr_path) else None)
     art['model_dir'] = model_dir
     art['version'] = None
     manifest = os.path.join(model_dir, 'manifest.json')
@@ -504,6 +508,23 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
                   *windowing.ENERGY_FEATURES, *windowing.INTENSITY_FEATURES):
             if c in frame.columns:
                 frame[c] = pd.to_numeric(frame[c], errors='coerce')
+
+        from data import build_station_attributes as bsa
+        station_attrs = art.get('station_attributes') or {}
+        flow_units = cfg_tc.get('flow_units', 'cfs')
+        area_km2 = None
+        if isinstance(cfg_tc.get('station_areas_km2'), dict) and site_id in cfg_tc['station_areas_km2']:
+            area_km2 = float(cfg_tc['station_areas_km2'][site_id])
+        if not area_km2:
+            area_km2 = bsa.station_area_km2(site_id, station_attrs)
+        if flow_units == 'mm_day':
+            if not area_km2 or area_km2 <= 0.0:
+                raise InferenceError(f"Model expects specific discharge (mm/day) but area_km2 missing for {site_id}")
+            for col in normalize_data.SPECIFIC_DISCHARGE_COLUMNS:
+                if col in frame.columns:
+                    frame[col] = normalize_data.cfs_to_specific(
+                        pd.to_numeric(frame[col], errors='coerce').to_numpy(dtype=float), area_km2)
+
         frame = normalize_data.apply_scalers(frame, scalers)
         # Any optional Phase 1-3 column absent from scalers stays neutral 0.0.
         for col in windowing.OPTIONAL_DATASET_FEATURES:
@@ -618,11 +639,18 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
             'station_input': np.array([station_idx], dtype='int32'),
             'basin_input': np.array([basin_idx], dtype='int32'),
         }
+        static_feats = cfg_tc.get('static_features') or []
+        if static_feats:
+            svec = bsa.station_static_vector(
+                site_id, station_attrs, cfg_tc.get('static_scalers'), static_feats)
+            inputs['static_input'] = svec[None].astype('float32')
         info = {'anchor': str(anchor.date()), 'today': str(today.date()),
                 'station_idx': station_idx, 'basin_idx': basin_idx,
                 'trained_station': station_idx > 0, 'bridged_weather_days': bridged,
                 'weather_forecast_days': int(known_wx.sum()),
-                'upstream_known_days': known_days}
+                'upstream_known_days': known_days,
+                'flow_units': flow_units,
+                'area_km2': area_km2}
         return {'inputs': inputs, 'anchor': anchor, 'dates': dates, 'info': info}
     finally:
         for k, v in saved_env.items():
@@ -655,17 +683,23 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
         band = None
     tf_ = windowing.TARGET_FEATURES
     sc = art['scalers']
+    tc = art.get('training_config') or {}
+    flow_units = tc.get('flow_units', 'cfs')
+    area_km2 = (prepared.get('info') or {}).get('area_km2')
 
     def inv(z, col):
         p = sc[col]
         x = z * p['scale'] + p['mean']
-        return np.expm1(x) if p.get('transform') == 'log1p' else x
+        val = np.expm1(x) if p.get('transform') == 'log1p' else x
+        if flow_units == 'mm_day' and area_km2:
+            val = normalize_data.specific_to_cfs(val, area_km2)
+        return val
     lo = inv(out[:, tf_.index('Min Flow')], 'Min Flow')
     hi = inv(out[:, tf_.index('Max Flow')], 'Max Flow')
     swapped = lo > hi
     frame = pd.DataFrame({'Date': prepared['dates'], 'min_cfs': np.where(swapped, hi, lo),
                           'max_cfs': np.where(swapped, lo, hi)})
-    quantiles = (art.get('training_config') or {}).get('quantiles')
+    quantiles = tc.get('quantiles')
     if band is not None and quantiles:
         min_v = inv(band[0][:, tf_.index('Min Flow'), :], 'Min Flow')
         max_v = inv(band[0][:, tf_.index('Max Flow'), :], 'Max Flow')
@@ -679,6 +713,14 @@ def predict(art: dict, prepared: dict) -> pd.DataFrame:
                 if q != 0.5:
                     frame[f'{side}_q{round(q * 100):02d}_cfs'] = values[:, i]
     return frame
+
+
+def predict_from_feed(art: dict, payload: dict) -> pd.DataFrame:
+    """Verify a Phase 4 Daily Feature Feed payload and run `predict()` on it."""
+    import feature_feed
+    feature_feed.verify_feed_payload(payload, training_config=art.get('training_config'))
+    prepared = feature_feed.feed_to_prepared(payload)
+    return predict(art, prepared)
 
 
 def verified_skill(art: dict, site_id: str, leads=(1, 3, 7)) -> Optional[dict]:

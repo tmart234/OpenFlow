@@ -639,9 +639,14 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
 
 def get_site_ids(filename=None):
     if filename is None:
-        filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.github', 'site_ids.txt')
+        env_path = os.getenv('OPENFLOW_SITE_IDS_FILE', '').strip()
+        if env_path:
+            filename = (env_path if os.path.isabs(env_path)
+                        else os.path.join(get_base_path(), env_path))
+        else:
+            filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.github', 'site_ids.txt')
     with open(filename, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
 
 
 def save_combined_data(all_data, base_path):

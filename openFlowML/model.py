@@ -229,6 +229,8 @@ def build_encoder_decoder(
     upstream_change_index=None,
     quantiles=None,
     band_units: int = 32,
+    static_features: int = 0,
+    static_units: int = 32,
 ) -> Model:
     """
     Build and compile the encoder-decoder model.
@@ -239,7 +241,12 @@ def build_encoder_decoder(
 
     With `upstream_change_index` (the decoder column of upstream_change) the
     linear skip also gets a per-river gain on that column
-    (StationUpstreamGain), zero at the start of training.
+    (StationUpstreamGain), zero at the start of training. When
+    `static_features > 0` (Phase 5), a 6th `static_input` `(N, S)` passes
+    through a compact 2-layer tanh MLP concatenated into the station/basin
+    context AND adds an attribute-predicted base upstream gain so unseen
+    rivers (`station_input = 0`) get physically informed conditioning and
+    mass-balance gain.
 
     With `quantiles` (ascending, including 0.5; e.g. DEFAULT_QUANTILES) the
     model has two outputs, {POINT_OUTPUT: (N, H, T), QUANTILE_OUTPUT:
@@ -250,10 +257,12 @@ def build_encoder_decoder(
     persistence_input = layers.Input(shape=(target_features,), name='persistence_input')
     station_input = layers.Input(shape=(), dtype='int32', name='station_input')
     basin_input = layers.Input(shape=(), dtype='int32', name='basin_input')
+    static_input = (layers.Input(shape=(int(static_features),), dtype='float32', name='static_input')
+                    if static_features and int(static_features) > 0 else None)
 
     # Training-time basin-fallback augmentation: randomly zero some station IDs
     # before they reach the embedding so the model practices predicting with
-    # only the basin embedding available.
+    # only the basin embedding (and static attributes, if enabled) available.
     station_input_masked = StationDropout(rate=station_dropout, name='station_dropout')(station_input)
 
     # Index 0 ("unseen") is a learned vector like any other, trained by
@@ -266,7 +275,13 @@ def build_encoder_decoder(
     basin_emb = layers.Embedding(
         input_dim=num_basins + 1, output_dim=embedding_dim,
         name='basin_embedding')(basin_input)
-    context = layers.Concatenate(name='station_basin_context')([station_emb, basin_emb])
+    static_emb = None
+    if static_input is not None:
+        static_h = layers.Dense(static_units, activation='tanh', name='static_mlp_hidden')(static_input)
+        static_emb = layers.Dense(embedding_dim * 2, activation='tanh', name='static_mlp_out')(static_h)
+        context = layers.Concatenate(name='station_basin_context')([station_emb, basin_emb, static_emb])
+    else:
+        context = layers.Concatenate(name='station_basin_context')([station_emb, basin_emb])
 
     # Broadcast the context across every encoder / decoder timestep so the
     # LSTMs see "who is this station, what basin is it in" at every step.
@@ -323,6 +338,14 @@ def build_encoder_decoder(
             input_dim=num_stations + 1, output_dim=target_features,
             embeddings_initializer='zeros', name='station_upstream_gain_table',
         )(station_input_masked)
+        if static_emb is not None:
+            # Attribute-gated base gain + per-station residual so unseen gauged
+            # rivers immediately receive a physically informed upstream gain.
+            attr_gain = layers.Dense(
+                target_features, kernel_initializer='zeros', bias_initializer='zeros',
+                name='static_upstream_gain',
+            )(static_emb)
+            gain = layers.Add(name='combined_upstream_gain')([attr_gain, gain])
         station_skip = StationUpstreamGain(upstream_change_index, name='station_upstream_gain')(
             [decoder_seen, gain])
         delta = layers.Add(name='delta_plus_station_skip')([delta, station_skip])
@@ -337,6 +360,8 @@ def build_encoder_decoder(
         'station_input': station_input,
         'basin_input': basin_input,
     }
+    if static_input is not None:
+        inputs['static_input'] = static_input
     point_loss = tf.keras.losses.Huber(delta=huber_delta)
     optimizer = Adam(learning_rate=learning_rate, clipnorm=clipnorm)
 
@@ -381,6 +406,11 @@ def build_encoder_decoder(
 def has_band(net) -> bool:
     """True when `net` has the QUANTILE_OUTPUT (dict outputs)."""
     return isinstance(net.output, dict) and QUANTILE_OUTPUT in net.output
+
+
+def has_static_input(net) -> bool:
+    """True when `net` accepts the Phase 5 `static_input` tensor."""
+    return isinstance(net.input, dict) and 'static_input' in net.input
 
 
 def point_forecast(pred):

@@ -23,6 +23,7 @@ The release notes carry the quality report and link the training run and commit.
 | `training_config.json` | Schema: encoder/decoder window sizes, feature names, vocab sizes, per-station `upstream_known_days`. |
 | `upstream_gauges.json` | Upstream-gauge registry: for each station, the upstream gauges (training `site_id`, NWS `nws_lid`), `lag_days`, `weight`, `forecast_days`, and an optional `anchor` gauge. Needed to build the `upstream_flow` inputs. |
 | `basin_zones.json` | Per-station travel-time precipitation zones: zone polygons (local / mid / far by river distance), the ungauged area, and area-weighted sample `points` with their NWS gridpoint (`WFO/x,y`). Needed to build the basin rain/snow inputs. |
+| `station_attributes.json` | Optional Phase 5 static physical catchment attributes (EPA StreamCat watershed metrics: area, elevation, relief, climate normals, BFI, soil permeability/texture, bedrock depth, forest/shrub cover, wetness index, dam storage, ungauged fraction). Zero runtime API calls needed. |
 | `manifest.json` | sha256 + byte size per artifact, plus tool versions and the schema block. Verify on download. |
 | `quality_report.json` / `.md` | Held-out verification of this training recipe (`openFlowML/evaluate.py`). Per station and lead day: median absolute % error of the daily maximum flow vs persistence, flood-peak ratio and timing, and recession error, plus the quality gate result. CI publishes a release only when the gate passes. |
 
@@ -46,10 +47,10 @@ for entry in manifest["files"]:
 
 `openFlowML/ml_inference.py` runs a trained model for a station as of today. It is the executable version of this document:
 - **Encoder (last 60 days):** built with the same code as training (`combine_data`). Gaps are bridged as described below.
-- **Decoder (next 14 days):** forecast weather, routed upstream flow and basin rain/snow, using the hold and mask rules from `windowing`.
-- **Output:** daily min/max cfs, inverted with `scalers.json`.
+- **Decoder (next 14 days):** forecast weather, routed upstream flow, basin rain/snow, energy/intensity, ensemble spread, and RFC/NWM prior using the hold and mask rules from `windowing`.
+- **Output:** daily min/max cfs, inverted with `scalers.json` (and multiplied by `area_km2 / 2.446575545` when `training_config.flow_units == "mm_day"`).
 
-Run it from the CLI with `python openFlowML/flow_forecast.py --site taos-box --model-dir <release dir>`. That draws the model's daily min–max next to the routing or NWS forecast. The **Flow Forecast** workflow does the same automatically with the newest `model-*` release.
+Run it from the CLI with `python openFlowML/flow_forecast.py --site taos-box --model-dir <release dir>`. That draws the model's daily min–max next to the routing or NWS forecast (and the blended routing+ML curve from `openFlowML/fusion.py`). The **Flow Forecast** workflow does the same automatically with the newest `model-*` release and publishes the Daily Mobile Feature Feed (`openFlowML/feature_feed.py`).
 
 **Units & weather source.** Point weather (`TMIN` / `TMAX` in **tenths of °C**, `precipitation` in mm) defaults to gauge-collocated 4-km gridMET (`training_config.weather_source = "gridmet"`), matching gauge-point Open-Meteo / NWS forecasts without nearby-GHCND elevation offsets. Legacy releases (without `weather_source`, or `"noaa"`) used raw NOAA GHCND daily summaries filled from gridMET.
 
@@ -63,21 +64,22 @@ Forecast temperatures must be converted to these units (°C × 10). (`data/get_f
 
 ## Input tensors
 
-The model takes a dict of 5 inputs. Names are stable across exports:
+The model takes a dict of 5 base inputs, plus an optional 6th `static_input` when `training_config.static_features` is non-empty. Names are stable across exports:
 
 | Name | dtype | Shape | Source |
 | --- | --- | --- | --- |
-| `encoder_input` | float32 | `[1, 60, len(encoder_features)]` | Last 60 days of features, columns in `training_config.encoder_features` order, pre-scaled. Includes observed precipitation (`precipitation`, mm/day). |
-| `decoder_input` | float32 | `[1, 14, len(decoder_features)]` | Next 14 days of forecast-time-available features, columns in `training_config.decoder_features` order, pre-scaled. Includes forecast precipitation — pull `precipitation_sum` from Open-Meteo's daily forecast (`data/get_forecast.py` does this server-side; mobile clients can call Open-Meteo directly). |
+| `encoder_input` | float32 | `[1, 60, len(encoder_features)]` | Last 60 days of features, columns in `training_config.encoder_features` order, pre-scaled. |
+| `decoder_input` | float32 | `[1, 14, len(decoder_features)]` | Next 14 days of forecast-time-available features, columns in `training_config.decoder_features` order, pre-scaled. |
 | `persistence_input` | float32 | `[1, len(target_features)]` | Last encoder-day flow values (the `Min Flow` / `Max Flow` columns from the last encoder row), in scaled space. |
 | `station_input` | int32 | `[1]` | `station_index.json[site_id]`, or `0` if the site isn't in the map. |
 | `basin_input` | int32 | `[1]` | `basin_index.json[huc8]`, or `0` if the HUC isn't in the map. |
+| `static_input` *(optional)* | float32 | `[1, len(static_features)]` | Present only when `training_config.static_features` is set. Z-scored EPA StreamCat physical attributes from `station_attributes.json` + `training_config.static_scalers` (zeros fallback for unknown sites). |
 
 `encoder_days = 60`, `decoder_days = 14`. Both are recorded in `training_config.json` so a future model with a different window size doesn't silently break clients.
 
 ### Scaling inputs
 
-Every numeric column in `encoder_input` and `decoder_input` is z-scored; the flow columns (`Min Flow`, `Max Flow`) are additionally `log1p`-transformed before scaling. Apply scalers per-column:
+Every numeric column in `encoder_input` and `decoder_input` is z-scored; heavy-tailed flow and precipitation columns (`Min Flow`, `Max Flow`, `precipitation`, `upstream_flow`, `rain_*`, `snow_*`, `precip_max1h`, `precip_max3h`, `prior_flow`) are additionally `log1p`-transformed before scaling. When `training_config.flow_units == "mm_day"` (Phase 5 opt-in specific discharge), divide flow inputs (`Min Flow`, `Max Flow`, `upstream_flow`, `prior_flow`) by `area_km2 / 2.446575545` (yielding mm/day) *before* `log1p` + z-score, and multiply inverted outputs back by `area_km2 / 2.446575545` to recover cfs.
 
 ```python
 # scalers.json shape:
@@ -87,7 +89,7 @@ def scale(raw, params):
     return (x - params["mean"]) / params["scale"]
 ```
 
-Indicator columns (`sm_observed`, `reservoir_observed`) are 0/1 and are **not** scaled — they don't appear in `scalers.json`.
+Indicator columns (`*_observed`, `*_known`, `forcing_is_forecast`) and `lead_day_norm` are **not** z-scored — they don't appear in `scalers.json`.
 
 ## Upstream-gauge inputs
 
@@ -178,6 +180,35 @@ The model gets one rain and one snow column per zone:
 
 `windowing.basin_precip_decoder_window` implements this rule. `data/get_basin_precip.inference_daily` is the reference for assembling the daily values. The point `precipitation` column (nearest rain gauge plus point forecast) is unchanged and still required.
 
+## Extended physical forcing & operational prior (Phases 1–3)
+
+Models trained on the expanded feature schema (`training_config.encoder_features` / `decoder_features`) include five additional physically grounded blocks, each paired with an unscaled 0/1 indicator (`*_observed` in the encoder, `*_known` in the decoder):
+
+- **Radiation & evaporative demand (`srad`, `pet`, `vpd`):** daily shortwave radiation (MJ/m²/day), reference ET (mm/day), and vapor pressure deficit (kPa) from gridMET (encoder) and Open-Meteo extended forecast (decoder, `energy_known_days = 14`).
+- **Sub-daily rainfall intensity (`precip_max1h`, `precip_max3h`, `precip_wet_hours`):** hourly convective intensity & wet-hour duration from ERA5-Land + GFS (or NLDAS-2 when `hydro_source = "nldas"`) in the encoder and Open-Meteo hourly forecast in the decoder (`precip_intensity_known_days = 7`).
+- **Continuous soil moisture (`sm_surface`, `sm_rootzone` + `hydro_sm_observed`, encoder only):** daily surface and root-zone volumetric soil moisture from ERA5-Land + bias-aligned GFS bridge (or NLDAS-2).
+- **Elevation-band gridded SWE (`swe_low`, `swe_mid`, `swe_high`, `delta_swe_mid`, `delta_swe_high` + `gridded_swe_observed`, encoder only):** basin snow water equivalent and 1-day melt rate across three elevation bands.
+- **Real-forecast provenance & weather ensemble spread (decoder only):** `precip_ens_std`, `precip_ens_p90`, `temp_ens_std` (`ens_spread_known`), `forcing_is_forecast` (`1.0` at live inference, `0.0` on observed-weather training windows), and `lead_day_norm` (`(d + 1) / decoder_days`).
+- **Operational streamflow prior (`prior_flow`, `prior_observed` in encoder; `prior_flow`, `prior_known`, `prior_change` in decoder):** NWS River Forecast Center forecast extended by NOAA National Water Model v3 medium-range blend (`data/get_nwm_prior.py`, `prior_known_days = 10`).
+
+Because assembling all of these sources identically on iOS/Android is complex (and optional NASA Earthdata sources require credentials that must never live in a mobile binary), mobile clients should consume the **Daily Mobile Feature Feed** below rather than reimplementing each upstream scraper on device.
+
+## Daily Mobile Feature Feed (Phase 4)
+
+The daily **Flow Forecast** workflow (`.github/workflows/flow_forecast.yml`) runs `openFlowML/feature_feed.py` against the latest published `model-*` release and publishes compact, pre-assembled input tensors (~15 KB per station) to the `forecast-archive` branch under `feed/`:
+
+- **Catalog:** `https://raw.githubusercontent.com/tmart234/OpenFlow/forecast-archive/feed/catalog.json`
+- **Per-station payload:** `https://raw.githubusercontent.com/tmart234/OpenFlow/forecast-archive/feed/inputs/<slug>.json`
+
+Each station JSON contains:
+- `feed_schema_version` (`1`), `site_id`, `slug`, `name`, `generated_utc`, `model_version`
+- `schema_sha256` — SHA-256 fingerprint of the model input/output schema (`feature_feed.schema_digest(training_config)`). Compare against the downloaded model bundle before running CoreML / TFLite.
+- `anchor_date`, `forecast_dates` (14 ISO dates), `flow_units` (`"cfs"` or `"mm_day"`), `area_km2`
+- `shapes` and `inputs` — ready-to-run float32 / int32 arrays (`encoder_input`, `decoder_input`, `persistence_input`, `station_input`, `basin_input`, and optional `static_input`), rounded to 5 decimal places (`< 1e-5` parity vs live Python inference)
+- `inputs_sha256` — canonical JSON SHA-256 integrity checksum over `inputs` (`feature_feed.verify_feed_payload`)
+
+Mobile apps verify `sha256` (from `catalog.json`), `inputs_sha256`, and `schema_sha256`, pass `inputs` straight into CoreML / TFLite, and invert the outputs with `scalers.json` — achieving **100% feature parity** with server-side inference with **zero API credentials on device**. In Python, `ml_inference.predict_from_feed(art, payload)` is the reference consumer.
+
 ## Output tensors
 
 **`persistence_plus_delta`** is the point forecast: shape `[1, 14, len(target_features)]` (= `[1, 14, 2]`), dtype `float32`. The two target columns are `Min Flow`, `Max Flow` in that order — same as `training_config.target_features`. Every release has it.
@@ -191,18 +222,21 @@ The model gets one rain and one snow column per zone:
 Both outputs are in **scaled** space. To get cfs, invert per column; the transform is monotonic, so quantiles stay quantiles:
 
 ```python
-def invert(z, params):
+def invert(z, params, flow_units="cfs", area_km2=None):
     x = z * params["scale"] + params["mean"]
-    return math.expm1(x) if params["transform"] == "log1p" else x
+    val = math.expm1(x) if params["transform"] == "log1p" else x
+    if flow_units == "mm_day" and area_km2:
+        val = val * area_km2 / 2.446575545
+    return val
 ```
 
 ### Reading the forecast range
 
 The 5–95% pair is a 90% range and the 25–75% pair a 50% range. On the held-out years they contain about 90% and 50% of what the river did.
-- The spread is set per lead day on the validation years (split-conformal, `training_config.band_calibration`) and stored in the model.
+- The spread is set per lead day on the validation years (split-conformal, `training_config.band_calibration`), refined per station (`band_station_calibration`), and widened selectively on predicted rising limbs (`band_rise_calibration`, baked into `QuantileBand.rise_upper_scale`) so flood peaks reach nominal 90% coverage without widening steady days.
 - `quality_report` shows the coverage achieved on the test years.
 
-**Caveat.** As with the skill scores, training and calibration used the *observed* weather and upstream flow as the "forecast". The range therefore covers the hydrologic uncertainty (how this river responds, snowmelt, initial state) but not a wrong weather forecast. Expect live ranges to be too narrow when a storm forecast misses, mostly beyond day 3. The daily forecast archive (`score_archive.py`) is where live coverage can be checked.
+**Caveat.** Even with archived real weather forecasts injected where available (`real_forecast_training = true`), live ranges beyond day 3 remain sensitive to storm track misses. The daily forecast archive (`score_archive.py`) is where live coverage is tracked continuously.
 
 `ml_inference.predict` returns the range as `min_q05_cfs` … `max_q95_cfs` columns, and `flow_forecast.py` JSON as the same keys per day.
 
@@ -232,7 +266,7 @@ Check `manifest.tflite_mode` on download and warn the user if the Flex delegate 
 
 ## Unseen stations and basins
 
-Both embedding layers reserve index `0` for unknown. If the user picks a site not in `station_index.json`, pass `station_input = 0` — the model is trained with `StationDropout` to handle this via basin-only inference. Same for `basin_input` when the HUC8 isn't known.
+Both embedding layers reserve index `0` for unknown. If the user picks a site not in `station_index.json`, pass `station_input = 0` — the model is trained with `StationDropout` to handle this via basin-only inference. Same for `basin_input` when the HUC8 isn't known. When `training_config.static_features` is enabled (Phase 5), also pass `static_input` built from `station_attributes.json` + `training_config.static_scalers` (or zeros if the river is absent), which conditions both the LSTM context and the attribute-gated upstream skip for zero-shot transfer.
 
 ## Reference fixture
 

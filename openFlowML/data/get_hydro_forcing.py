@@ -196,8 +196,8 @@ def fetch_era5_daily(lat: float, lon: float, start_date, end_date,
             }
             resp = data_utils.request_with_retry(ERA5_ARCHIVE_URL, params=params, timeout=180)
             if resp is None:
-                logger.warning("ERA5-Land chunk %s..%s failed for %.3f,%.3f",
-                               params['start_date'], params['end_date'], lat, lon)
+                logger.warning("ERA5-Land chunk %s..%s failed",
+                               params['start_date'], params['end_date'])
                 continue
             try:
                 hf = _parse_era5_payload(resp.json())

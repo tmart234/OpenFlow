@@ -57,6 +57,31 @@ on:
         type: choice
         options: ['era5', 'nldas']
         default: 'era5'
+      mode:
+        description: 'CV split strategy (water-year or leave-basin-out zero-shot transfer)'
+        type: choice
+        options: ['water-year', 'leave-basin-out']
+        default: 'water-year'
+      use_static_attributes:
+        description: 'Enable Phase 5 static catchment attribute MLP (static_input)'
+        type: boolean
+        default: false
+      specific_discharge:
+        description: 'Normalize flow as specific discharge (mm/day) before log1p'
+        type: boolean
+        default: false
+      lstm_units:
+        description: 'LSTM hidden width (64 default; 128-256 for regional runs)'
+        type: string
+        default: '64'
+      station_dropout:
+        description: 'StationDropout rate (0.1 default; 0.3 for regional transfer)'
+        type: string
+        default: '0.1'
+      site_ids_file:
+        description: 'Site list file (default .github/site_ids.txt; e.g. .github/site_ids_regional.txt)'
+        type: string
+        default: '.github/site_ids.txt'
 
 concurrency:
   group: crossval-${{ github.ref }}
@@ -111,10 +136,16 @@ jobs:
         OPENFLOW_TRAIN_REAL_FORECASTS: ${{ inputs.disable_real_forecasts && '0' || '1' }}
         OPENFLOW_BAND: ${{ inputs.disable_band && '0' || '1' }}
         OPENFLOW_RIVER_SKIP: ${{ inputs.disable_river_skip && '0' || '1' }}
+        OPENFLOW_STATIC_ATTRIBUTES: ${{ inputs.use_static_attributes && '1' || '0' }}
+        OPENFLOW_SPECIFIC_DISCHARGE: ${{ inputs.specific_discharge && '1' || '0' }}
+        OPENFLOW_LSTM_UNITS: ${{ inputs.lstm_units || '64' }}
+        OPENFLOW_STATION_DROPOUT: ${{ inputs.station_dropout || '0.1' }}
+        OPENFLOW_SITE_IDS_FILE: ${{ inputs.site_ids_file || '.github/site_ids.txt' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
       working-directory: openFlowML
       run: |
         python crossval.py --fetch --base-path "$GITHUB_WORKSPACE" \
+          --mode "${{ inputs.mode || 'water-year' }}" \
           --folds "${{ inputs.folds }}" --members "${{ inputs.members }}"
         cat "$GITHUB_WORKSPACE/cv_report.md" >> "$GITHUB_STEP_SUMMARY"
 

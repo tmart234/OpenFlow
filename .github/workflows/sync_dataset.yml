@@ -34,6 +34,10 @@ on:
         description: 'Also sync archived real weather forecasts (Open-Meteo Previous Runs 2024+)'
         type: boolean
         default: true
+      site_ids_file:
+        description: 'Site list file (default .github/site_ids.txt; e.g. .github/site_ids_regional.txt)'
+        type: string
+        default: '.github/site_ids.txt'
 
 concurrency:
   group: sync-dataset-cache
@@ -82,6 +86,7 @@ jobs:
         EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         OPENFLOW_DISABLE_SMAP: ${{ (inputs.disable_smap || secrets.EARTHDATA_USERNAME == '') && '1' || '' }}
         OPENFLOW_HYDRO_SOURCE: ${{ inputs.hydro_source || 'era5' }}
+        OPENFLOW_SITE_IDS_FILE: ${{ inputs.site_ids_file || '.github/site_ids.txt' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
       run: |
         python openFlowML/data/feature_store.py \
@@ -99,6 +104,7 @@ jobs:
     - name: Sync archived weather forecasts (real-forecast decoder training)
       if: inputs.sync_reforecasts != false
       env:
+        OPENFLOW_SITE_IDS_FILE: ${{ inputs.site_ids_file || '.github/site_ids.txt' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
       run: |
         python openFlowML/data/get_gefs_reforecast.py \

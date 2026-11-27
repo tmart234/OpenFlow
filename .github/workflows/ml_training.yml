@@ -65,6 +65,26 @@ on:
         description: 'Years of historical data to train on'
         type: string
         default: '25'
+      use_static_attributes:
+        description: 'Enable Phase 5 static catchment attribute MLP (static_input; opt-in)'
+        type: boolean
+        default: false
+      specific_discharge:
+        description: 'Normalize flow as specific discharge (mm/day) before log1p (Phase 5; opt-in)'
+        type: boolean
+        default: false
+      lstm_units:
+        description: 'LSTM hidden width (64 default; 128-256 for 50-100+ river regional runs)'
+        type: string
+        default: '64'
+      station_dropout:
+        description: 'StationDropout rate (0.1 default; 0.3 for regional zero-shot transfer)'
+        type: string
+        default: '0.1'
+      site_ids_file:
+        description: 'Site list file (default .github/site_ids.txt; e.g. .github/site_ids_regional.txt)'
+        type: string
+        default: '.github/site_ids.txt'
 
 concurrency:
   group: ml-training-${{ github.ref }}
@@ -137,6 +157,11 @@ jobs:
         OPENFLOW_TRAIN_REAL_FORECASTS: ${{ inputs.train_real_forecasts == false && '0' || '1' }}
         OPENFLOW_LIVE_FORCING: ${{ inputs.live_forcing && '1' || '' }}
         OPENFLOW_TRAINING_YEARS: ${{ inputs.training_years || '25' }}
+        OPENFLOW_STATIC_ATTRIBUTES: ${{ inputs.use_static_attributes && '1' || '0' }}
+        OPENFLOW_SPECIFIC_DISCHARGE: ${{ inputs.specific_discharge && '1' || '0' }}
+        OPENFLOW_LSTM_UNITS: ${{ inputs.lstm_units || '64' }}
+        OPENFLOW_STATION_DROPOUT: ${{ inputs.station_dropout || '0.1' }}
+        OPENFLOW_SITE_IDS_FILE: ${{ inputs.site_ids_file || '.github/site_ids.txt' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
         OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
       run: python openFlowML/train.py
@@ -184,6 +209,7 @@ jobs:
           ./training_config.json
           ./upstream_gauges.json
           ./basin_zones.json
+          ./station_attributes.json
           ./manifest.json
           ./quality_report.json
           ./quality_report.md
