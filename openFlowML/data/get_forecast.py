@@ -104,6 +104,138 @@ def get_forecast(lat, lon, days=DEFAULT_HORIZON_DAYS):
     return get_open_meteo_forecast(lat, lon, days=days)
 
 
+OPEN_METEO_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
+
+
+def _hourly_precip_intensity_daily(hourly: dict) -> pd.DataFrame:
+    """Collapse hourly precipitation (mm/h) and VPD (kPa) into daily stats."""
+    times = hourly.get('time') or []
+    if not times:
+        return pd.DataFrame(columns=['Date', 'vpd', 'precip_max1h', 'precip_max3h', 'precip_wet_hours'])
+    h = pd.DataFrame({'time': pd.to_datetime(times)})
+    h['Date'] = h['time'].dt.strftime('%Y-%m-%d')
+    precip = pd.to_numeric(pd.Series(hourly.get('precipitation') or [0.0] * len(times)),
+                           errors='coerce').fillna(0.0)
+    h['precip'] = precip.clip(lower=0.0)
+    h['p3h'] = h['precip'].rolling(3, min_periods=1).sum()
+    h['wet'] = (h['precip'] >= 0.5).astype(float)
+    vpd_raw = hourly.get('vapour_pressure_deficit')
+    h['vpd'] = (pd.to_numeric(pd.Series(vpd_raw), errors='coerce')
+                if vpd_raw is not None and len(vpd_raw) == len(times) else float('nan'))
+    g = h.groupby('Date', as_index=False).agg(
+        vpd=('vpd', 'mean'),
+        precip_max1h=('precip', 'max'),
+        precip_max3h=('p3h', 'max'),
+        precip_wet_hours=('wet', 'sum'),
+    )
+    return g
+
+
+def get_open_meteo_extended_forecast(lat, lon, days=DEFAULT_HORIZON_DAYS,
+                                     temperature_unit='celsius',
+                                     timezone='America/Denver') -> pd.DataFrame:
+    """
+    Single-call 14-day Open-Meteo forecast returning weather, energy balance
+    (`srad` MJ/m^2/day, `pet` mm/day, `vpd` kPa), and sub-daily precipitation
+    intensity (`precip_max1h`, `precip_max3h`, `precip_wet_hours`).
+    Temperatures are in `temperature_unit` (caller multiplies celsius by 10
+    for training tenths-of-deg-C units).
+    """
+    if days < 1 or days > MAX_HORIZON_DAYS:
+        raise ValueError(f"days must be in 1..{MAX_HORIZON_DAYS}")
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": ("temperature_2m_max,temperature_2m_min,precipitation_sum,"
+                  "shortwave_radiation_sum,et0_fao_evapotranspiration"),
+        "hourly": "precipitation,vapour_pressure_deficit",
+        "forecast_days": days,
+        "temperature_unit": temperature_unit,
+        "timezone": timezone,
+    }
+    response = data_utils.request_with_retry(OPEN_METEO_URL, params=params)
+    if response is None:
+        return pd.DataFrame()
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.error("Open-Meteo extended forecast returned non-JSON")
+        return pd.DataFrame()
+    daily = payload.get('daily') or {}
+    dates = daily.get('time') or []
+    if not dates:
+        return pd.DataFrame()
+    n = len(dates)
+    out = pd.DataFrame({
+        'Date': dates,
+        'TMIN': daily.get('temperature_2m_min') or [float('nan')] * n,
+        'TMAX': daily.get('temperature_2m_max') or [float('nan')] * n,
+        'precipitation': daily.get('precipitation_sum') or [0.0] * n,
+        'srad': daily.get('shortwave_radiation_sum') or [float('nan')] * n,
+        'pet': daily.get('et0_fao_evapotranspiration') or [float('nan')] * n,
+    })
+    hourly_df = _hourly_precip_intensity_daily(payload.get('hourly') or {})
+    if not hourly_df.empty:
+        out = out.merge(hourly_df, on='Date', how='left')
+    else:
+        for col in ('vpd', 'precip_max1h', 'precip_max3h', 'precip_wet_hours'):
+            out[col] = float('nan')
+    return out
+
+
+def get_open_meteo_ensemble(lat, lon, days=DEFAULT_HORIZON_DAYS,
+                            models='gfs_seamless',
+                            timezone='America/Denver') -> pd.DataFrame:
+    """
+    Fetch multi-member GFS ensemble forecasts from Open-Meteo's public
+    Ensemble API (31 members, zero auth) and summarize daily spread:
+      Date, precip_ens_mean (mm), precip_ens_std (mm), precip_ens_p90 (mm),
+      temp_ens_std (tenths of deg C).
+    """
+    import numpy as np
+    if days < 1 or days > MAX_HORIZON_DAYS:
+        raise ValueError(f"days must be in 1..{MAX_HORIZON_DAYS}")
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": "precipitation_sum,temperature_2m_max",
+        "models": models,
+        "forecast_days": days,
+        "timezone": timezone,
+    }
+    response = data_utils.request_with_retry(OPEN_METEO_ENSEMBLE_URL, params=params)
+    if response is None:
+        return pd.DataFrame(columns=['Date', 'precip_ens_mean', 'precip_ens_std',
+                                     'precip_ens_p90', 'temp_ens_std'])
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.error("Open-Meteo ensemble returned non-JSON")
+        return pd.DataFrame(columns=['Date', 'precip_ens_mean', 'precip_ens_std',
+                                     'precip_ens_p90', 'temp_ens_std'])
+    daily = payload.get('daily') or {}
+    dates = daily.get('time') or []
+    if not dates:
+        return pd.DataFrame(columns=['Date', 'precip_ens_mean', 'precip_ens_std',
+                                     'precip_ens_p90', 'temp_ens_std'])
+    p_cols = [v for k, v in daily.items() if k.startswith('precipitation_sum') and isinstance(v, list) and len(v) == len(dates)]
+    t_cols = [v for k, v in daily.items() if k.startswith('temperature_2m_max') and isinstance(v, list) and len(v) == len(dates)]
+    if not p_cols:
+        return pd.DataFrame(columns=['Date', 'precip_ens_mean', 'precip_ens_std',
+                                     'precip_ens_p90', 'temp_ens_std'])
+    p_arr = np.asarray([[float(x) if x is not None else np.nan for x in row] for row in p_cols], dtype=float)
+    t_arr = (np.asarray([[float(x) if x is not None else np.nan for x in row] for row in t_cols], dtype=float)
+             if t_cols else None)
+    return pd.DataFrame({
+        'Date': dates,
+        'precip_ens_mean': np.nanmean(p_arr, axis=0),
+        'precip_ens_std': np.nanstd(p_arr, axis=0),
+        'precip_ens_p90': np.nanpercentile(p_arr, 90, axis=0),
+        # Match tenths-of-deg-C training scale for temperature spread.
+        'temp_ens_std': (np.nanstd(t_arr, axis=0) * 10.0 if t_arr is not None else np.zeros(len(dates))),
+    })
+
+
 def main(lat, lon, days=DEFAULT_HORIZON_DAYS):
     df = get_forecast(lat, lon, days=days)
     data_utils.preview_data(df)

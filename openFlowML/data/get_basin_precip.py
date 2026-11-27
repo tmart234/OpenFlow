@@ -48,6 +48,7 @@ from data.utils import data_utils
 logger = logging.getLogger(__name__)
 
 FEATURE_COLUMNS = ['rain_local', 'rain_mid', 'rain_far', 'snow_local', 'snow_mid', 'snow_far']
+ENERGY_COLUMNS = ['srad', 'pet', 'vpd']
 OBSERVED_COLUMN = 'basin_precip_observed'
 # Decoder days with a basin precipitation forecast (NWS QPF reaches ~7.5 days).
 QPF_DAYS = 7
@@ -56,7 +57,13 @@ AREAS = basin_zones.ZONES + ('ungauged',)
 GRIDMET_URL = "https://thredds.northwestknowledge.net/thredds/ncss/agg_met_{var}_1979_CurrentYear_CONUS.nc"
 GRIDMET_VARS = {'pr': 'precipitation_amount',
                 'tmmn': 'daily_minimum_temperature',
-                'tmmx': 'daily_maximum_temperature'}
+                'tmmx': 'daily_maximum_temperature',
+                'srad': 'daily_mean_shortwave_radiation_at_surface',
+                'pet': 'daily_mean_reference_evapotranspiration_grass',
+                'vpd': 'daily_mean_vapor_pressure_deficit'}
+# Convert gridMET daily mean shortwave radiation (W/m^2) to MJ/m^2/day
+# so it matches Open-Meteo `shortwave_radiation_sum` in training & inference.
+WM2_TO_MJ_M2_DAY = 0.0864
 GRIDMET_CHUNK_DAYS = 3 * 366
 STAGE4_URL = ("https://water.noaa.gov/resources/downloads/precip/stageIV/"
               "{d:%Y}/{d:%m}/{d:%d}/nws_precip_1day_{d:%Y%m%d}_conus.nc")
@@ -72,10 +79,33 @@ MAX_STAGE4_GAP_DAYS = 7
 # mean rain per day wet the soil and canopy and produce no runoff, so light
 # showers don't raise the river while storms still do.
 ABSTRACTION_MM_PER_DAY = 5.0
+ABSTRACTION_MIN_MM = 1.5
+ABSTRACTION_MAX_MM = 9.0
+SM_DRY_THRESHOLD = 0.12
+SM_WET_THRESHOLD = 0.35
+
+
+def effective_abstraction_mm(soil_moisture: Optional[float] = None,
+                             default_mm: float = ABSTRACTION_MM_PER_DAY) -> float:
+    """
+    Antecedent-moisture-modulated initial abstraction (mm/day) for hourly
+    routing. Dry soil (<= 0.12 m^3/m^3) absorbs up to ~9 mm/day before
+    producing runoff; saturated soil (>= 0.35 m^3/m^3) runs off after ~1.5 mm.
+    Returns `default_mm` (5.0) when soil moisture is unavailable.
+    """
+    if soil_moisture is None or not np.isfinite(soil_moisture):
+        return float(default_mm)
+    frac = np.clip((float(soil_moisture) - SM_DRY_THRESHOLD)
+                   / (SM_WET_THRESHOLD - SM_DRY_THRESHOLD), 0.0, 1.0)
+    return float(ABSTRACTION_MAX_MM - frac * (ABSTRACTION_MAX_MM - ABSTRACTION_MIN_MM))
 
 
 def _disabled() -> bool:
     return os.getenv('OPENFLOW_DISABLE_BASIN_PRECIP', '').strip() in ('1', 'true', 'True')
+
+
+def _energy_disabled() -> bool:
+    return os.getenv('OPENFLOW_DISABLE_ENERGY', '').strip() in ('1', 'true', 'True')
 
 
 # --------------------------------------------------------------------------
@@ -150,6 +180,30 @@ def gridmet_point_weather(lat: float, lon: float, start, end) -> pd.DataFrame:
         series_map[name] = pd.Series(vals, index=pd.DatetimeIndex(dates, name='Date'))
     df = pd.concat(series_map, axis=1, join='inner').sort_index().reset_index()
     return df[['Date', 'TMIN', 'TMAX', 'precipitation']]
+
+
+def gridmet_point_energy(lat: float, lon: float, start, end) -> pd.DataFrame:
+    """
+    Daily solar radiation (MJ/m^2/day), reference evapotranspiration (mm/day),
+    and vapor pressure deficit (kPa) from the gridMET cell nearest (lat, lon).
+    Units match Open-Meteo's live forecast fields (`shortwave_radiation_sum`,
+    `et0_fao_evapotranspiration`, daily mean `vapour_pressure_deficit`).
+    """
+    empty = pd.DataFrame(columns=['Date', *ENERGY_COLUMNS])
+    if _energy_disabled():
+        logger.info("OPENFLOW_DISABLE_ENERGY set -- skipping gridMET energy balance")
+        return empty
+    pad = 0.05
+    series_map = {}
+    for key in ENERGY_COLUMNS:
+        dates, la, lo, v = _gridmet_subset(key, lat - pad, lat + pad, lon - pad, lon + pad, start, end)
+        iy, ix = int(np.argmin(np.abs(la - lat))), int(np.argmin(np.abs(lo - lon)))
+        vals = np.asarray(v[:, iy, ix], dtype=float)
+        if key == 'srad':
+            vals = vals * WM2_TO_MJ_M2_DAY
+        series_map[key] = pd.Series(vals, index=pd.DatetimeIndex(dates, name='Date'))
+    df = pd.concat(series_map, axis=1, join='inner').sort_index().reset_index()
+    return df[['Date', *ENERGY_COLUMNS]]
 
 
 def zone_means(cfg: dict, lon2d: np.ndarray, lat2d: np.ndarray, field: np.ndarray) -> Dict[str, np.ndarray]:
@@ -534,24 +588,56 @@ def inference_daily(site_id: str, today=None, encoder_days: int = 60, decoder_da
 def routing_rain_flux(cfg: dict, grid: pd.DatetimeIndex,
                       observed: Optional[pd.DataFrame],
                       forecast_points: Optional[Dict[int, pd.DataFrame]],
-                      abstraction_mm_per_day: float = ABSTRACTION_MM_PER_DAY) -> Tuple[np.ndarray, dict]:
+                      abstraction_mm_per_day: Optional[float] = None,
+                      hourly_past: Optional[pd.Series] = None,
+                      soil_moisture: Optional[float] = None) -> Tuple[np.ndarray, dict]:
     """
     Hourly EFFECTIVE rain on the ungauged area as a volumetric flux (cfs) on
-    `grid` (UTC): each observed day (gridMET / Stage IV) spread evenly over
-    its 24-h accumulation window, then the NWS hourly forecast; each UTC
-    day's rain is reduced by `abstraction_mm_per_day` (proportionally over
-    its hours, floored at 0). Hours with no source are 0 and counted in
-    info['missing_hours']. info['rate_mm_per_hour'] is the raw rain rate.
+    `grid` (UTC): uses true hourly observed rain (`hourly_past`, rescaled to
+    preserve each observed day's ungauged basin total when available) rather
+    than smearing daily rain flat across 24 h, then the NWS hourly forecast.
+    Each UTC day's rain is reduced by the effective initial abstraction
+    (soil-moisture-modulated when `soil_moisture` is provided and
+    `abstraction_mm_per_day` is None, else `ABSTRACTION_MM_PER_DAY`), floored
+    at 0. Hours with no source are 0 and counted in info['missing_hours'].
     """
     area = float((cfg.get('ungauged') or {}).get('area_km2', 0.0))
+    eff_abs = (float(abstraction_mm_per_day) if abstraction_mm_per_day is not None
+               else effective_abstraction_mm(soil_moisture))
     rate = pd.Series(np.nan, index=grid)
     sources = []
+    hp = None
+    if hourly_past is not None and len(hourly_past):
+        hp = hourly_past.copy()
+        if hp.index.tz is None:
+            hp.index = hp.index.tz_localize('UTC')
+        else:
+            hp.index = hp.index.tz_convert('UTC')
+        hp = hp.reindex(grid)
     if observed is not None and len(observed) and 'rain_ungauged' in observed:
+        used_hourly_shape = False
         for _, row in observed.dropna(subset=['rain_ungauged']).iterrows():
             hours = pd.date_range(row['window_start'], periods=24, freq='1h')
             hours = hours[(hours >= grid[0]) & (hours <= grid[-1])]
-            rate.loc[hours] = float(row['rain_ungauged']) / 24.0
+            if not len(hours):
+                continue
+            day_rain = float(row['rain_ungauged'])
+            if hp is not None and day_rain > 0:
+                shape = hp.reindex(hours).fillna(0.0).clip(lower=0.0)
+                shape_sum = float(shape.sum())
+                if shape_sum > 1e-6:
+                    # Preserve the ungauged basin's exact daily total while
+                    # concentrating it into the hours the storm actually fell.
+                    rate.loc[hours] = shape * (day_rain / shape_sum)
+                    used_hourly_shape = True
+                    continue
+            rate.loc[hours] = day_rain / 24.0
         sources += sorted(set(observed['source'].dropna()))
+        if used_hourly_shape:
+            sources.append('hourly-disagg')
+    elif hp is not None and hp.notna().any():
+        rate = rate.fillna(hp.clip(lower=0.0))
+        sources.append('hourly-obs')
     if forecast_points:
         hz = points_hourly_zones(cfg, forecast_points)['rain_ungauged'].reindex(grid)
         last_obs = rate.last_valid_index()
@@ -562,9 +648,12 @@ def routing_rain_flux(cfg: dict, grid: pd.DatetimeIndex,
     missing = int(rate.isna().sum())
     rate = rate.fillna(0.0)
     day_total = rate.groupby(rate.index.floor('D')).transform('sum')
-    keep = (1.0 - abstraction_mm_per_day / day_total.where(day_total > 0)).clip(lower=0).fillna(0.0)
+    keep = (1.0 - eff_abs / day_total.where(day_total > 0)).clip(lower=0).fillna(0.0)
     flux = basin_zones.mm_per_hour_to_cfs((rate * keep).to_numpy(), area)
     return flux, {'area_km2': area, 'sources': sources, 'missing_hours': missing,
+                  'abstraction_mm_per_day': round(eff_abs, 2),
+                  'abstraction_mm': round(eff_abs, 2),
+                  'soil_moisture': round(float(soil_moisture), 4) if soil_moisture is not None else None,
                   'rate_mm_per_hour': rate}
 
 

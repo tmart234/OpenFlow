@@ -196,11 +196,14 @@ def archived_inputs(samples: Sequence, x: dict, scalers: dict, table: pd.DataFra
             new[k] = v
         if not ok[i]:
             continue
+        fc_flag_col = feats.index('forcing_is_forecast') if 'forcing_is_forecast' in feats else None
         for k, v in new.items():
             for c in cols:
                 if c in ZONE_COLUMNS and dec[i, k - 1, known_col] < 0.5:
                     continue
                 dec[i, k - 1, feats.index(c)] = _scale(v[c], scalers[c])
+            if fc_flag_col is not None:
+                dec[i, k - 1, fc_flag_col] = 1.0
     out = dict(x)
     out['decoder_input'] = dec
     return out, ok

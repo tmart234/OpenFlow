@@ -32,6 +32,31 @@ on:
         description: 'Skip basin zone rain/snow inputs (ablation)'
         type: boolean
         default: false
+      disable_energy:
+        description: 'Skip gridMET srad/PET/VPD energy inputs (ablation)'
+        type: boolean
+        default: false
+      disable_hydro_forcing:
+        description: 'Skip continuous SM + hourly rain intensity inputs (ablation)'
+        type: boolean
+        default: false
+      disable_gridded_swe:
+        description: 'Skip elevation-band gridded SWE inputs (ablation)'
+        type: boolean
+        default: false
+      disable_prior:
+        description: 'Skip NWM/RFC forecast prior inputs (ablation)'
+        type: boolean
+        default: false
+      disable_real_forecasts:
+        description: 'Train decoder on observed weather only (disable reforecast injection)'
+        type: boolean
+        default: false
+      hydro_source:
+        description: 'Continuous SM + hourly rain source (era5 or nldas)'
+        type: choice
+        options: ['era5', 'nldas']
+        default: 'era5'
 
 concurrency:
   group: crossval-${{ github.ref }}
@@ -78,6 +103,12 @@ jobs:
         OPENFLOW_DISABLE_SMAP: ${{ secrets.EARTHDATA_USERNAME == '' && '1' || '' }}
         OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
         OPENFLOW_DISABLE_BASIN_PRECIP: ${{ inputs.disable_basin_precip && '1' || '' }}
+        OPENFLOW_DISABLE_ENERGY: ${{ inputs.disable_energy && '1' || '' }}
+        OPENFLOW_DISABLE_HYDRO_FORCING: ${{ inputs.disable_hydro_forcing && '1' || '' }}
+        OPENFLOW_DISABLE_GRIDDED_SWE: ${{ inputs.disable_gridded_swe && '1' || '' }}
+        OPENFLOW_DISABLE_PRIOR: ${{ inputs.disable_prior && '1' || '' }}
+        OPENFLOW_HYDRO_SOURCE: ${{ inputs.hydro_source || 'era5' }}
+        OPENFLOW_TRAIN_REAL_FORECASTS: ${{ inputs.disable_real_forecasts && '0' || '1' }}
         OPENFLOW_BAND: ${{ inputs.disable_band && '0' || '1' }}
         OPENFLOW_RIVER_SKIP: ${{ inputs.disable_river_skip && '0' || '1' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache

@@ -6,6 +6,9 @@ import data.get_noaa as get_noaa
 import data.get_swe as get_swe
 import data.get_upstream as get_upstream
 import data.get_basin_precip as get_basin_precip
+import data.get_hydro_forcing as get_hydro_forcing
+import data.get_gridded_swe as get_gridded_swe
+import data.get_nwm_prior as get_nwm_prior
 import normalize_data
 import windowing
 import pandas as pd
@@ -99,17 +102,19 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
                      swe_data=None, sm_data=None,
                      drought_data=None, reservoir_data=None,
                      huc8=None, upstream_data=None, upstream_known_days=0,
-                     basin_precip_data=None):
+                     basin_precip_data=None,
+                     energy_data=None, hydro_data=None,
+                     gridded_swe_data=None, prior_data=None):
     """
-    Merge a site's flow, NOAA temperature, SWE, SMAP soil moisture, USDM
-    drought, and USBR reservoir series onto one regular daily index.
+    Merge a site's flow, weather, SWE, soil moisture, USDM drought, USBR
+    reservoir, upstream gauges, basin zone precip, radiation/PET/VPD energy,
+    continuous soil moisture + sub-daily rainfall intensity, elevation-band
+    SWE, and NWM/RFC forecast prior series onto one regular daily index.
 
     Short interior flow/temp gaps (<= MAX_GAP_DAYS) are interpolated time-aware;
     rows still missing a core value afterwards are dropped (no pooled-mean
-    fill). All Phase 4/5 auxiliary features (SWE, soil_moisture, drought_index,
-    reservoir_storage, reservoir_release) are slow-varying, get longer
-    interpolation limits, and missing values are imputed per the column-
-    specific semantics rather than dropping the row.
+    fill). Auxiliary features are imputed per their column-specific semantics
+    and paired with observed indicators rather than dropping rows.
     """
     if 'Date' not in noaa_data or 'Date' not in flow_data:
         raise ValueError("'Date' column missing in one of the dataframes")
@@ -222,58 +227,81 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
             for col in bp_cols:
                 combined[col] = float('nan')
 
-        # Drop rows still missing any core flow/temp value. SWE / soil_moisture
-        # / precipitation are NOT in CORE_COLUMNS, so a missing one never
-        # drops a row.
+        # Phase 1: Radiation / PET / VPD energy forcing (short interior gaps).
+        en_cols = get_basin_precip.ENERGY_COLUMNS
+        if energy_data is not None and not energy_data.empty:
+            en_daily = _to_daily_series(energy_data, en_cols, daily_index)
+            for col in en_cols:
+                combined[col] = get_upstream.interpolate_short_gaps(
+                    pd.to_numeric(en_daily[col], errors='coerce'), MAX_GAP_DAYS)
+        else:
+            for col in en_cols:
+                combined[col] = float('nan')
+
+        # Phase 1: Sub-daily rainfall intensity (no interpolation) + continuous
+        # surface/root-zone soil moisture (slow-varying, long gap interp).
+        int_cols = get_hydro_forcing.INTENSITY_COLUMNS
+        hsm_cols = get_hydro_forcing.SOIL_COLUMNS
+        if hydro_data is not None and not hydro_data.empty:
+            hy_daily = _to_daily_series(hydro_data, [*int_cols, *hsm_cols], daily_index)
+            for col in int_cols:
+                combined[col] = pd.to_numeric(hy_daily[col], errors='coerce')
+            for col in hsm_cols:
+                s = pd.to_numeric(hy_daily[col], errors='coerce')
+                combined[col] = s.interpolate(method='time', limit=MAX_SM_GAP_DAYS, limit_area='inside')
+        else:
+            for col in [*int_cols, *hsm_cols]:
+                combined[col] = float('nan')
+
+        # Phase 3: Elevation-band gridded SWE (slow-varying).
+        gswe_cols = get_gridded_swe.SWE_COLUMNS
+        if gridded_swe_data is not None and not gridded_swe_data.empty:
+            gs_daily = _to_daily_series(gridded_swe_data, gswe_cols, daily_index)
+            for col in gswe_cols:
+                s = pd.to_numeric(gs_daily[col], errors='coerce')
+                combined[col] = s.interpolate(method='time', limit=MAX_SWE_GAP_DAYS, limit_area='inside')
+        else:
+            for col in gswe_cols:
+                combined[col] = float('nan')
+
+        # Phase 3: Physics/operator prior (NWM / RFC streamflow, cfs).
+        if prior_data is not None and not prior_data.empty:
+            pr_daily = _to_daily_series(prior_data, ['prior_flow'], daily_index)
+            combined['prior_flow'] = get_upstream.interpolate_short_gaps(
+                pd.to_numeric(pr_daily['prior_flow'], errors='coerce'), MAX_GAP_DAYS)
+        else:
+            combined['prior_flow'] = float('nan')
+
+        # Drop rows still missing any core flow/temp value. Auxiliary columns
+        # are NOT in CORE_COLUMNS, so a missing one never drops a row.
         before = len(combined)
         combined = combined.dropna(subset=CORE_COLUMNS)
         # Precipitation: 0 mm means "no measurable rain", a legitimate default
-        # for any post-interpolation gap (NCEI station with no PRCP coverage,
-        # short outage that exceeded MAX_PRECIP_GAP_DAYS, etc.). Most days in
-        # most basins are zero anyway, so this defaults to the modal value.
+        # for any post-interpolation gap.
         if 'precipitation' not in combined.columns:
             combined['precipitation'] = 0.0
         combined['precipitation'] = combined['precipitation'].fillna(0.0)
         # SWE: 0 means "no snow", which IS a legitimate default; keep that.
         combined['SWE'] = combined['SWE'].fillna(0.0)
-        # Soil moisture: 0 means "Sahara desert", which is NOT a legitimate
-        # default for a SMAP gap (RFI / frozen ground / sensor outage). We
-        # carry the last interpolated value forward and backward (SM is slow-
-        # varying), then fall back to the station's median observed SM where
-        # ffill/bfill can't reach, and only to 0 if the station has no
-        # observations at all. An sm_observed indicator (1 = real or short-
-        # gap interpolated retrieval, 0 = imputed via ffill / median fallback)
-        # gives the model a way to tell the truth from the imputation.
+        # Soil moisture: carry the last interpolated value forward/backward,
+        # then fall back to station median, with sm_observed indicator.
         sm_series = combined['soil_moisture']
         combined['sm_observed'] = sm_series.notna().astype('int64')
         sm_series = sm_series.ffill().bfill()
-        median = sm_series.median(skipna=True)
-        if pd.isna(median):
-            median = 0.0
+        median = sm_series.median(skipna=True) if sm_series.notna().any() else 0.0
         combined['soil_moisture'] = sm_series.fillna(median)
 
-        # Drought: 0 means "no drought anywhere in the HUC", which IS a
-        # legitimate default for a missing weekly value. Fill remaining gaps
-        # with 0 -- the model can treat absence as "we don't have a drought
-        # signal here" (which behaves equivalently to no drought).
+        # Drought: 0 means "no drought anywhere in the HUC".
         combined['drought_index'] = combined['drought_index'].fillna(0.0)
 
-        # Reservoir: 0 storage / 0 release reads as "tiny / empty reservoir",
-        # which IS misleading -- the right semantic for an unregulated gauge
-        # is "no upstream reservoir at all". A reservoir_observed indicator
-        # (1 = mapped + retrieval succeeded for this row, 0 = unmapped / no
-        # data) tells the model when the storage / release columns are real.
-        # The numeric columns then default to 0 only as a placeholder; the
-        # indicator carries the truth.
+        # Reservoir: paired with reservoir_observed indicator.
         res_series = combined['reservoir_storage']
         combined['reservoir_observed'] = res_series.notna().astype('int64')
         combined['reservoir_storage'] = res_series.ffill().bfill().fillna(0.0)
         rel_series = combined['reservoir_release']
         combined['reservoir_release'] = rel_series.ffill().bfill().fillna(0.0)
 
-        # Upstream: same indicator pattern as reservoirs. No ffill/bfill --
-        # carrying a stale upstream flow across a long gap would fake a
-        # signal; the 0 placeholder + upstream_observed = 0 is honest.
+        # Upstream: no ffill/bfill across outages; 0 placeholder + indicator.
         up_series = combined['upstream_flow']
         combined['upstream_observed'] = up_series.notna().astype('int64')
         combined['upstream_flow'] = up_series.fillna(0.0)
@@ -283,6 +311,27 @@ def merge_dataframes(noaa_data, flow_data, site_id, start_date, end_date,
         combined['basin_precip_observed'] = (
             combined[bp_cols].notna().all(axis=1).astype('int64'))
         combined[bp_cols] = combined[bp_cols].fillna(0.0)
+
+        # Phase 1-3 indicators & post-dropna imputation.
+        combined['energy_observed'] = combined[en_cols].notna().all(axis=1).astype('int64')
+        combined[en_cols] = combined[en_cols].fillna(0.0)
+
+        combined['precip_intensity_observed'] = combined[int_cols].notna().all(axis=1).astype('int64')
+        combined[int_cols] = combined[int_cols].fillna(0.0)
+
+        combined['hydro_sm_observed'] = combined[hsm_cols].notna().all(axis=1).astype('int64')
+        for col in hsm_cols:
+            s = combined[col].ffill().bfill()
+            med = s.median(skipna=True) if s.notna().any() else 0.0
+            combined[col] = s.fillna(med)
+
+        combined['gridded_swe_observed'] = combined[gswe_cols].notna().all(axis=1).astype('int64')
+        combined[gswe_cols] = combined[gswe_cols].fillna(0.0)
+
+        pr_series = combined['prior_flow']
+        combined['prior_observed'] = pr_series.notna().astype('int64')
+        combined['prior_flow'] = pr_series.fillna(0.0)
+
         logger.info(
             "Site %s: %d/%d daily rows usable after gap handling",
             site_id, len(combined), before,
@@ -371,24 +420,29 @@ def weather_source(override=None) -> str:
 
 
 def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noaa_fallback=None,
-                           coords=None, weather_source_override=None):
+                           coords=None, weather_source_override=None,
+                           hydro_source_override=None, include_historical_prior=True):
     """
     Resolve a site's coordinates and fetch all its auxiliary timeseries:
     gauge-collocated weather (gridMET by default, or NOAA GHCND), NRCS SWE,
-    SMAP soil moisture, USDM drought, USBR reservoir storage + release, and
-    the enclosing HUC8 basin id.
+    SMAP soil moisture, USDM drought, USBR reservoir storage + release,
+    upstream gauges, basin zone precip, gridMET radiation/PET/VPD energy,
+    continuous soil moisture + sub-daily rainfall intensity (ERA5-Land or
+    NLDAS-2), elevation-band gridded SWE, NWM retrospective prior, and HUC8.
 
     Returns a dict with keys:
       noaa_data, swe_data, sm_data, drought_data, reservoir_data,
-      upstream_data, upstream_known_days, basin_precip_data, huc8
-    Any data frame may be empty (auxiliary features degrade gracefully; only
-    missing weather causes the caller to skip the site). huc8 may be None.
+      upstream_data, upstream_known_days, basin_precip_data,
+      energy_data, hydro_data, gridded_swe_data, prior_data, huc8
+    Any auxiliary data frame may be empty (degrades gracefully; only missing
+    weather causes the caller to skip the site). huc8 may be None.
 
     Per-source env vars short-circuit the corresponding fetch to empty for
     ablation runs:
-      OPENFLOW_DISABLE_SMAP, OPENFLOW_DISABLE_DROUGHT, OPENFLOW_DISABLE_RESERVOIR
-    Set OPENFLOW_WEATHER_SOURCE=noaa (or pass weather_source_override='noaa')
-    to use the legacy nearest-GHCND-station + gridMET-gap-fill weather path.
+      OPENFLOW_DISABLE_SMAP, OPENFLOW_DISABLE_DROUGHT, OPENFLOW_DISABLE_RESERVOIR,
+      OPENFLOW_DISABLE_UPSTREAM, OPENFLOW_DISABLE_BASIN_PRECIP,
+      OPENFLOW_DISABLE_ENERGY, OPENFLOW_DISABLE_HYDRO_FORCING,
+      OPENFLOW_DISABLE_GRIDDED_SWE, OPENFLOW_DISABLE_PRIOR
     """
     if coords is not None:   # caller already resolved them (saves a flaky second lookup)
         coords_dict = {'latitude': coords['lat'], 'longitude': coords['lon']}
@@ -509,10 +563,10 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
 
     # Upstream gauges (data/upstream_gauges.json): routed daily inflow. Empty
     # when the station has none; graceful on failure.
+    full_id = f"{prefix}:{site_id}"
     upstream_data = pd.DataFrame(columns=['Date', 'upstream_flow'])
     upstream_known_days = 0
     try:
-        full_id = f"{prefix}:{site_id}"
         upstream_data = get_upstream.get_upstream(full_id, start_date, end_date)
         if not upstream_data.empty:
             upstream_known_days = get_upstream.known_days(
@@ -523,10 +577,48 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
     # Basin precipitation by travel-time zone (gridMET over basin_zones.json).
     try:
         basin_precip_data = get_basin_precip.get_zone_precip_daily(
-            f"{prefix}:{site_id}", start_date, end_date)
+            full_id, start_date, end_date)
     except Exception as e:
         logger.warning("Basin precip fetch failed for %s: %s", site_id, e)
         basin_precip_data = pd.DataFrame(columns=['Date'] + get_basin_precip.FEATURE_COLUMNS)
+
+    # Phase 1: gridMET solar radiation / PET / VPD energy forcing.
+    energy_data = pd.DataFrame(columns=['Date', *get_basin_precip.ENERGY_COLUMNS])
+    if not _disabled('OPENFLOW_DISABLE_ENERGY'):
+        try:
+            energy_data = get_basin_precip.gridmet_point_energy(
+                latitude, longitude, start_date, end_date)
+        except Exception as e:
+            logger.warning("gridMET energy fetch failed for %s: %s", site_id, e)
+
+    # Phase 1: Continuous surface/root-zone soil moisture + sub-daily rainfall intensity.
+    hydro_data = pd.DataFrame(columns=['Date', *get_hydro_forcing.ALL_COLUMNS])
+    if not _disabled('OPENFLOW_DISABLE_HYDRO_FORCING'):
+        try:
+            hydro_data = get_hydro_forcing.get_hydro_forcing(
+                latitude, longitude, start_date, end_date,
+                source_override=hydro_source_override)
+        except Exception as e:
+            logger.warning("Hydro forcing fetch failed for %s: %s", site_id, e)
+
+    # Phase 3: Elevation-band gridded SWE (low / mid / high + melt rate).
+    gridded_swe_data = pd.DataFrame(columns=['Date', *get_gridded_swe.SWE_COLUMNS])
+    if not _disabled('OPENFLOW_DISABLE_GRIDDED_SWE'):
+        try:
+            gridded_swe_data = get_gridded_swe.get_gridded_swe(
+                full_id, latitude, longitude, start_date, end_date)
+        except Exception as e:
+            logger.warning("Gridded SWE fetch failed for %s: %s", site_id, e)
+
+    # Phase 3: Historical NWM v3.0 retrospective streamflow prior (when optional
+    # Zarr deps are installed; skipped at inference where live RFC/NWM is used).
+    prior_data = pd.DataFrame(columns=['Date', 'prior_flow'])
+    if include_historical_prior and not _disabled('OPENFLOW_DISABLE_PRIOR'):
+        try:
+            prior_data = get_nwm_prior.fetch_historical_prior(
+                full_id, start_date, end_date)
+        except Exception as e:
+            logger.warning("Historical prior fetch failed for %s: %s", site_id, e)
 
     return {
         'noaa_data': noaa_data,
@@ -537,6 +629,10 @@ def fetch_and_process_data(prefix, site_id, start_date, end_date, flow_data, noa
         'basin_precip_data': basin_precip_data,
         'upstream_data': upstream_data,
         'upstream_known_days': upstream_known_days,
+        'energy_data': energy_data,
+        'hydro_data': hydro_data,
+        'gridded_swe_data': gridded_swe_data,
+        'prior_data': prior_data,
         'huc8': huc8,
     }
 
@@ -611,7 +707,11 @@ def fetch_station_merged(site_id, start_date, end_date):
         huc8=fetched['huc8'],
         upstream_data=fetched.get('upstream_data'),
         upstream_known_days=fetched.get('upstream_known_days', 0),
-        basin_precip_data=fetched.get('basin_precip_data'))
+        basin_precip_data=fetched.get('basin_precip_data'),
+        energy_data=fetched.get('energy_data'),
+        hydro_data=fetched.get('hydro_data'),
+        gridded_swe_data=fetched.get('gridded_swe_data'),
+        prior_data=fetched.get('prior_data'))
 
 
 def _resolve_cache_dir(cache_dir=None):

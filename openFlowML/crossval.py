@@ -61,11 +61,24 @@ def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_bas
                    raw_data: Optional[pd.DataFrame] = None) -> dict:
     """Train and score one ensemble of `members` per fold; pooled + per-fold report."""
     import tempfile
+    import combine_data
     import model as model_mod
     import normalize_data
     import train
+    forecast_table = None
+    if train.TRAIN_REAL_FORECASTS:
+        fc_dir = os.getenv('OPENFLOW_REFORECAST_DIR', '').strip() or combine_data._resolve_cache_dir()
+        if fc_dir:
+            try:
+                from data import get_gefs_reforecast
+                ft = get_gefs_reforecast.load_reforecast_table(fc_dir)
+                if ft is not None and not ft.empty:
+                    forecast_table = ft
+            except Exception as e:
+                logger.warning("Reforecast table skipped in CV: %s", e)
     base_samples = windowing.build_windows(
-        data, windowing.ENCODER_DAYS, windowing.DECODER_DAYS, scalers=scalers)
+        data, windowing.ENCODER_DAYS, windowing.DECODER_DAYS,
+        scalers=scalers, forecast_table=forecast_table)
     base_splits = windowing.water_year_folds(base_samples, folds)
     raw_wy = (pd.to_datetime(raw_data['Date']).map(windowing.water_year)
               if raw_data is not None and not raw_data.empty else None)
@@ -87,7 +100,8 @@ def cross_validate(data: pd.DataFrame, scalers: dict, num_stations: int, num_bas
                 with open(os.path.join(td, 'scalers.json')) as f:
                     fold_scalers = json.load(f)
             fold_samples = windowing.build_windows(
-                fold_df, windowing.ENCODER_DAYS, windowing.DECODER_DAYS, scalers=fold_scalers)
+                fold_df, windowing.ENCODER_DAYS, windowing.DECODER_DAYS,
+                scalers=fold_scalers, forecast_table=forecast_table)
             fold_split = windowing.water_year_folds(fold_samples, folds)[k]
         logger.info("Fold %d/%d: test water years %s; train %d, val %d, test %d windows",
                     k + 1, folds, test_years, len(fold_split.train), len(fold_split.val), len(fold_split.test))

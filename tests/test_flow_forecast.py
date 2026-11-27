@@ -68,6 +68,8 @@ def fake_nwps(monkeypatch):
                             else pd.DataFrame())
         monkeypatch.setattr(get_basin_precip, 'nws_points_hourly',
                             lambda cfg: forecast_points or {})
+        monkeypatch.setattr(flow_forecast, '_hydro_rain_context',
+                            lambda zcfg, calib_days=28, tz='America/Denver': (None, None))
         import backtest_routing
         import crest_backtest
         monkeypatch.setattr(backtest_routing, 'usgs_hourly', lambda site, a, b: pd.Series(dtype=float))

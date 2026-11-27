@@ -311,3 +311,60 @@ def test_prepare_inputs_forwards_weather_source_and_defaults_legacy_noaa(fake_so
     art_grid['training_config'] = dict(art_grid['training_config'], weather_source='gridmet')
     ml_inference.prepare_inputs(SITE, art_grid, today=TODAY)
     assert seen == ['noaa', 'gridmet']
+
+
+def test_prepare_inputs_supports_legacy_23_15_schema(fake_sources):
+    """Published releases like model-219 (23 enc / 15 dec) must run unchanged."""
+    legacy_enc = ['Min Flow', 'Max Flow', 'TMIN', 'TMAX', 'precipitation',
+                  'SWE', 'soil_moisture', 'sm_observed', 'drought_index',
+                  'reservoir_storage', 'reservoir_release', 'reservoir_observed',
+                  'upstream_flow', 'upstream_observed',
+                  *windowing.BASIN_PRECIP_FEATURES, 'basin_precip_observed',
+                  'doy_sin', 'doy_cos']
+    legacy_dec = ['TMIN', 'TMAX', 'precipitation',
+                  'upstream_flow', 'upstream_known', 'upstream_change',
+                  *windowing.BASIN_PRECIP_FEATURES, 'basin_precip_known',
+                  'doy_sin', 'doy_cos']
+    art = _artifacts()
+    art['training_config'] = dict(art['training_config'],
+                                  encoder_features=legacy_enc,
+                                  decoder_features=legacy_dec)
+    prep = ml_inference.prepare_inputs(SITE, art, today=TODAY)
+    assert prep['inputs']['encoder_input'].shape == (1, 60, 23)
+    assert prep['inputs']['decoder_input'].shape == (1, 14, 15)
+    assert np.isfinite(prep['inputs']['encoder_input']).all()
+    assert np.isfinite(prep['inputs']['decoder_input']).all()
+
+
+def test_prepare_inputs_populates_phase1_to_3_decoder_features(fake_sources, monkeypatch):
+    from data import get_nwm_prior
+    art = _artifacts()
+    for c in (*windowing.ENERGY_FEATURES, *windowing.INTENSITY_FEATURES,
+              *windowing.HYDRO_SM_FEATURES, *windowing.GRIDDED_SWE_FEATURES, 'prior_flow'):
+        art['scalers'][c] = {
+            'mean': 2.0, 'scale': 1.5,
+            'transform': 'log1p' if c in ('precip_max1h', 'precip_max3h', 'prior_flow') else 'identity',
+        }
+    wx_days = pd.date_range(TODAY, TODAY + pd.Timedelta(days=14), name='Date')
+    monkeypatch.setattr(ml_inference, 'forecast_weather', lambda lat, lon, tz: pd.DataFrame({
+        'TMIN': 0.0, 'TMAX': 100.0, 'precipitation': 5.0,
+        'srad': 22.0, 'pet': 4.5, 'vpd': 1.3,
+        'precip_max1h': 3.0, 'precip_max3h': 5.0, 'precip_wet_hours': 2.0,
+        'precip_ens_std': 2.0, 'precip_ens_p90': 9.0, 'temp_ens_std': 15.0,
+    }, index=wx_days))
+    prior_days = pd.date_range(TODAY - pd.Timedelta(days=5), TODAY + pd.Timedelta(days=10), name='Date')
+    monkeypatch.setattr(get_nwm_prior, 'fetch_live_prior',
+                        lambda *a, **k: pd.DataFrame({'Date': prior_days, 'prior_flow': np.linspace(300, 600, len(prior_days))}))
+
+    prep = ml_inference.prepare_inputs(SITE, art, today=TODAY)
+    dec = prep['inputs']['decoder_input'][0]
+    D = windowing.DECODER_FEATURES
+    assert (dec[:, D.index('energy_known')] == 1.0).all()
+    assert (dec[:7, D.index('precip_intensity_known')] == 1.0).all()
+    assert (dec[7:, D.index('precip_intensity_known')] == 0.0).all()
+    assert (dec[:, D.index('ens_spread_known')] == 1.0).all()
+    assert (dec[:, D.index('forcing_is_forecast')] == 1.0).all()
+    assert dec[0, D.index('lead_day_norm')] == pytest.approx(1.0 / 14.0)
+    assert (dec[:10, D.index('prior_known')] == 1.0).all()
+    assert (dec[10:, D.index('prior_known')] == 0.0).all()
+    assert dec[5, D.index('prior_change')] > 0.0

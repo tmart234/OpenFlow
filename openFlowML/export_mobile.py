@@ -378,6 +378,11 @@ def write_manifest(base_path, config, artifact_files, tflite_mode,
             'window_built_decoder_features': config.get('window_built_decoder_features', []),
             'upstream_known_days': config.get('upstream_known_days', {}),
             'basin_precip_known_days': config.get('basin_precip_known_days'),
+            'energy_known_days': config.get('energy_known_days'),
+            'precip_intensity_known_days': config.get('precip_intensity_known_days'),
+            'prior_known_days': config.get('prior_known_days'),
+            'hydro_source': config.get('hydro_source'),
+            'real_forecast_training': config.get('real_forecast_training'),
             # Output names and, with the probabilistic band, its quantile
             # levels (last axis of BAND_OUTPUT_NAME). Older models: point only.
             'outputs': config.get('outputs', [OUTPUT_NAME]),

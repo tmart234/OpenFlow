@@ -57,7 +57,11 @@ def test_archived_forecasts_replace_lead_days_1_to_7_in_training_units():
     assert np.allclose(rain[known], np.log1p(4.0))                  # 10 deg C -> all rain
     assert np.allclose(dec[:, :7, D.index('snow_local')][known], 0.0)
     np.testing.assert_array_equal(dec[:, 7:], x['decoder_input'][:, 7:])   # days 8-14 untouched
-    untouched = [i for i, c in enumerate(D) if c not in live_forcing.POINT_COLUMNS + live_forcing.ZONE_COLUMNS]
+    if 'forcing_is_forecast' in D:
+        assert np.allclose(dec[:, :7, D.index('forcing_is_forecast')], 1.0)
+        assert np.allclose(dec[:, 7:, D.index('forcing_is_forecast')], 0.0)
+    changed = set(live_forcing.POINT_COLUMNS + live_forcing.ZONE_COLUMNS + ['forcing_is_forecast'])
+    untouched = [i for i, c in enumerate(D) if c not in changed]
     np.testing.assert_array_equal(dec[..., untouched], x['decoder_input'][..., untouched])
 
 

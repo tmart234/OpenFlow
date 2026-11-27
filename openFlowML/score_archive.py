@@ -57,8 +57,11 @@ def load_archive(root: str, since: Optional[pd.Timestamp] = None) -> List[dict]:
             continue
         csv = pd.read_csv(js[:-5] + '.csv')
         t = pd.to_datetime(csv['time_utc'], utc=True)
-        hourly = pd.DataFrame({'routing': csv['forecast_cfs'].to_numpy(),
-                               'nws': csv['nws_official_cfs'].to_numpy()}, index=t)
+        hourly_cols = {'routing': csv['forecast_cfs'].to_numpy(),
+                       'nws': csv['nws_official_cfs'].to_numpy()}
+        if 'fused_cfs' in csv.columns:
+            hourly_cols['fused'] = csv['fused_cfs'].to_numpy()
+        hourly = pd.DataFrame(hourly_cols, index=t)
         hourly = hourly[hourly.index > issued]
         ml = (s.get('ml') or {}).get('daily') or []
         ml_daily = pd.Series({pd.Timestamp(d['date']): (d['min_cfs'] + d['max_cfs']) / 2 for d in ml}, dtype=float)
@@ -82,6 +85,7 @@ def score_one(fc: dict, obs: pd.Series, days: int = 5) -> List[dict]:
     hourly_local = fc['hourly'].tz_convert(tz)
     fc_daily = hourly_local.groupby(hourly_local.index.date).mean()
     fc_daily.index = pd.DatetimeIndex(fc_daily.index)
+    has_fused = 'fused' in fc['hourly'].columns
     for lead in range(1, days + 1):
         day = issue_day + pd.Timedelta(days=lead)
         o = obs_daily.get(day, np.nan)
@@ -89,6 +93,8 @@ def score_one(fc: dict, obs: pd.Series, days: int = 5) -> List[dict]:
             continue
         values = {'routing': fc_daily['routing'].get(day, np.nan), 'nws': fc_daily['nws'].get(day, np.nan),
                   'ml': fc['ml_daily'].get(day, np.nan)}
+        if has_fused:
+            values['fused'] = fc_daily['fused'].get(day, np.nan)
         for src, v in values.items():
             if np.isfinite(v):
                 rows.append({'site_id': fc['site_id'], 'issued': fc['issued'], 'kind': 'daily',
@@ -103,13 +109,14 @@ def score_one(fc: dict, obs: pd.Series, days: int = 5) -> List[dict]:
     if len(window) > 72:
         span = obs[(obs.index > fc['issued'] - pd.Timedelta(days=4)) & (obs.index <= window.index.max())]
         idx = routing.find_crests(span.to_numpy(dtype=float))
+        hourly_sources = ('routing', 'nws', 'fused') if has_fused else ('routing', 'nws')
         for i in idx:
             ct = span.index[i]
             if ct <= fc['issued']:
                 continue
             near = (fc['hourly'].index >= ct - pd.Timedelta(hours=routing.CREST_WINDOW_HOURS)) & \
                    (fc['hourly'].index <= ct + pd.Timedelta(hours=routing.CREST_WINDOW_HOURS))
-            for src in ('routing', 'nws'):
+            for src in hourly_sources:
                 seg = fc['hourly'].loc[near, src].dropna()
                 if len(seg):
                     rows.append({'site_id': fc['site_id'], 'issued': fc['issued'], 'kind': 'crest', 'source': src,
@@ -135,20 +142,22 @@ def summarize(rows: pd.DataFrame) -> str:
              '(hourly sources) and forecast/observed crest ratio.', '']
     for site, g in rows.groupby('site_id'):
         name = (reg.get(site) or {}).get('short_name', site)
+        sources = SOURCES + (('fused',) if (g['source'] == 'fused').any() else ())
         d = g[g['kind'] == 'daily']
-        lines += [f'## {name}', '', '| Lead day | ' + ' | '.join(SOURCES) + ' | forecasts |', '|---|' + '---|' * (len(SOURCES) + 1)]
+        lines += [f'## {name}', '', '| Lead day | ' + ' | '.join(sources) + ' | forecasts |', '|---|' + '---|' * (len(sources) + 1)]
         for lead, gl in d.groupby('lead_day'):
             cells = [f"{gl.loc[gl.source == s, 'pct_error'].median():.1f}" if (gl.source == s).any() else '—'
-                     for s in SOURCES]
+                     for s in sources]
             lines.append(f'| {int(lead)} | ' + ' | '.join(cells) + f" | {gl['issued'].nunique()} |")
         c = g[g['kind'] == 'crest']
         if len(c):
-            lines += ['', '| Crests | ' + ' | '.join(SOURCES) + ' |', '|---|' + '---|' * len(SOURCES)]
+            lines += ['', '| Crests | ' + ' | '.join(sources) + ' |', '|---|' + '---|' * len(sources)]
             t = [f"{c.loc[c.source == s, 'timing_error_h'].abs().median():.0f} h" if c.loc[c.source == s, 'timing_error_h'].notna().any() else '—'
-                 for s in SOURCES]
-            r = [f"{c.loc[c.source == s, 'crest_ratio'].median():.2f}" if (c.source == s).any() else '—' for s in SOURCES]
+                 for s in sources]
+            r = [f"{c.loc[c.source == s, 'crest_ratio'].median():.2f}" if (c.source == s).any() else '—' for s in sources]
+            counts = [str(len(c[c.source == s])) for s in sources]
             lines += ['| median timing error | ' + ' | '.join(t) + ' |', '| crest ratio | ' + ' | '.join(r) + ' |',
-                      f"| scored (forecast, crest) pairs | {len(c[c.source == 'routing'])} | {len(c[c.source == 'nws'])} | {len(c[c.source == 'ml'])} |"]
+                      '| scored (forecast, crest) pairs | ' + ' | '.join(counts) + ' |']
         r = g[g['kind'] == 'range'] if 'kind' in g else g.iloc[:0]
         if len(r):
             by_lead = r.groupby('lead_day')['inside']

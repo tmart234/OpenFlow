@@ -23,20 +23,32 @@ def request_with_retry(url, params=None, headers=None, timeout=60, retries=3, ba
 
     Returns the Response on HTTP 200, or None if every attempt failed. The flow
     fetchers depend on this because their upstream services (USGS IV, CO DWR)
-    are slow and occasionally flaky on long-range requests.
+    are slow and occasionally flaky on long-range requests. Handles HTTP 429
+    `Retry-After` headers and Open-Meteo's minutely rate-limit window cleanly.
     """
     for attempt in range(retries):
+        sleep_s = backoff ** attempt
         try:
             response = requests.get(url, params=params, headers=headers, timeout=timeout)
             if response.status_code == 200:
                 return response
             logging.warning("HTTP %s from %s (attempt %d/%d)",
                             response.status_code, url, attempt + 1, retries)
+            if response.status_code == 429:
+                body = (response.text or '').lower()
+                if 'daily' in body or 'hourly' in body:
+                    logging.warning("Rate-limit quota exhausted for %s; not retrying", url)
+                    return None
+                ra = response.headers.get('Retry-After')
+                if ra and ra.isdigit():
+                    sleep_s = min(int(ra), 90)
+                elif 'minutely' in body:
+                    sleep_s = 65
         except requests.exceptions.RequestException as e:
             logging.warning("Request error for %s: %s (attempt %d/%d)",
                             url, e, attempt + 1, retries)
         if attempt < retries - 1:
-            time.sleep(backoff ** attempt)
+            time.sleep(sleep_s)
     logging.error("Giving up on %s after %d attempts", url, retries)
     return None
 

@@ -25,6 +25,15 @@ on:
         description: 'Skip SMAP soil moisture even when Earthdata secrets are set'
         type: boolean
         default: false
+      hydro_source:
+        description: 'Continuous SM + hourly rain source (era5 or nldas)'
+        type: choice
+        options: ['era5', 'nldas']
+        default: 'era5'
+      sync_reforecasts:
+        description: 'Also sync archived real weather forecasts (Open-Meteo Previous Runs 2024+)'
+        type: boolean
+        default: true
 
 concurrency:
   group: sync-dataset-cache
@@ -72,6 +81,7 @@ jobs:
         EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
         EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
         OPENFLOW_DISABLE_SMAP: ${{ (inputs.disable_smap || secrets.EARTHDATA_USERNAME == '') && '1' || '' }}
+        OPENFLOW_HYDRO_SOURCE: ${{ inputs.hydro_source || 'era5' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
       run: |
         python openFlowML/data/feature_store.py \
@@ -83,6 +93,20 @@ jobs:
           echo "## Feature Store Sync"
           echo '```'
           cat "$RUNNER_TEMP/sync_summary.txt"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Sync archived weather forecasts (real-forecast decoder training)
+      if: inputs.sync_reforecasts != false
+      env:
+        OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
+      run: |
+        python openFlowML/data/get_gefs_reforecast.py \
+          --cache-dir "$OPENFLOW_CACHE_DIR" | tee "$RUNNER_TEMP/reforecast_summary.txt"
+        {
+          echo "## Archived Weather Forecasts Sync"
+          echo '```'
+          cat "$RUNNER_TEMP/reforecast_summary.txt"
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
 
