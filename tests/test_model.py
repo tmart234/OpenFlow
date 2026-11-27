@@ -356,10 +356,15 @@ def test_static_attributes_and_attribute_gated_upstream_skip(tmp_path):
         static_features=static_dim,
     )
     assert model.has_static_input(net)
-    # Give static_upstream_gain non-zero weights so different static profiles produce distinct upstream gains
-    # even when station_idx == 0 (unseen river!).
-    sg = net.get_layer('static_upstream_gain')
-    sg.set_weights([np.ones_like(sg.get_weights()[0]) * 0.5, np.zeros_like(sg.get_weights()[1])])
+    # Use deterministic positive weights on the static MLP + upstream gain so
+    # positive vs negative static profiles produce opposite-sign upstream gains
+    # even when station_idx == 0 (unseen river), independent of random init.
+    for lname, val in (('static_mlp_hidden', 0.25),
+                       ('static_mlp_out', 0.25),
+                       ('static_upstream_gain', 0.5)):
+        layer = net.get_layer(lname)
+        w, b = layer.get_weights()
+        layer.set_weights([np.full_like(w, val), np.zeros_like(b)])
 
     x = _smoke_inputs(n=2, station_ids=[0, 0])
     # Identical dynamic inputs; only static_input differs (river 0 positive, river 1 negative).
@@ -374,7 +379,7 @@ def test_static_attributes_and_attribute_gated_upstream_skip(tmp_path):
     diff = (model.point_forecast(net.predict(bumped, verbose=0))
             - model.point_forecast(net.predict(x, verbose=0)))
     # Unseen rivers with different physical attributes respond differently to upstream_change!
-    assert float(diff[0, 0, 1]) > float(diff[1, 0, 1]) + 0.5
+    assert float(diff[0, 0, 1]) > float(diff[1, 0, 1]) + 1.0
 
     # Round-trips through ensemble + h5 identically.
     ens = model.average_ensemble([net])
