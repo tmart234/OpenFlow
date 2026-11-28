@@ -349,3 +349,101 @@ def test_granule_cache_picks_up_existing_disk_files(monkeypatch, tmp_path):
     out = nasa_moisture.main(40.0, -105.0, '2024-01-15', '2024-01-15')
     assert not out.empty
     assert out.iloc[0]['soil_moisture'] == pytest.approx(0.35)
+
+
+def test_granule_cache_evicts_lru_when_over_budget(monkeypatch, tmp_path):
+    nasa_moisture._GRANULE_PATH_CACHE.clear()
+    cache_dir = str(tmp_path / 'cache')
+    os.makedirs(cache_dir, exist_ok=True)
+    monkeypatch.setenv('OPENFLOW_SMAP_CACHE_DIR', cache_dir)
+
+    src1 = str(tmp_path / 'SMAP_L3_SM_P_E_20240115_R001_001.h5')
+    src2 = str(tmp_path / 'SMAP_L3_SM_P_E_20240116_R001_001.h5')
+    _write_smap_h5(src1, np.full((3, 3), 0.20))
+    _write_smap_h5(src2, np.full((3, 3), 0.40))
+    one_size = os.path.getsize(src1)
+
+    # Cap just above one file's size so downloading the second must evict the first.
+    monkeypatch.setattr(nasa_moisture, '_cache_max_bytes', lambda: one_size + 64)
+    monkeypatch.setattr(nasa_moisture, '_free_disk_bytes', lambda p: 10 * 1024 ** 3)
+
+    g1 = _FakeGranule('SMAP_L3_SM_P_E_20240115_R001_001.h5')
+    g2 = _FakeGranule('SMAP_L3_SM_P_E_20240116_R001_001.h5')
+    src_by_name = {
+        'SMAP_L3_SM_P_E_20240115_R001_001.h5': src1,
+        'SMAP_L3_SM_P_E_20240116_R001_001.h5': src2,
+    }
+
+    class _FakeEA:
+        @staticmethod
+        def download(granules, local_path):
+            import shutil
+            name = nasa_moisture._granule_cache_key(granules[0])
+            dst = os.path.join(local_path, name)
+            shutil.copy(src_by_name[name], dst)
+            return [dst]
+
+    import sys
+    monkeypatch.setitem(sys.modules, 'earthaccess', _FakeEA)
+    p1 = nasa_moisture._download_granule(g1, cache_dir)
+    assert p1 and os.path.exists(p1)
+    # Give file 1 an older mtime so LRU ordering is deterministic.
+    os.utime(p1, (1000, 1000))
+    p2 = nasa_moisture._download_granule(g2, cache_dir)
+    assert p2 and os.path.exists(p2)
+    assert not os.path.exists(p1)
+    assert 'SMAP_L3_SM_P_E_20240115_R001_001.h5' not in nasa_moisture._GRANULE_PATH_CACHE
+
+
+def test_granule_cache_zero_budget_unlinks_after_extract(monkeypatch, tmp_path):
+    nasa_moisture._GRANULE_PATH_CACHE.clear()
+    cache_dir = str(tmp_path / 'cache')
+    monkeypatch.setenv('OPENFLOW_SMAP_CACHE_DIR', cache_dir)
+    monkeypatch.setenv('OPENFLOW_SMAP_CACHE_MAX_MB', '0')
+    monkeypatch.setattr(nasa_moisture, '_free_disk_bytes', lambda p: 10 * 1024 ** 3)
+
+    src = str(tmp_path / 'SMAP_L3_SM_P_E_20240115_R001_001.h5')
+    _write_smap_h5(src, np.full((3, 3), 0.30))
+    g = _FakeGranule('SMAP_L3_SM_P_E_20240115_R001_001.h5')
+
+    class _FakeEA:
+        @staticmethod
+        def download(granules, local_path):
+            import shutil
+            dst = os.path.join(local_path, 'SMAP_L3_SM_P_E_20240115_R001_001.h5')
+            shutil.copy(src, dst)
+            return [dst]
+
+    import sys
+    monkeypatch.setitem(sys.modules, 'earthaccess', _FakeEA)
+    monkeypatch.setattr(nasa_moisture, '_get_huc8_polygon', lambda lat, lon: _POLYGON)
+    monkeypatch.setattr(nasa_moisture, '_login_earthdata', lambda: object())
+    monkeypatch.setattr(nasa_moisture, '_search_granules', lambda poly, s, e: [g])
+
+    out = nasa_moisture.main(40.0, -105.0, '2024-01-15', '2024-01-15')
+    assert len(out) == 1
+    assert out.iloc[0]['soil_moisture'] == pytest.approx(0.30)
+    assert os.listdir(cache_dir) == []
+
+
+def test_download_granule_skips_and_evicts_when_disk_space_low(monkeypatch, tmp_path):
+    nasa_moisture._GRANULE_PATH_CACHE.clear()
+    cache_dir = str(tmp_path / 'cache')
+    os.makedirs(cache_dir, exist_ok=True)
+    stale = os.path.join(cache_dir, 'old_granule.h5')
+    with open(stale, 'wb') as f:
+        f.write(b'x' * 128)
+
+    # Simulate host disk below MIN_FREE_DISK_MB.
+    monkeypatch.setattr(nasa_moisture, '_free_disk_bytes', lambda p: 100 * 1024 * 1024)
+
+    class _FailingEA:
+        @staticmethod
+        def download(granules, local_path):
+            raise AssertionError("must not download when free disk is below MIN_FREE_DISK_MB")
+
+    import sys
+    monkeypatch.setitem(sys.modules, 'earthaccess', _FailingEA)
+    g = _FakeGranule('SMAP_L3_SM_P_E_20240118_R001_001.h5')
+    assert nasa_moisture._download_granule(g, cache_dir) is None
+    assert not os.path.exists(stale)

@@ -33,7 +33,13 @@ logger = logging.getLogger(__name__)
 
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 ERA5_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+ERA5_ARCHIVE_MODEL = "era5_seamless"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+# Snow depth (m) -> approximate SWE (mm) using a 250 kg/m^3 snow-density
+# factor, matching the GFS tail bridge. Open-Meteo's archive endpoint leaves
+# `snow_depth_water_equivalent` undefined (all nulls), whereas `snow_depth`
+# is populated continuously back to 1950 across all Western US elevation bands.
+SNOW_DEPTH_TO_SWE_MM = 250.0
 
 BANDS = ('low', 'mid', 'high')
 SWE_COLUMNS = ['swe_low', 'swe_mid', 'swe_high', 'delta_swe_mid', 'delta_swe_high']
@@ -114,72 +120,111 @@ def _resolve_band_points(site_id: str, fallback_lat: float, fallback_lon: float,
     return res
 
 
-def _fetch_point_swe(lat: float, lon: float, start: pd.Timestamp,
-                     end: pd.Timestamp, tz: str = 'America/Denver') -> pd.Series:
-    """Daily SWE (mm) for one (lat, lon) from ERA5-Land archive + GFS tail bridge."""
+def _parse_hourly_swe_block(payload: Optional[dict], density_mm_per_m: float = SNOW_DEPTH_TO_SWE_MM) -> pd.Series:
+    """Parse one Open-Meteo hourly response object into a daily SWE Series (mm)."""
+    hourly = (payload or {}).get('hourly') or {}
+    times = hourly.get('time') or []
+    if not times:
+        return pd.Series(dtype=float)
+    swe_vals = hourly.get('snow_depth_water_equivalent')
+    sd_vals = hourly.get('snow_depth')
+    if swe_vals is not None and len(swe_vals) == len(times):
+        s_swe = pd.Series(pd.to_numeric(swe_vals, errors='coerce'),
+                          index=pd.to_datetime(times).normalize(), dtype=float)
+        if s_swe.notna().any():
+            return (s_swe.groupby(level=0).mean() * 1000.0).clip(lower=0.0).dropna()
+    if sd_vals is not None and len(sd_vals) == len(times):
+        s_sd = pd.Series(pd.to_numeric(sd_vals, errors='coerce'),
+                         index=pd.to_datetime(times).normalize(), dtype=float)
+        if s_sd.notna().any():
+            return (s_sd.groupby(level=0).mean() * float(density_mm_per_m)).clip(lower=0.0).dropna()
+    return pd.Series(dtype=float)
+
+
+def _fetch_points_swe(coords: List[Tuple[float, float]], start: pd.Timestamp,
+                      end: pd.Timestamp, tz: str = 'America/Denver') -> Dict[Tuple[float, float], pd.Series]:
+    """
+    Batch-fetch daily SWE (mm) for one or more (lat, lon) points from
+    Open-Meteo's ERA5-Seamless archive (`snow_depth`) + GFS tail bridge.
+    Passing all elevation-band coordinates in one comma-separated request cuts
+    archive HTTP calls by up to 3x per station.
+    """
+    if not coords:
+        return {}
     today = pd.Timestamp.now().normalize()
     archive_end = min(end, today - pd.Timedelta(days=2))
-    parts = []
+    lats_param = ','.join(f"{lat:.4f}" for lat, _ in coords) if len(coords) > 1 else round(float(coords[0][0]), 4)
+    lons_param = ','.join(f"{lon:.4f}" for _, lon in coords) if len(coords) > 1 else round(float(coords[0][1]), 4)
+
+    parts_by_coord: Dict[Tuple[float, float], List[pd.Series]] = {c: [] for c in coords}
     if start <= archive_end:
         for cs, ce in data_utils.date_chunks(start.to_pydatetime(), archive_end.to_pydatetime(), ERA5_CHUNK_DAYS):
             params = {
-                'latitude': round(float(lat), 4),
-                'longitude': round(float(lon), 4),
+                'latitude': lats_param,
+                'longitude': lons_param,
                 'start_date': cs.strftime('%Y-%m-%d'),
                 'end_date': ce.strftime('%Y-%m-%d'),
-                'hourly': 'snow_depth_water_equivalent',
-                'models': 'era5_land',
+                'hourly': 'snow_depth',
+                'models': ERA5_ARCHIVE_MODEL,
                 'timezone': tz,
             }
             resp = data_utils.request_with_retry(ERA5_ARCHIVE_URL, params=params, timeout=180)
             if resp is None:
                 continue
             try:
-                hourly = resp.json().get('hourly') or {}
+                raw = resp.json()
             except ValueError:
                 continue
-            times = hourly.get('time') or []
-            vals = hourly.get('snow_depth_water_equivalent') or []
-            if not times or len(times) != len(vals):
+            items = raw if isinstance(raw, list) else [raw]
+            if len(items) != len(coords):
                 continue
-            s = pd.Series(pd.to_numeric(vals, errors='coerce'),
-                          index=pd.to_datetime(times).normalize(), dtype=float)
-            # ERA5-Land snow_depth_water_equivalent is in metres of water -> mm.
-            daily = (s.groupby(level=0).mean() * 1000.0).clip(lower=0.0)
-            parts.append(daily)
-    series = (pd.concat(parts).sort_index() if parts else pd.Series(dtype=float))
-    series = series[~series.index.duplicated(keep='last')].dropna()
+            for coord, item in zip(coords, items):
+                daily = _parse_hourly_swe_block(item)
+                if not daily.empty:
+                    parts_by_coord[coord].append(daily)
+
+    out: Dict[Tuple[float, float], pd.Series] = {}
+    for coord in coords:
+        plist = parts_by_coord[coord]
+        series = pd.concat(plist).sort_index() if plist else pd.Series(dtype=float)
+        out[coord] = series[~series.index.duplicated(keep='last')].dropna()
 
     if end >= today - pd.Timedelta(days=10):
-        past_d = 10 if not series.empty else int(np.clip((today - start).days + 2, 10, 92))
+        any_empty = any(s.empty for s in out.values())
+        past_d = int(np.clip((today - start).days + 2, 10, 92)) if any_empty else 10
         resp = data_utils.request_with_retry(
             OPEN_METEO_FORECAST_URL,
-            params={'latitude': round(float(lat), 4), 'longitude': round(float(lon), 4),
+            params={'latitude': lats_param, 'longitude': lons_param,
                     'past_days': past_d, 'forecast_days': 1, 'hourly': 'snow_depth', 'timezone': tz},
             timeout=60,
         )
         if resp is not None:
             try:
-                hourly = resp.json().get('hourly') or {}
-                times = hourly.get('time') or []
-                vals = hourly.get('snow_depth') or []
-                if times and len(times) == len(vals):
-                    s = pd.Series(pd.to_numeric(vals, errors='coerce'),
-                                  index=pd.to_datetime(times).normalize(), dtype=float)
-                    # Convert snow depth (m) to approx SWE (mm) using 250 kg/m^3 snow density.
-                    tail = (s.groupby(level=0).mean() * 250.0).clip(lower=0.0).dropna()
-                    if not series.empty and not tail.empty:
-                        both = pd.concat([series, tail], axis=1, keys=['e', 'g']).dropna()
-                        both = both[both['g'] > 1.0]
-                        if len(both) >= 2:
-                            ratio = float(np.clip(np.median(both['e'] / both['g']), 0.3, 3.0))
-                            tail = tail * ratio
-                        tail = tail[tail.index > series.index.max()]
-                    if not tail.empty:
-                        series = tail.sort_index() if series.empty else pd.concat([series, tail]).sort_index()
+                raw = resp.json()
+                items = raw if isinstance(raw, list) else [raw]
+                if len(items) == len(coords):
+                    for coord, item in zip(coords, items):
+                        tail = _parse_hourly_swe_block(item)
+                        series = out[coord]
+                        if not series.empty and not tail.empty:
+                            both = pd.concat([series, tail], axis=1, keys=['e', 'g']).dropna()
+                            both = both[both['g'] > 1.0]
+                            if len(both) >= 2:
+                                ratio = float(np.clip(np.median(both['e'] / both['g']), 0.3, 3.0))
+                                tail = tail * ratio
+                            tail = tail[tail.index > series.index.max()]
+                        if not tail.empty:
+                            out[coord] = tail.sort_index() if series.empty else pd.concat([series, tail]).sort_index()
             except ValueError:
                 pass
-    return series
+    return out
+
+
+def _fetch_point_swe(lat: float, lon: float, start: pd.Timestamp,
+                     end: pd.Timestamp, tz: str = 'America/Denver') -> pd.Series:
+    """Daily SWE (mm) for one (lat, lon) from ERA5-Seamless archive + GFS tail bridge."""
+    key = (round(float(lat), 4), round(float(lon), 4))
+    return _fetch_points_swe([key], start, end, tz=tz).get(key, pd.Series(dtype=float))
 
 
 def assemble_band_swe(band_series: Dict[str, pd.Series]) -> pd.DataFrame:
@@ -209,13 +254,10 @@ def get_gridded_swe(site_id: str, lat: float, lon: float, start_date, end_date,
     end = pd.Timestamp(end_date).normalize()
     pts = _resolve_band_points(site_id, lat, lon, zones=zones)
     # Deduplicate identical coordinates so we never fetch the same point twice.
-    by_coord: Dict[Tuple[float, float], pd.Series] = {}
-    band_series: Dict[str, pd.Series] = {}
-    for band, coord in pts.items():
-        key = (round(coord[0], 4), round(coord[1], 4))
-        if key not in by_coord:
-            by_coord[key] = _fetch_point_swe(key[0], key[1], start, end, tz=tz)
-        band_series[band] = by_coord[key]
+    band_keys = {band: (round(coord[0], 4), round(coord[1], 4)) for band, coord in pts.items()}
+    unique_coords = list(dict.fromkeys(band_keys.values()))
+    by_coord = _fetch_points_swe(unique_coords, start, end, tz=tz)
+    band_series = {band: by_coord.get(key, pd.Series(dtype=float)) for band, key in band_keys.items()}
     df = assemble_band_swe(band_series)
     if df.empty:
         return df

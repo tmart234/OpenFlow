@@ -34,6 +34,7 @@ Set OPENFLOW_DISABLE_HYDRO_FORCING=1 to disable both groups for ablations.
 from datetime import datetime, timedelta
 import logging
 import os
+import shutil
 import tempfile
 from typing import Optional
 
@@ -45,18 +46,23 @@ from data.utils import data_utils
 logger = logging.getLogger(__name__)
 
 ERA5_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+# Open-Meteo's `era5_land` archive returns all-null `precipitation` hours;
+# `era5_seamless` serves 9 km ERA5-Land soil moisture alongside continuous
+# hourly ERA5 precipitation so both feature groups are populated.
+ERA5_ARCHIVE_MODEL = "era5_seamless"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 NLDAS_FORA_SHORT_NAME = "NLDAS_FORA0125_H"
 NLDAS_NOAH_SHORT_NAME = "NLDAS_NOAH0125_H"
 NLDAS_VERSION = "2.0"
+NLDAS_BATCH_SIZE = 48
 
 INTENSITY_COLUMNS = ['precip_max1h', 'precip_max3h', 'precip_wet_hours']
 SOIL_COLUMNS = ['sm_surface', 'sm_rootzone']
 ALL_COLUMNS = [*INTENSITY_COLUMNS, *SOIL_COLUMNS]
 
-# Open-Meteo archive handles multi-year requests cleanly in ~3-year chunks.
-ERA5_CHUNK_DAYS = 3 * 366
+# Open-Meteo archive handles 5-year hourly chunks cleanly (~5 requests / 25 y).
+ERA5_CHUNK_DAYS = 5 * 366
 WET_HOUR_THRESHOLD_MM = 0.5
 
 
@@ -191,7 +197,7 @@ def fetch_era5_daily(lat: float, lon: float, start_date, end_date,
                 'end_date': ce.strftime('%Y-%m-%d'),
                 'hourly': ('precipitation,soil_moisture_0_to_7cm,'
                            'soil_moisture_7_to_28cm,soil_moisture_28_to_100cm'),
-                'models': 'era5_land',
+                'models': ERA5_ARCHIVE_MODEL,
                 'timezone': tz,
             }
             resp = data_utils.request_with_retry(ERA5_ARCHIVE_URL, params=params, timeout=180)
@@ -356,38 +362,55 @@ def fetch_nldas_daily(lat: float, lon: float, start_date, end_date,
     start_d = pd.Timestamp(start_date).date()
     end_d = pd.Timestamp(end_date).date()
     bbox = (lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2)
-    cache_dir = os.getenv('OPENFLOW_NLDAS_CACHE_DIR') or tempfile.mkdtemp(prefix='openflow_nldas_')
+    persistent_cache = os.getenv('OPENFLOW_NLDAS_CACHE_DIR', '').strip()
+    cache_dir = persistent_cache or tempfile.mkdtemp(prefix='openflow_nldas_')
+    ephemeral = not bool(persistent_cache)
     os.makedirs(cache_dir, exist_ok=True)
 
     def _pull(short_name: str, vars_: tuple) -> dict:
-        granules = earthaccess.search_data(
+        granules = list(earthaccess.search_data(
             short_name=short_name, version=NLDAS_VERSION,
             temporal=(start_d, end_d), bounding_box=bbox,
-        )
+        ) or [])
         if not granules:
             return {}
-        paths = earthaccess.download(granules, local_path=cache_dir)
         by_time = {}
-        for p in paths:
-            name = os.path.basename(str(p))
-            # NLDAS_FORA0125_H.A20240715.1800.020.nc -> 20240715 1800 UTC
-            parts = name.split('.')
-            ts = None
-            for idx_p, tok in enumerate(parts):
-                if tok.startswith('A') and len(tok) == 9 and tok[1:].isdigit():
-                    hhmm = parts[idx_p + 1] if idx_p + 1 < len(parts) and len(parts[idx_p + 1]) == 4 else '0000'
-                    ts = pd.Timestamp(f"{tok[1:5]}-{tok[5:7]}-{tok[7:9]}T{hhmm[:2]}:{hhmm[2:]}:00Z")
-                    break
-            if ts is None:
-                continue
-            try:
-                by_time[ts] = _extract_nldas_point(str(p), lat, lon, vars_)
-            except Exception:
-                continue
+        for i in range(0, len(granules), NLDAS_BATCH_SIZE):
+            batch = granules[i:i + NLDAS_BATCH_SIZE]
+            paths = earthaccess.download(batch, local_path=cache_dir) or []
+            for p in paths:
+                p_str = str(p)
+                try:
+                    name = os.path.basename(p_str)
+                    # NLDAS_FORA0125_H.A20240715.1800.020.nc -> 20240715 1800 UTC
+                    parts = name.split('.')
+                    ts = None
+                    for idx_p, tok in enumerate(parts):
+                        if tok.startswith('A') and len(tok) == 9 and tok[1:].isdigit():
+                            hhmm = (parts[idx_p + 1]
+                                    if idx_p + 1 < len(parts) and len(parts[idx_p + 1]) == 4
+                                    else '0000')
+                            ts = pd.Timestamp(f"{tok[1:5]}-{tok[5:7]}-{tok[7:9]}T{hhmm[:2]}:{hhmm[2:]}:00Z")
+                            break
+                    if ts is not None:
+                        try:
+                            by_time[ts] = _extract_nldas_point(p_str, lat, lon, vars_)
+                        except Exception:
+                            pass
+                finally:
+                    if ephemeral and os.path.exists(p_str):
+                        try:
+                            os.unlink(p_str)
+                        except OSError:
+                            pass
         return by_time
 
-    fora = _pull(NLDAS_FORA_SHORT_NAME, ('Rainf',))
-    noah = _pull(NLDAS_NOAH_SHORT_NAME, ('SoilM_0_10cm', 'SoilM_10_40cm', 'SoilM_40_100cm'))
+    try:
+        fora = _pull(NLDAS_FORA_SHORT_NAME, ('Rainf',))
+        noah = _pull(NLDAS_NOAH_SHORT_NAME, ('SoilM_0_10cm', 'SoilM_10_40cm', 'SoilM_40_100cm'))
+    finally:
+        if ephemeral:
+            shutil.rmtree(cache_dir, ignore_errors=True)
     all_ts = sorted(set(fora) | set(noah))
     if not all_ts:
         return _empty()

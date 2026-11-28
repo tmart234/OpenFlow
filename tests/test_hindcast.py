@@ -51,3 +51,17 @@ def test_write_hindcast_charts_one_png_per_station(tmp_path):
                                            names={'USGS:08276500': 'Lower Taos Box'})
     assert sorted(p.split('/')[-1] for p in paths) == [
         'USGS_08276500_hindcast.png', 'USGS_09114500_hindcast.png']
+
+
+def test_hindcast_series_converts_specific_discharge_to_cfs():
+    import normalize_data
+    s = _sample('A', 1.0)
+    pred = np.full((windowing.DECODER_DAYS, 2), 0.5)
+    band = np.stack([pred - 0.1, pred + 0.1], axis=-1)
+    area_km2 = 500.0
+    factor = area_km2 / normalize_data.CFS_TO_MM_DAY_PER_KM2
+    base = hindcast.hindcast_series(s, pred, SCALERS, history_days=30, band=band)
+    converted = hindcast.hindcast_series(s, pred, SCALERS, history_days=30, band=band, area_km2=area_km2)
+    for k in ('history_flow', 'observed_min', 'observed_max', 'predicted_min', 'predicted_max',
+              'range_low', 'range_high'):
+        np.testing.assert_allclose(converted[k], base[k] * factor)

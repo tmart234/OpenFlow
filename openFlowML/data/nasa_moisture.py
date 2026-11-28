@@ -25,6 +25,7 @@ OPENFLOW_SMAP_CACHE_DIR to a persistent path to keep granules across runs.
 import argparse
 import logging
 import os
+import shutil
 import tempfile
 from datetime import date, datetime
 from typing import Optional
@@ -46,6 +47,14 @@ VALID_MAX = 1.0
 # retrieval_qual_flag bit 0: 0 = retrieval is recommended quality, 1 = not.
 # Conservative filter: drop any pixel where bit 0 is set.
 QUAL_RECOMMENDED_BIT = 0
+# Maximum on-disk SMAP granule cache size (MB). SPL3SMP_E global daily HDF5
+# files are ~90-140 MB each; without a cap, multi-year fetches fill CI runner
+# disks (~14-20 GB free) and crash the runner. Override with
+# OPENFLOW_SMAP_CACHE_MAX_MB (0 = delete each granule immediately after read).
+DEFAULT_CACHE_MAX_MB = 1024
+# Never download a new granule if the cache filesystem has less free space
+# than this threshold (MB); evict the cache first and skip if still tight.
+MIN_FREE_DISK_MB = 2048
 
 # Process-level cache so the per-station SMAP loop doesn't re-download the
 # same global daily granule for every basin. Keyed by granule filename.
@@ -262,23 +271,109 @@ def _get_cache_dir() -> str:
     return base
 
 
+def _cache_max_bytes() -> int:
+    """Maximum on-disk granule cache size in bytes (0 = delete after extract)."""
+    raw = os.environ.get('OPENFLOW_SMAP_CACHE_MAX_MB', '').strip()
+    if raw:
+        try:
+            return max(0, int(float(raw) * 1024 * 1024))
+        except ValueError:
+            pass
+    return DEFAULT_CACHE_MAX_MB * 1024 * 1024
+
+
+def _free_disk_bytes(path: str) -> Optional[int]:
+    try:
+        return int(shutil.disk_usage(path).free)
+    except OSError:
+        return None
+
+
+def _evict_cache(cache_dir: str, max_bytes: int, preserve: Optional[str] = None) -> int:
+    """
+    Evict oldest cached files (LRU by mtime) until `cache_dir` is under
+    `max_bytes` (or empty if host free disk space is below MIN_FREE_DISK_MB).
+    Returns number of files removed.
+    """
+    preserve_abs = os.path.abspath(preserve) if preserve else None
+    min_free = MIN_FREE_DISK_MB * 1024 * 1024
+    free = _free_disk_bytes(cache_dir)
+    budget = 0 if (free is not None and free < min_free) else max(0, int(max_bytes))
+
+    entries = []
+    total = 0
+    try:
+        for name in os.listdir(cache_dir):
+            full = os.path.join(cache_dir, name)
+            if not os.path.isfile(full):
+                continue
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            total += st.st_size
+            entries.append((st.st_mtime, st.st_size, full, name))
+    except OSError:
+        return 0
+
+    if total <= budget:
+        return 0
+
+    entries.sort(key=lambda e: e[0])
+    removed = 0
+    for _mtime, size, full, name in entries:
+        if total <= budget:
+            break
+        if preserve_abs and os.path.abspath(full) == preserve_abs:
+            continue
+        try:
+            os.unlink(full)
+            total -= size
+            removed += 1
+            if _GRANULE_PATH_CACHE.get(name) == full:
+                _GRANULE_PATH_CACHE.pop(name, None)
+        except OSError:
+            continue
+    return removed
+
+
 def _download_granule(granule, cache_dir):
     """
-    Download `granule` into `cache_dir`, or return its cached path. Returns
-    None on failure (and does NOT delete the cached file -- the cache is
-    intentionally process-lifetime+).
+    Download `granule` into `cache_dir`, or return its cached path. Enforces
+    the bounded disk cache (OPENFLOW_SMAP_CACHE_MAX_MB) and MIN_FREE_DISK_MB
+    floor so multi-year fetches cannot exhaust host disk space. Returns None
+    on failure.
     """
     key = _granule_cache_key(granule)
     if key:
         cached = _GRANULE_PATH_CACHE.get(key)
         if cached and os.path.exists(cached):
             logger.debug("Granule cache hit: %s", key)
+            try:
+                os.utime(cached, None)
+            except OSError:
+                pass
             return cached
         # Also check disk in case a previous process populated the dir.
         on_disk = os.path.join(cache_dir, key)
         if os.path.exists(on_disk):
             _GRANULE_PATH_CACHE[key] = on_disk
+            try:
+                os.utime(on_disk, None)
+            except OSError:
+                pass
             return on_disk
+
+    max_bytes = _cache_max_bytes()
+    _evict_cache(cache_dir, max_bytes)
+    free = _free_disk_bytes(cache_dir)
+    if free is not None and free < MIN_FREE_DISK_MB * 1024 * 1024:
+        logger.warning(
+            "Skipping SMAP granule download: only %.0f MB free in %s (min %d MB)",
+            free / (1024 * 1024), cache_dir, MIN_FREE_DISK_MB,
+        )
+        return None
+
     try:
         import earthaccess
     except ImportError:
@@ -290,9 +385,11 @@ def _download_granule(granule, cache_dir):
         return None
     if not files:
         return None
-    path = files[0]
+    path = str(files[0])
     if key:
         _GRANULE_PATH_CACHE[key] = path
+    if max_bytes > 0:
+        _evict_cache(cache_dir, max_bytes, preserve=path)
     return path
 
 
@@ -327,6 +424,7 @@ def main(lat: float, lon: float, start_date, end_date) -> pd.DataFrame:
     logger.info("Found %d SMAP granules", len(granules))
 
     cache_dir = _get_cache_dir()
+    max_bytes = _cache_max_bytes()
     rows = []
     for granule in granules:
         obs_date = _granule_date(granule)
@@ -335,10 +433,17 @@ def main(lat: float, lon: float, start_date, end_date) -> pd.DataFrame:
         path = _download_granule(granule, cache_dir)
         if not path:
             continue
-        # Cached files are intentionally NOT removed -- the next station's
-        # call to main() in this process will hit the cache for the same
-        # global daily granule.
-        value = _extract_polygon_mean(path, polygon)
+        try:
+            value = _extract_polygon_mean(path, polygon)
+        finally:
+            if max_bytes == 0 and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                key = _granule_cache_key(granule)
+                if key:
+                    _GRANULE_PATH_CACHE.pop(key, None)
         if value is None:
             continue
         rows.append((obs_date.strftime('%Y-%m-%d'), value))

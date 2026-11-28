@@ -57,3 +57,43 @@ def test_gridded_swe_merges_and_normalizes_with_linear_melt_rate():
     assert 'delta_swe_mid' not in normalize_data.LOG_TRANSFORM_COLUMNS
     assert 'delta_swe_high' not in normalize_data.LOG_TRANSFORM_COLUMNS
     assert np.isfinite(norm[get_gridded_swe.SWE_COLUMNS].to_numpy()).all()
+
+
+def test_get_gridded_swe_batches_coordinates_using_era5_seamless_snow_depth(monkeypatch):
+    seen_params = []
+    times = [f'2024-05-01T{h:02d}:00' for h in range(24)] + [f'2024-05-02T{h:02d}:00' for h in range(24)]
+
+    class FakeResp:
+        def json(self):
+            # Three elevation bands: low (0.04m -> 10mm), mid (0.40m -> 100mm -> 80mm),
+            # high (1.20m -> 300mm -> 280mm).
+            return [
+                {'hourly': {'time': times, 'snow_depth': [0.04] * 24 + [0.00] * 24}},
+                {'hourly': {'time': times, 'snow_depth': [0.40] * 24 + [0.32] * 24}},
+                {'hourly': {'time': times, 'snow_depth': [1.20] * 24 + [1.12] * 24}},
+            ]
+
+    def fake_req(url, params=None, **kwargs):
+        seen_params.append((url, dict(params or {})))
+        return FakeResp()
+
+    monkeypatch.setattr(get_gridded_swe.data_utils, 'request_with_retry', fake_req)
+    monkeypatch.setattr(
+        get_gridded_swe, '_resolve_band_points',
+        lambda *a, **k: {'low': (39.70, -105.20), 'mid': (39.75, -105.50), 'high': (39.80, -105.80)},
+    )
+
+    df = get_gridded_swe.get_gridded_swe(
+        'USGS:TEST', 39.75, -105.50, datetime(2024, 5, 1), datetime(2024, 5, 2))
+    # Single batched archive request for all 3 bands.
+    assert len(seen_params) == 1
+    params = seen_params[0][1]
+    assert params['models'] == 'era5_seamless'
+    assert params['hourly'] == 'snow_depth'
+    assert ',' in str(params['latitude']) and ',' in str(params['longitude'])
+    assert len(df) == 2
+    assert df.loc[0, 'swe_low'] == pytest.approx(10.0)
+    assert df.loc[0, 'swe_mid'] == pytest.approx(100.0)
+    assert df.loc[0, 'swe_high'] == pytest.approx(300.0)
+    assert df.loc[1, 'delta_swe_mid'] == pytest.approx(-20.0)
+    assert df.loc[1, 'delta_swe_high'] == pytest.approx(-20.0)

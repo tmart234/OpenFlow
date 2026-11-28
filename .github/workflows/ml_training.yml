@@ -12,8 +12,8 @@ on:
     branches: ['train/**']
   workflow_dispatch:
     inputs:
-      disable_smap:
-        description: 'Skip SMAP soil moisture (ablation)'
+      enable_smap:
+        description: 'Also fetch NASA SMAP L3 HDF5 soil moisture (opt-in; continuous ERA5-Land SM is already enabled)'
         type: boolean
         default: false
       disable_drought:
@@ -93,6 +93,7 @@ concurrency:
 jobs:
   train:
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     # Publishing is the Release Model workflow's job; training only reads.
     permissions:
       contents: read
@@ -109,12 +110,8 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
-      # earthaccess + h5py + shapely are needed for the SMAP soil-moisture
-      # fetch wired into combine_data. They are installed AFTER tensorflow so
-      # pip resolves the shared transitive deps (notably typing-extensions)
-      # against the tensorflow pin. If the version resolver cannot find a
-      # compatible earthaccess, combine_data still runs -- the SMAP fetch
-      # silently degrades to "no data" and soil_moisture defaults to 0.
+      # earthaccess + h5py + shapely are needed when SMAP / NLDAS is opted in,
+      # and h5py + pyarrow are used for Stage IV / Feature Store Parquet files.
       # constraints-train.txt keeps numpy 1.x / typing-extensions <4.6 for
       # tensorflow 2.13 across both installs (an unpinned earthaccess pulls
       # numpy 2, which breaks `import tensorflow`).
@@ -123,6 +120,14 @@ jobs:
         pip install -r openFlowML/requirements.txt -c openFlowML/constraints-train.txt
         pip install earthaccess h5py shapely pyarrow -c openFlowML/constraints-train.txt
         python -c "import numpy, tensorflow as tf; print('numpy', numpy.__version__, 'tensorflow', tf.__version__)"
+
+    - name: Restore feature store Actions cache (fallback)
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/openflow_dataset_cache
+        key: openflow-feature-store-v3-${{ inputs.site_ids_file || '.github/site_ids.txt' }}-${{ inputs.hydro_source || 'era5' }}-${{ github.run_id }}
+        restore-keys: |
+          openflow-feature-store-v3-${{ inputs.site_ids_file || '.github/site_ids.txt' }}-${{ inputs.hydro_source || 'era5' }}-
 
     - name: Restore feature store cache (if available)
       env:
@@ -133,18 +138,23 @@ jobs:
         if gh release download dataset-cache --repo "$GITHUB_REPOSITORY" \
             --pattern dataset_cache.tar.gz --dir "$RUNNER_TEMP" 2>/dev/null; then
           tar -xzf "$RUNNER_TEMP/dataset_cache.tar.gz" -C "$CACHE_DIR"
+          rm -f "$RUNNER_TEMP/dataset_cache.tar.gz"
           echo "Restored dataset-cache release into $CACHE_DIR"
         else
-          echo "No dataset-cache release yet; fetching fresh data"
+          echo "No dataset-cache release yet; using Actions cache or fetching fresh data"
         fi
+        df -h / "$RUNNER_TEMP"
 
     - name: Train model
       env:
         EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
         EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
-        # SMAP needs Earthdata credentials; without the secrets, switch it
-        # off explicitly so training_config records it and inference mirrors it.
-        OPENFLOW_DISABLE_SMAP: ${{ (inputs.disable_smap || secrets.EARTHDATA_USERNAME == '') && '1' || '' }}
+        # SMAP L3 global HDF5 downloads (~100 MB/day, ~420 GB over 2015+) are
+        # opt-in because continuous ERA5-Land soil moisture (sm_surface /
+        # sm_rootzone) already covers all 25 years with zero auth. Using
+        # !inputs.enable_smap keeps SMAP off on schedule, push, and default
+        # manual runs even when Earthdata secrets are configured.
+        OPENFLOW_DISABLE_SMAP: ${{ (!inputs.enable_smap || secrets.EARTHDATA_USERNAME == '') && '1' || '' }}
         OPENFLOW_DISABLE_DROUGHT: ${{ inputs.disable_drought && '1' || '' }}
         OPENFLOW_DISABLE_RESERVOIR: ${{ inputs.disable_reservoir && '1' || '' }}
         OPENFLOW_DISABLE_UPSTREAM: ${{ inputs.disable_upstream && '1' || '' }}
@@ -154,7 +164,7 @@ jobs:
         OPENFLOW_DISABLE_GRIDDED_SWE: ${{ inputs.disable_gridded_swe && '1' || '' }}
         OPENFLOW_DISABLE_PRIOR: ${{ inputs.disable_prior && '1' || '' }}
         OPENFLOW_HYDRO_SOURCE: ${{ inputs.hydro_source || 'era5' }}
-        OPENFLOW_TRAIN_REAL_FORECASTS: ${{ inputs.train_real_forecasts == false && '0' || '1' }}
+        OPENFLOW_TRAIN_REAL_FORECASTS: ${{ (github.event_name != 'workflow_dispatch' || inputs.train_real_forecasts) && '1' || '0' }}
         OPENFLOW_LIVE_FORCING: ${{ inputs.live_forcing && '1' || '' }}
         OPENFLOW_TRAINING_YEARS: ${{ inputs.training_years || '25' }}
         OPENFLOW_STATIC_ATTRIBUTES: ${{ inputs.use_static_attributes && '1' || '0' }}
@@ -164,7 +174,16 @@ jobs:
         OPENFLOW_SITE_IDS_FILE: ${{ inputs.site_ids_file || '.github/site_ids.txt' }}
         OPENFLOW_CACHE_DIR: ${{ runner.temp }}/openflow_dataset_cache
         OPENFLOW_MODEL_VERSION: model-${{ github.run_number }}
-      run: python openFlowML/train.py
+      run: |
+        python openFlowML/train.py
+        df -h / "$RUNNER_TEMP"
+
+    - name: Save feature store Actions cache
+      continue-on-error: true
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/openflow_dataset_cache
+        key: openflow-feature-store-v3-${{ inputs.site_ids_file || '.github/site_ids.txt' }}-${{ inputs.hydro_source || 'era5' }}-${{ github.run_id }}
 
     # train.py scores the model on held-out test windows in cfs, per station
     # and lead day, against persistence and the upstream-change reference

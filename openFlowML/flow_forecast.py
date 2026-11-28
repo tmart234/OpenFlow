@@ -243,7 +243,7 @@ def _hydro_rain_context(zcfg: dict, calib_days: int = DEFAULT_CALIB_DAYS,
         from data import get_hydro_forcing
         if not get_hydro_forcing._disabled():
             hourly_past = get_hydro_forcing.get_recent_hourly_rain(
-                lat, lon, past_days=max(int(calib_days) + 2, 14), tz=tz)
+                lat, lon, past_days=max(int(calib_days) + 2, 14))
             if hourly_past is not None and hourly_past.empty:
                 hourly_past = None
             soil_moisture = get_hydro_forcing.get_latest_soil_moisture(lat, lon)

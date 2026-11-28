@@ -159,3 +159,42 @@ def test_train_main_adds_the_live_forcing_score_when_enabled(tmp_path, monkeypat
         live = json.load(f)['live_forcing']
     assert live['windows'] > 0 and len(live['error_pct']['live']) == 7
     assert '**Live forcing**' in open(os.path.join(base, 'quality_report.md')).read()
+
+
+def test_train_main_skips_test_only_archived_forecasts(tmp_path, monkeypatch):
+    from data import get_gefs_reforecast
+    base = str(tmp_path)
+    frame = pd.concat([_station('USGS:08276500', '13020101', True, seed=1),
+                       _station('USGS:09114500', '14020002', False, seed=2)],
+                      ignore_index=True)
+    # Forecasts exist only near the very end of the series (held-out test split),
+    # mimicking 2024+ Open-Meteo Previous Runs on a 25-year run.
+    test_only_fc = pd.DataFrame([{
+        'site_id': 'USGS:08276500',
+        'issue_date': frame['Date'].max() - pd.Timedelta(days=15),
+        'lead_day': 1,
+        'fc_TMIN': 10.0, 'fc_TMAX': 100.0, 'fc_precipitation': 2.0, 'fc_srad': 15.0,
+        'precip_ens_std': 1.0, 'precip_ens_p90': 4.0, 'temp_ens_std': 5.0,
+    }])
+
+    monkeypatch.setenv('OPENFLOW_REFORECAST_DIR', base)
+    monkeypatch.setattr(combine_data, 'get_base_path', lambda: base)
+    monkeypatch.setattr(combine_data, 'main',
+                        lambda: normalize_data.normalize_data(frame, artifacts_dir=base))
+    monkeypatch.setattr(get_gefs_reforecast, 'load_reforecast_table', lambda *a, **k: test_only_fc)
+    monkeypatch.setattr(train, 'TRAIN_REAL_FORECASTS', True)
+    monkeypatch.setattr(train, 'EPOCHS', 1)
+    monkeypatch.setattr(train, 'ENSEMBLE_SIZE', 1)
+    monkeypatch.setattr(train, 'FINAL_REFIT', False)
+    for mod in ('get_cbrfc', 'get_s2f'):
+        try:
+            m = __import__(f'data.{mod}', fromlist=[mod])
+            monkeypatch.setattr(m, 'baseline_predictions', lambda samples: None)
+        except Exception:
+            pass
+
+    train.main()
+
+    with open(os.path.join(base, 'training_config.json')) as f:
+        config = json.load(f)
+    assert config['real_forecast_training'] is False
