@@ -457,3 +457,23 @@ def test_stage_only_nwps_target_falls_back_to_usgs_iv(tmp_path, fake_nwps, monke
     assert summary['latest_observation']['cfs'] == pytest.approx(float(golden[INOW]), rel=1e-3)
     assert len(summary['daily']) == 5
 
+
+def test_hydro_rain_context_returns_hourly_rain_and_soil_moisture(monkeypatch):
+    from data import get_hydro_forcing
+    idx = pd.date_range('2025-07-01T00:00Z', periods=48, freq='1h')
+    expected_rain = pd.Series(1.5, index=idx)
+    seen = {}
+
+    def fake_recent_hourly(lat, lon, past_days=16):
+        seen['args'] = (lat, lon, past_days)
+        return expected_rain
+
+    monkeypatch.delenv('OPENFLOW_DISABLE_HYDRO_FORCING', raising=False)
+    monkeypatch.setattr(get_hydro_forcing, 'get_recent_hourly_rain', fake_recent_hourly)
+    monkeypatch.setattr(get_hydro_forcing, 'get_latest_soil_moisture', lambda lat, lon: 0.28)
+
+    zcfg = {'points': [{'lat': 39.75, 'lon': -105.23, 'ungauged': True, 'w': 100.0}]}
+    hourly, sm = flow_forecast._hydro_rain_context(zcfg, calib_days=14, tz='America/Denver')
+    assert seen['args'] == (39.75, -105.23, 16)
+    assert hourly is not None and len(hourly) == 48
+    assert sm == pytest.approx(0.28)

@@ -368,3 +368,45 @@ def test_prepare_inputs_populates_phase1_to_3_decoder_features(fake_sources, mon
     assert (dec[:10, D.index('prior_known')] == 1.0).all()
     assert (dec[10:, D.index('prior_known')] == 0.0).all()
     assert dec[5, D.index('prior_change')] > 0.0
+
+
+def test_prepare_inputs_zeros_real_forecast_flags_when_trained_without_reforecasts(fake_sources, monkeypatch):
+    art = _artifacts()
+    art['training_config'] = dict(art['training_config'], real_forecast_training=False)
+    wx_days = pd.date_range(TODAY, TODAY + pd.Timedelta(days=14), name='Date')
+    monkeypatch.setattr(ml_inference, 'forecast_weather', lambda lat, lon, tz: pd.DataFrame({
+        'TMIN': 0.0, 'TMAX': 100.0, 'precipitation': 5.0,
+        'precip_ens_std': 3.0, 'precip_ens_p90': 12.0, 'temp_ens_std': 20.0,
+    }, index=wx_days))
+
+    prep = ml_inference.prepare_inputs(SITE, art, today=TODAY)
+    dec = prep['inputs']['decoder_input'][0]
+    D = windowing.DECODER_FEATURES
+    assert (dec[:, D.index('forcing_is_forecast')] == 0.0).all()
+    assert (dec[:, D.index('ens_spread_known')] == 0.0).all()
+    for col in windowing.ENSEMBLE_SPREAD_FEATURES:
+        assert (dec[:, D.index(col)] == 0.0).all()
+
+
+def test_prepare_inputs_restores_disabled_source_env_vars(fake_sources, monkeypatch):
+    import os
+    monkeypatch.delenv('OPENFLOW_DISABLE_SMAP', raising=False)
+    monkeypatch.delenv('OPENFLOW_DISABLE_DROUGHT', raising=False)
+    monkeypatch.delenv('OPENFLOW_DISABLE_RESERVOIR', raising=False)
+
+    seen_env = {}
+    orig = combine_data.fetch_and_process_data
+
+    def spy(*a, **k):
+        for name in ('SMAP', 'DROUGHT', 'RESERVOIR'):
+            seen_env[name] = os.environ.get(f'OPENFLOW_DISABLE_{name}')
+        return orig(*a, **k)
+
+    monkeypatch.setattr(combine_data, 'fetch_and_process_data', spy)
+    art = _artifacts()
+    art['training_config'] = dict(art['training_config'], disabled_sources=['SMAP', 'DROUGHT', 'RESERVOIR'])
+    ml_inference.prepare_inputs(SITE, art, today=TODAY)
+    assert seen_env == {'SMAP': '1', 'DROUGHT': '1', 'RESERVOIR': '1'}
+    assert 'OPENFLOW_DISABLE_SMAP' not in os.environ
+    assert 'OPENFLOW_DISABLE_DROUGHT' not in os.environ
+    assert 'OPENFLOW_DISABLE_RESERVOIR' not in os.environ

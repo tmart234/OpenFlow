@@ -48,7 +48,7 @@ from data import basin_zones, get_upstream  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_CACHE_DIR = os.path.expanduser('~/.cache/openflow/dataset')
 DEFAULT_REFRESH_DAYS = 14
 # Boundary buffer on incremental splices: keep freshly fetched rows starting

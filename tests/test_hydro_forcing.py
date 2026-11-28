@@ -161,3 +161,90 @@ def test_open_meteo_extended_and_ensemble_parsers(monkeypatch):
     assert ens.loc[0, 'precip_ens_p90'] > 15.0
     assert ens.loc[0, 'temp_ens_std'] > 10.0  # tenths of deg C!
     assert ens.loc[1, 'precip_ens_std'] == pytest.approx(0.0)
+
+
+def test_fetch_era5_daily_uses_era5_seamless_model(monkeypatch):
+    seen_params = []
+
+    class FakeResp:
+        def json(self):
+            return {
+                'hourly': {
+                    'time': [f'2024-05-01T{h:02d}:00' for h in range(24)],
+                    'precipitation': [0.0] * 10 + [4.0, 6.0] + [0.0] * 12,
+                    'soil_moisture_0_to_7cm': [0.22] * 24,
+                    'soil_moisture_7_to_28cm': [0.26] * 24,
+                    'soil_moisture_28_to_100cm': [0.30] * 24,
+                }
+            }
+
+    def fake_req(url, params=None, **kwargs):
+        seen_params.append((url, dict(params or {})))
+        return FakeResp()
+
+    monkeypatch.setattr(get_hydro_forcing.data_utils, 'request_with_retry', fake_req)
+    out = get_hydro_forcing.fetch_era5_daily(39.75, -105.23, '2024-05-01', '2024-05-01')
+    assert len(seen_params) == 1
+    assert seen_params[0][1]['models'] == 'era5_seamless'
+    assert len(out) == 1
+    assert out.loc[0, 'precip_max1h'] == pytest.approx(6.0)
+    assert out.loc[0, 'precip_max3h'] == pytest.approx(10.0)
+    assert out.loc[0, 'precip_wet_hours'] == pytest.approx(2.0)
+    assert out.loc[0, 'sm_surface'] == pytest.approx(0.22)
+    assert out.loc[0, 'sm_rootzone'] > 0.25
+
+
+def test_fetch_nldas_daily_batches_and_cleans_ephemeral_cache(monkeypatch, tmp_path):
+    import os
+    import sys
+
+    monkeypatch.setenv('EARTHDATA_USERNAME', 'u')
+    monkeypatch.setenv('EARTHDATA_PASSWORD', 'p')
+    monkeypatch.delenv('OPENFLOW_NLDAS_CACHE_DIR', raising=False)
+    monkeypatch.setattr(get_hydro_forcing, 'NLDAS_BATCH_SIZE', 2)
+
+    created_dirs = []
+    batch_sizes = []
+
+    class _FakeEA:
+        @staticmethod
+        def login(strategy='environment'):
+            return type('_Auth', (), {'authenticated': True})()
+
+        @staticmethod
+        def search_data(short_name, **kwargs):
+            if short_name == get_hydro_forcing.NLDAS_FORA_SHORT_NAME:
+                return ['g0', 'g1', 'g2']
+            return ['n0']
+
+        @staticmethod
+        def download(granules, local_path):
+            created_dirs.append(local_path)
+            batch_sizes.append(len(granules))
+            paths = []
+            for idx, g in enumerate(granules):
+                hh = f"{int(g[1:]):02d}00"
+                p = os.path.join(local_path, f"NLDAS_{g}.A20240501.{hh}.020.nc")
+                with open(p, 'wb') as f:
+                    f.write(b'stub')
+                paths.append(p)
+            return paths
+
+    monkeypatch.setitem(sys.modules, 'earthaccess', _FakeEA)
+    monkeypatch.setitem(sys.modules, 'h5py', object())
+    monkeypatch.setattr(
+        get_hydro_forcing, '_extract_nldas_point',
+        lambda path, lat, lon, vars_: (
+            {'Rainf': 5.0} if 'Rainf' in vars_
+            else {'SoilM_0_10cm': 25.0, 'SoilM_10_40cm': 90.0, 'SoilM_40_100cm': 180.0}
+        ),
+    )
+
+    out = get_hydro_forcing.fetch_nldas_daily(39.75, -105.23, '2024-05-01', '2024-05-01')
+    assert len(out) == 1
+    assert out.loc[0, 'precip_max1h'] == pytest.approx(5.0)
+    assert out.loc[0, 'precip_max3h'] == pytest.approx(15.0)
+    assert out.loc[0, 'sm_surface'] == pytest.approx(0.25)
+    # 3 FORA granules split into [2, 1], plus 1 NOAH granule -> [2, 1, 1].
+    assert batch_sizes == [2, 1, 1]
+    assert created_dirs and not os.path.exists(created_dirs[0])

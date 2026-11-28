@@ -353,10 +353,11 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
     target_cols = list(cfg_tc.get('target_features') or windowing.TARGET_FEATURES)
     all_model_cols = set(enc_cols) | set(dec_cols)
 
-    # Save/restore env vars for Phase 1-3 sources so alternating legacy and
+    # Save/restore env vars for optional sources so alternating legacy and
     # new models within one process never leaks disable flags across calls.
     saved_env = {f'OPENFLOW_DISABLE_{k}': os.environ.get(f'OPENFLOW_DISABLE_{k}')
-                 for k in ('ENERGY', 'HYDRO_FORCING', 'GRIDDED_SWE', 'PRIOR')}
+                 for k in ('SMAP', 'DROUGHT', 'RESERVOIR', 'UPSTREAM', 'BASIN_PRECIP',
+                           'ENERGY', 'HYDRO_FORCING', 'GRIDDED_SWE', 'PRIOR')}
     _mirror_disabled_sources(cfg_tc, scalers)
     try:
         enc_days, dec_days = cfg_tc['encoder_days'], cfg_tc['decoder_days']
@@ -594,7 +595,14 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
                 decf['precip_intensity_observed'].to_numpy(dtype=float),
                 int(cfg_tc.get('precip_intensity_known_days', windowing.PRECIP_INTENSITY_KNOWN_DAYS)))
 
-        if all(c in dec_cols for c in windowing.ENSEMBLE_SPREAD_FEATURES) and all(c in wx.columns for c in windowing.ENSEMBLE_SPREAD_FEATURES):
+        # Only populate real-forecast flags and weather ensemble spread when
+        # the model was trained with them (or legacy configs that omit the flag);
+        # otherwise those decoder columns stayed 0 during training and setting
+        # them to 1 would activate untrained LSTM input weights.
+        use_real_fc_feats = cfg_tc.get('real_forecast_training') is not False
+        if (use_real_fc_feats
+                and all(c in dec_cols for c in windowing.ENSEMBLE_SPREAD_FEATURES)
+                and all(c in wx.columns for c in windowing.ENSEMBLE_SPREAD_FEATURES)):
             pstd_i = dec_cols.index('precip_ens_std')
             pp90_i = dec_cols.index('precip_ens_p90')
             tstd_i = dec_cols.index('temp_ens_std')
@@ -611,7 +619,7 @@ def prepare_inputs(site_id: str, art: dict, today=None, tz: Optional[str] = None
                     if ek_i is not None:
                         dec_X[d_i, ek_i] = 1.0
 
-        if 'forcing_is_forecast' in dec_cols:
+        if use_real_fc_feats and 'forcing_is_forecast' in dec_cols:
             dec_X[:, dec_cols.index('forcing_is_forecast')] = 1.0
         if 'lead_day_norm' in dec_cols:
             dec_X[:, dec_cols.index('lead_day_norm')] = np.arange(1, dec_days + 1, dtype=float) / float(dec_days)

@@ -41,12 +41,14 @@ def pick_peak_windows(samples: Sequence) -> Dict[str, int]:
 
 
 def hindcast_series(sample, prediction: np.ndarray, scalers: dict,
-                    history_days: int = HISTORY_DAYS, band: Optional[np.ndarray] = None) -> dict:
+                    history_days: int = HISTORY_DAYS, band: Optional[np.ndarray] = None,
+                    area_km2: Optional[float] = None) -> dict:
     """
-    Unscaled dates + flows for one sample: encoder history and the forecast
-    window. With `band` (H, T, Q) the series also carries the outer forecast
-    quantiles: range_low (lowest quantile of the daily min) and range_high
-    (highest quantile of the daily max).
+    Unscaled dates + flows (cfs) for one sample: encoder history and the
+    forecast window. With `band` (H, T, Q) the series also carries the outer
+    forecast quantiles: range_low (lowest quantile of the daily min) and
+    range_high (highest quantile of the daily max). When `area_km2` is set
+    (specific-discharge model), converts inverted mm/day values back to cfs.
     """
     enc_days = sample.encoder_X.shape[0]
     dec_days = sample.target_Y.shape[0]
@@ -56,19 +58,25 @@ def hindcast_series(sample, prediction: np.ndarray, scalers: dict,
     t_min = windowing.TARGET_FEATURES.index('Min Flow')
     t_max = windowing.TARGET_FEATURES.index('Max Flow')
     hist = slice(enc_days - history_days, enc_days)
-    hist_min = invert(sample.encoder_X[hist, i_min], scalers['Min Flow'])
-    hist_max = invert(sample.encoder_X[hist, i_max], scalers['Max Flow'])
+
+    scale = 1.0
+    if area_km2 and float(area_km2) > 0.0:
+        import normalize_data
+        scale = float(area_km2) / normalize_data.CFS_TO_MM_DAY_PER_KM2
+
+    hist_min = invert(sample.encoder_X[hist, i_min], scalers['Min Flow']) * scale
+    hist_max = invert(sample.encoder_X[hist, i_max], scalers['Max Flow']) * scale
     return {
         'history_dates': dates[hist],
         'history_flow': (hist_min + hist_max) / 2,
         'future_dates': dates[enc_days:],
-        'observed_min': invert(sample.target_Y[:, t_min], scalers['Min Flow']),
-        'observed_max': invert(sample.target_Y[:, t_max], scalers['Max Flow']),
-        'predicted_min': invert(prediction[:, t_min], scalers['Min Flow']),
-        'predicted_max': invert(prediction[:, t_max], scalers['Max Flow']),
+        'observed_min': invert(sample.target_Y[:, t_min], scalers['Min Flow']) * scale,
+        'observed_max': invert(sample.target_Y[:, t_max], scalers['Max Flow']) * scale,
+        'predicted_min': invert(prediction[:, t_min], scalers['Min Flow']) * scale,
+        'predicted_max': invert(prediction[:, t_max], scalers['Max Flow']) * scale,
         **({} if band is None else {
-            'range_low': invert(band[:, t_min, 0], scalers['Min Flow']),
-            'range_high': invert(band[:, t_max, -1], scalers['Max Flow'])}),
+            'range_low': invert(band[:, t_min, 0], scalers['Min Flow']) * scale,
+            'range_high': invert(band[:, t_max, -1], scalers['Max Flow']) * scale}),
     }
 
 
@@ -76,7 +84,8 @@ def write_hindcast_charts(samples: Sequence, predictions: np.ndarray, scalers: d
                           out_dir: str, names: Optional[Dict[str, str]] = None,
                           model_version: Optional[str] = None,
                           band: Optional[np.ndarray] = None,
-                          quantiles: Optional[Sequence[float]] = None) -> List[str]:
+                          quantiles: Optional[Sequence[float]] = None,
+                          station_areas_km2: Optional[Dict[str, float]] = None) -> List[str]:
     """
     Write <out_dir>/<site>_hindcast.png per station; returns the paths written.
     With `band` (N, H, T, Q) at `quantiles` the shaded range is the model's
@@ -88,8 +97,10 @@ def write_hindcast_charts(samples: Sequence, predictions: np.ndarray, scalers: d
     paths = []
     for site, i in sorted(pick_peak_windows(samples).items()):
         s = samples[i]
+        area = (station_areas_km2 or {}).get(site)
         series = hindcast_series(s, predictions[i], scalers,
-                                 band=None if band is None else band[i])
+                                 band=None if band is None else band[i],
+                                 area_km2=area)
         if band is not None and quantiles:
             pct = round((max(quantiles) - min(quantiles)) * 100)
             series['band_label'] = f'Model {pct}% forecast range'

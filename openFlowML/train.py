@@ -356,9 +356,24 @@ def main():
                 from data import get_gefs_reforecast
                 ft = get_gefs_reforecast.load_reforecast_table(fc_dir)
                 if ft is not None and not ft.empty:
-                    forecast_table = ft
-                    logger.info("Loaded %d archived weather forecast rows from %s for real-forecast decoder training",
-                                len(forecast_table), fc_dir)
+                    dates_s = pd.to_datetime(data['Date'])
+                    first_d = dates_s.min()
+                    last_a = dates_s.max() - pd.Timedelta(days=ENCODER_DAYS + DECODER_DAYS - 1)
+                    train_span = max(int((last_a - first_d).days * 0.70), 0) if pd.notna(first_d) and pd.notna(last_a) else 0
+                    train_issue_end = first_d + pd.Timedelta(days=train_span + ENCODER_DAYS - 1)
+                    train_fc_rows = int((pd.to_datetime(ft['issue_date']) <= train_issue_end).sum())
+                    if train_fc_rows > 0:
+                        forecast_table = ft
+                        logger.info(
+                            "Loaded %d archived weather forecast rows (%d in train split) from %s for real-forecast decoder training",
+                            len(forecast_table), train_fc_rows, fc_dir,
+                        )
+                    else:
+                        logger.info(
+                            "Archived forecasts in %s start at %s (after train split end %s); "
+                            "skipping decoder injection so held-out evaluation matches training distribution",
+                            fc_dir, pd.to_datetime(ft['issue_date']).min().date(), train_issue_end.date(),
+                        )
             except Exception as e:
                 logger.warning("Archived forecast table skipped: %s", e)
 
@@ -484,7 +499,8 @@ def main():
             hindcast.write_hindcast_charts(
                 splits.test, model_pred, scalers, os.path.join(base_path, 'charts'),
                 names=names, model_version=os.environ.get('OPENFLOW_MODEL_VERSION'),
-                band=band_pred, quantiles=QUANTILES)
+                band=band_pred, quantiles=QUANTILES,
+                station_areas_km2=station_areas_km2)
         except Exception as e:
             logger.warning("Hindcast charts skipped: %s", e)
 
